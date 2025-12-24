@@ -12,10 +12,14 @@
 6.  Given a JEPA World Model, use MPC to plan
 
 
+### Image JEPA
+
+
+
 
 ### Video JEPA on [Moving MNIST](https://www.cs.toronto.edu/~nitish/unsupervised_video)
 
-![Moving MNIST](https://www.cs.toronto.edu/~nitish/unsupervised_video/images/000002.gif)
+![Moving MNIST](examples/video_jepa/assets/viz.png)
 
 In this toy setting, a world model is trained given the MNIST image representation (or a sequence)
 
@@ -68,4 +72,4 @@ Libraries added to eb-jepa [must have their own test cases](/tests/). To run the
 
 
 ## License
-EB JEPA is Apache licensed, as found in the [LICENSE](LICENSE) file.
+EB JEPA is Apache licensed, as found in the [LICENSE](LICENSE.md) file.
