@@ -1,20 +1,15 @@
-# Energy Based JEPA
+# Energy Based Joint Embedding Predictive Architectures (JEPA)
 
-## Train Different JEPA models and examples
+EB JEPA is an open source library and tutorial aimed at learning representations using joint embedding predictive arhictectures and planning using them.
+Examples include learning image (a), video (b), and action conidtioned video (c) predictive models representations, as well as planning with them (d).
+![EB JEPA](docs/teaser.png)
 
-### Image examples
-1.  Train an encoder representation from unlabeled images
-2.  Attention based architectures
-
-### Video examples
-4.  Train a predictive JEPA from unlabeled video, simulate dynamics
-5.  Train a model from action condition videos, plan on the world model latent space
-6.  Given a JEPA World Model, use MPC to plan
-
+## Examples
 
 ### Image JEPA
 
-
+This example demonstrates learning self-supervised representations from unlabeled images on CIFAR 10, and evaluated on image classification.
+![Moving MNIST](examples/image_jepa/assets/arch_figure.png)
 
 
 ### Video JEPA on [Moving MNIST](https://www.cs.toronto.edu/~nitish/unsupervised_video)
