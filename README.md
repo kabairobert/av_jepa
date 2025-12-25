@@ -1,4 +1,4 @@
-# Energy Based Joint Embedding Predictive Architectures (JEPA)
+# Energy Based Joint Embedding Predictive Architectures
 ![EB JEPA](docs/teaser.png)
 
 An open source library and tutorial aimed at learning representations for prediction and planning using joint embedding predictive arhictectures.
