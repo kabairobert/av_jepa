@@ -64,11 +64,68 @@ For ViT-Base, use `--model_type vit_b` instead of `vit_s`.
 
 ## Results
 
-### Collapse Prevention via VICReg and SIGReg
+Results on CIFAR-10 with ResNet-18 backbone, trained for 300 epochs.
 
-### Using a Projector
+### LE-JEPA (SigREG Loss) Best Configuration
 
-### Using a Transformer
+| Parameter | Value |
+|-----------|-------|
+| **Best Accuracy** | **90.67%** |
+| batch_size | 256 |
+| lmbd (λ) | 10.0 |
+| use_projector | Yes |
+| proj_hidden_dim | 2048 |
+| proj_output_dim | 128 |
+
+### Impact of Lambda (λ)
+
+![LE-JEPA Lambda Sensitivity](assets/lejepa_lambda_sensitivity.png)
+
+| λ | Best Acc |
+|---|----------|
+| 1.0 | 87.23% |
+| **10.0** | **90.67%** |
+| 100.0 | 82.28% |
+
+**Finding:** λ=10.0 is optimal. Too low (λ=1) underperforms by ~3.4%, too high (λ=100) underperforms by ~8.4%.
+
+### Impact of Projector
+
+| Configuration | Mean | Max |
+|---------------|------|-----|
+| **With Projector** | **90.29%** | **90.67%** |
+| No Projector | 87.69% | 88.15% |
+
+**Finding:** Using a projector provides **+2.5%** improvement.
+
+### Projector Dimensions (proj_hidden_dim × proj_output_dim)
+
+Top 5 dimension combinations (with λ=10.0, batch_size=256):
+
+| Rank | Dimensions | Accuracy |
+|------|------------|----------|
+| 1 | 2048 × 128 | 90.67% |
+| 2 | 1024 × 256 | 90.65% |
+| 3 | 512 × 1024 | 90.61% |
+| 4 | 512 × 256 | 90.60% |
+| 5 | 4096 × 4096 | 90.56% |
+
+**Finding:** Larger hidden dimensions (1024-2048) with smaller output dimensions (128-256) work best. The bottleneck effect (compressing representations) appears beneficial.
+
+---
+
+### Comparison: LE-JEPA vs VICReg
+
+![Hyperparameter Sensitivity Comparison](assets/hyperparam_sensitivity_comparison.png)
+
+| Metric | LE-JEPA (SigReg) | VICReg |
+|--------|------------------|--------|
+| Best Accuracy | 90.67% | 90.95% |
+| Projector Benefit | +2.5% | Variable |
+| Stability | High | Lower (sensitive to hyperparams) |
+| Best Projector Dims | 2048×128 | 2048x2048 |
+
+**Conclusion:** Both methods achieve similar peak performance (~90%). LE-JEPA is more stable across hyperparameter choices, while VICReg can match performance but requires more careful tuning.
 
 ## References
 - [JEPA Paper](https://openreview.net/pdf?id=BZ5a1r-kVsf)

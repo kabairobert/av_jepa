@@ -320,6 +320,14 @@ def main():
     """Main training function."""
     args = parse_args()
     
+    # Print all hyperparameters for run identification in logs
+    print("=" * 60)
+    print("Run Configuration:")
+    print("=" * 60)
+    for key, value in sorted(vars(args).items()):
+        print(f"  {key}={value}")
+    print("=" * 60)
+    
     # Set device
     if args.device == 'auto':
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -362,7 +370,8 @@ def main():
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
-        pin_memory=True
+        pin_memory=True,
+        drop_last=True  # Avoid small batches that cause BatchNorm issues
     )
     
     val_loader = DataLoader(
