@@ -103,9 +103,9 @@ The example uses Moving MNIST, a synthetic dataset where:
 
 ```bash
 # Download from a machine with internet access
-wget https://www.cs.toronto.edu/~nitish/unsupervised_video/mnist_test_seq.npy
+wget https://www.cs.toronto.edu/~nitish/unsupervised_video/mnist_test_seq.npy -P datasets/
 
-# Then copy to your working directory before running the example
+# The file should be placed at datasets/mnist_test_seq.npy before running the example
 ```
 
 ## Evaluation
@@ -119,7 +119,7 @@ The model is evaluated on:
 
 ### Visualization
 
-*Visualization showing input frames, 1-step predictions visaulization, and full rollout, obtained via auto-regressive prediction, on Moving MNIST data.* 
+*Visualization showing input frames, 1-step predictions visaulization, and full rollout, obtained via auto-regressive prediction, on Moving MNIST data.*
 
 ![Video JEPA Visualization](assets/viz.png)
 
@@ -146,4 +146,3 @@ The model is evaluated on:
 - [ResNet Architecture](https://arxiv.org/abs/1512.03385)
 - [UNet Architecture](https://arxiv.org/abs/1505.04597)
 - [VC Loss](https://arxiv.org/abs/2105.04906)
-

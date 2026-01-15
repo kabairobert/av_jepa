@@ -260,9 +260,6 @@ class DotDataset(torch.utils.data.Dataset):
         vecs = DotDataset.angle_to_vec(angles)
         actions = vecs * steps.unsqueeze(-1)
 
-        # for getting ppf
-        # truncated_normal_dist.ppf(0.85)
-
         return actions, bias_angle
 
     @staticmethod

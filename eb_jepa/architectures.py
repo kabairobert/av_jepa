@@ -219,21 +219,6 @@ class Projector(nn.Module):
         return self.net(x)
 
 
-class Expander2D(nn.Module):
-    """
-    This class takes in input of shape (..., n) and expand it into planes (..., n, w, h)
-    """
-
-    def __init__(self, w, h):
-        super(Expander2D, self).__init__()
-        self.w = w
-        self.h = h
-
-    def forward(self, x):
-        x = x.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, -1, self.w, self.h)
-        return x
-
-
 class DetHead(nn.Module):
 
     def __init__(self, in_d, h_d, out_d):

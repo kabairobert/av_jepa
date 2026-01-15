@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-FILENAME = "mnist_test_seq.npy"
+FILENAME = "datasets/mnist_test_seq.npy"
 URL = "https://www.cs.toronto.edu/~nitish/unsupervised_video/mnist_test_seq.npy"
 
 

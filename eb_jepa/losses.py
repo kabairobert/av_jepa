@@ -60,18 +60,6 @@ class SquareLossSeq(nn.Module):
 # ccoeff is a Features*Features square matrix of
 # coefficients for each term in the covariance matrix.
 # c is the constant to which the variances (diagonal terms) are pinned.
-def vc_cost(x, ccoeff, mcoeff=1.0, c=1.0):
-    s = x.size(0)
-    f = x.size(1)
-    assert ccoeff.size(0) == f
-    assert ccoeff.size(1) == f
-    x = x - x.mean(0)
-    cov_x = torch.mm(x.t(), x) / (s - 1)
-    cov_x = (torch.eye(f).to(x.device) * c - cov_x).abs()
-    cost = torch.mul(ccoeff.to(x.device), cov_x).mean()
-    return cost
-
-
 def off_diagonal(x):
     n, m = x.shape
     assert n == m
@@ -119,73 +107,6 @@ class VCLoss(nn.Module):
         x = x.transpose(0, 1).flatten(1).transpose(0, 1)  # (B*T*H*W, F)
         fx = self.proj(x)  # (B*T*H*W, F')
         return vc_cost_orig(fx, std_coeff=self.std_coeff, cov_coeff=self.cov_coeff)
-
-
-######################################################
-# Average Variance-Covariance loss on multiple sub-batches.
-# input x is a BFTHW array
-# bdim is the size of the sub-batches over which
-# the variances/covariances are computed (default = all)
-# it is best is bdim is smaller than the feature dimension.
-# it is also best if bdim divides the total number of samples
-def vc_cost_chunked(x, ccoeff, mcoeff=1.0, c=1.0, batch_dim=0):
-    # put feature dimension first
-    # turns x from BFTHW to FBTHW format
-    x = x.transpose(0, 1)
-    # probably should rearrange dimensions here
-    # to choose consecutive samples
-    flattened_state = x.flatten(1).transpose(0, 1)
-    # probably should randomly shuffle samples here
-    feature_size = flattened_state.size(1)  # Number of features
-    sample_size = flattened_state.size(0)  # Total number of samples (B×T×H×W)
-    if batch_dim == 0:
-        batch_dim = feature_size
-    s = sample_size // batch_dim
-
-    # Reshape to process all chunks in parallel: (s, batch_dim, feature_size)
-    chunks = flattened_state[: s * batch_dim].view(s, batch_dim, feature_size)
-
-    # Compute means for all chunks in parallel
-    mean_x = chunks.mean(1).abs().mean(1)  # shape: (s,)
-
-    # Compute covariance matrices for all chunks in parallel
-    chunks_t = chunks.transpose(1, 2)  # (s, feature_size, batch_dim)
-    cov_x = torch.bmm(chunks_t, chunks) / (
-        batch_dim - 1
-    )  # (s, feature_size, feature_size)
-
-    # Adjust covariance matrices towards identity
-    identity = torch.eye(feature_size, device=x.device).unsqueeze(
-        0
-    )  # (1, feature_size, feature_size)
-    cov_x = (identity * c - cov_x).abs()
-
-    # Compute final costs for all chunks
-    ccoeff_expanded = ccoeff.unsqueeze(0).to(
-        x.device
-    )  # (1, feature_size, feature_size)
-    costs = mcoeff * mean_x + torch.mul(ccoeff_expanded, cov_x).mean(dim=(1, 2))
-    # return average loss and individual loss array as a pair
-    cost = costs.mean(), costs
-    return cost
-
-
-class ChunkedVCLoss(nn.Module):
-    def __init__(self, ccoeff, mcoeff=1.0, c=1.0, bdim=0) -> None:
-        """
-        Chunked Variance-Covariance loss class
-        """
-        super().__init__()
-        self.ccoeff = ccoeff
-        self.mcoeff = mcoeff
-        self.c = c
-        self.bdim = bdim
-
-    def forward(self, x):
-        mean_cost, individual_costs = vc_cost_chunked(
-            x, self.ccoeff, self.mcoeff, self.c, self.bdim
-        )
-        return mean_cost
 
 
 ######################################################

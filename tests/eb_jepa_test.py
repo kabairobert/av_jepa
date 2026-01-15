@@ -14,11 +14,6 @@ def test_infern():
     pass
 
 
-@pytest.mark.skip(reason="Not implemented yet")
-def test_vc_cost():
-    pass
-
-
 def test_vc_cost_chunked():
     """Test the vc_cost_chunked function with various scenarios."""
 

@@ -1,5 +1,5 @@
 # EB-JEPA specific stuff
-mnist_test_seq.npy
+/datasets/
 __pycache__/**
 jepa_decoder.pth
 .vscode/**
@@ -223,7 +223,6 @@ wandb
 apps/example_text_multistep/data/fineweb10B/
 apps/example_text_multistep/logs/
 logs/
-datasets/
 checkpoints/
 *.pth
 *.npy
