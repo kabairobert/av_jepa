@@ -369,6 +369,7 @@ def run(
                 sweep_name=sweep_name,
                 exp_name=exp_name,
                 seed=cfg.meta.seed,
+                base_dir=cfg.meta.get("checkpoint_dir", None), # my-modification: Pass from config
             )
     else:
         exp_dir = Path(folder)
