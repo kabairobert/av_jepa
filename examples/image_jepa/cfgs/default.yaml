@@ -5,6 +5,8 @@ meta:
   seed: 42
   device: auto  # auto, cuda, or cpu
   checkpoint_dir: checkpoints # Directory to save checkpoints and logs
+  # model_folder: /content/drive/MyDrive/Colab Notebooks/JEPA/checkpoints/image_jepa/dev_2026-02-22_20-52/resnet_bcs_proj_bs256_ep50_ph2048_po128_lmbd10.0_seed42 # my-additions: just for continuing a stopped train
+  # load_model: true                                            # my-additions: need to set this with the model_folder to actually load the checkpoint!
 
 data:
   dataset: cifar10
