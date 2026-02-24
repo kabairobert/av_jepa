@@ -44,6 +44,8 @@ logging:
   wandb_group:        # Set to group runs (e.g., for seed averaging)
   log_every: 10       # Log every N epochs
   save_every: 50      # Save checkpoint every N epochs
+  vis_every: 0        # Run visualization loop every N epochs during training (0 = disabled in loop)
+  vis_final: true     # Run visualization loop after training completes
   tqdm_silent: false  # Disable tqdm progress bars
 
 training:

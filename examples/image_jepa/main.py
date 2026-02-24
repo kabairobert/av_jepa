@@ -54,6 +54,7 @@ from examples.image_jepa.dataset import (
     get_val_transforms,
 )
 from examples.image_jepa.eval import LinearProbe, evaluate_linear_probe
+from examples.image_jepa.vis import visualization_loop
 
 logger = get_logger(__name__)
 
@@ -536,6 +537,8 @@ def run(
     start_time = time.time()
     use_amp = cfg.training.get("use_amp", True)
     tqdm_silent = cfg.logging.get("tqdm_silent", False)
+    vis_every = cfg.logging.get("vis_every", 0)   # 0 = disabled in loop
+    vis_final = cfg.logging.get("vis_final", True)  # run visualization after training
 
     for epoch in range(start_epoch, cfg.optim.epochs):
         # Train
@@ -605,7 +608,29 @@ def run(
                 linear_val_acc=val_acc,
             )
 
+        # Visualization loop (optional, controlled by logging.vis_every)
+        if vis_every > 0 and (epoch + 1) % vis_every == 0:
+            visualization_loop(
+                model, linear_probe, val_loader, device,
+                use_amp=use_amp,
+                save_dir=exp_dir / "visualizations",
+                wandb_run=wandb_run if cfg.logging.log_wandb else None,
+                epoch=epoch,
+            )
+
     logger.info("Training completed!")
+
+    # Final visualization after all epochs
+    if vis_final:
+        logger.info("Running final visualizations...")
+        visualization_loop(
+            model, linear_probe, val_loader, device,
+            use_amp=use_amp,
+            save_dir=exp_dir / "visualizations",
+            wandb_run=wandb_run if cfg.logging.log_wandb else None,
+            epoch=cfg.optim.epochs - 1,
+        )
+
     if wandb_run:
         wandb.finish()
 
