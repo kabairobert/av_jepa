@@ -79,6 +79,175 @@ def _extract_embeddings_and_preds(model, linear_probe, val_loader, device, use_a
 
 
 # ---------------------------------------------------------------------------
+# Internal helpers: multi-layer embedding extraction and layer discovery
+# ---------------------------------------------------------------------------
+
+# Default shorthand names → full dot-path inside ImageSSL (ResNet-18)
+_RESNET_LAYER_PATHS = {
+    "layer1": "backbone.backbone.layer1",
+    "layer2": "backbone.backbone.layer2",
+    "layer3": "backbone.backbone.layer3",
+    "layer4": "backbone.backbone.layer4",
+}
+
+_DEFAULT_EMBEDDING_SOURCES = ["backbone"]
+_DEFAULT_ACTIVATION_LAYERS = ["backbone.backbone.layer4"]
+_DEFAULT_TSNE_METHODS       = ["tsne"]
+
+
+def _resolve_module(model, dot_path):
+    """Resolve a dot-path string to a submodule within model."""
+    module = model
+    for attr in dot_path.split("."):
+        module = getattr(module, attr)
+    return module
+
+
+def _discover_spatial_layers(model, device):
+    """
+    Auto-discover all spatial (4-D output) layers via a dummy forward pass.
+    Returns dot-paths ordered from shallowest to deepest.
+    Works for any torchvision backbone — useful when switching to ResNet-50, ViT, etc.
+    """
+    found, handles = [], []
+
+    def make_hook(name):
+        def _h(mod, inp, out):
+            if isinstance(out, torch.Tensor) and out.dim() == 4:
+                found.append(name)
+        return _h
+
+    for name, mod in model.named_modules():
+        if name:
+            handles.append(mod.register_forward_hook(make_hook(name)))
+
+    dummy = torch.zeros(2, 3, 32, 32, device=device)
+    with torch.no_grad():
+        try:
+            model(dummy)
+        except Exception:
+            pass
+
+    for h in handles:
+        h.remove()
+
+    # Deduplicate while preserving order
+    seen, result = set(), []
+    for name in found:
+        if name not in seen:
+            seen.add(name)
+            result.append(name)
+    return result
+
+
+def _resolve_embedding_sources(embedding_sources):
+    """
+    Normalize embedding_sources to a list of source labels.
+
+    Valid labels:
+      "backbone"          — GAP'd backbone output (post-layer4, post-GAP)
+      "projector"         — projector MLP output
+      "layer1".."layer4" — GAP'd intermediate ResNet feature maps
+
+    Special values:
+      None  → ["backbone"]                                         (default)
+      "all" → ["layer1", "layer2", "layer3", "layer4", "backbone", "projector"]
+    """
+    if embedding_sources is None:
+        return _DEFAULT_EMBEDDING_SOURCES[:]
+    if embedding_sources == "all":
+        return ["layer1", "layer2", "layer3", "layer4", "backbone", "projector"]
+    return list(embedding_sources)
+
+
+def _resolve_activation_layers(activation_layers, model=None, device=None):
+    """
+    Normalize activation_layers to a list of dot-paths.
+
+    Special values:
+      None  → ["backbone.backbone.layer4"]  (default)
+      "all" → all spatial layers (auto-discovered via dummy forward pass)
+    """
+    if activation_layers is None:
+        return _DEFAULT_ACTIVATION_LAYERS[:]
+    if activation_layers == "all":
+        if model is None or device is None:
+            raise ValueError("model and device must be provided when activation_layers='all'")
+        return _discover_spatial_layers(model, device)
+    return list(activation_layers)
+
+
+@torch.no_grad()
+def _extract_all_embeddings(model, linear_probe, val_loader, device, sources, use_amp=True):
+    """
+    Extract embeddings from multiple sources in a single forward pass per batch.
+
+    Intermediate spatial layers (layer1–4) are GAP'd to (N, C) vectors.
+    "backbone" = post-GAP 512-d vector; "projector" = projector output.
+    Linear probe predictions always come from backbone features.
+
+    Args:
+        sources: list of source labels (see _resolve_embedding_sources)
+
+    Returns:
+        embeddings_dict: dict {source_label: np.ndarray (N, D)}
+        preds:           np.ndarray (N,)  — predicted class indices
+        targets:         np.ndarray (N,)  — ground-truth class indices
+    """
+    model.eval()
+    linear_probe.eval()
+
+    hook_sources = [s for s in sources if s in _RESNET_LAYER_PATHS]
+    buf          = {s: [] for s in hook_sources}
+    all_backbone, all_projector, all_preds, all_targets = [], [], [], []
+
+    for data, target in val_loader:
+        data   = data.to(device, non_blocking=True)
+        target = target.to(device, non_blocking=True)
+
+        # Register per-batch hooks for intermediate layers
+        batch_buf = {s: None for s in hook_sources}
+        handles   = []
+        for s in hook_sources:
+            mod = _resolve_module(model, _RESNET_LAYER_PATHS[s])
+            def _make_hook(src):
+                def _h(m, i, o): batch_buf[src] = o.detach().cpu().float()
+                return _h
+            handles.append(mod.register_forward_hook(_make_hook(s)))
+
+        with autocast(device.type, enabled=use_amp):
+            features, projections = model(data)
+
+        for h in handles:
+            h.remove()
+
+        # GAP spatial feature maps → (N, C) vectors
+        for s in hook_sources:
+            buf[s].append(batch_buf[s].mean(dim=(2, 3)))
+
+        if "backbone"  in sources: all_backbone.append(features.float().cpu())
+        if "projector" in sources: all_projector.append(projections.float().cpu())
+
+        logits = linear_probe(features.float())
+        all_preds.append(logits.argmax(dim=1).cpu())
+        all_targets.append(target.cpu())
+
+    preds   = torch.cat(all_preds,   dim=0).numpy()
+    targets = torch.cat(all_targets, dim=0).numpy()
+
+    embeddings_dict = {}
+    for s in sources:
+        if s in hook_sources:
+            embeddings_dict[s] = torch.cat(buf[s], dim=0).numpy()
+        elif s == "backbone":
+            embeddings_dict[s] = torch.cat(all_backbone,  dim=0).numpy()
+        elif s == "projector":
+            embeddings_dict[s] = torch.cat(all_projector, dim=0).numpy()
+
+    return embeddings_dict, preds, targets
+
+
+# ---------------------------------------------------------------------------
 # Vis 1: Latent Space Visualization (t-SNE / UMAP)
 # ---------------------------------------------------------------------------
 
@@ -366,55 +535,106 @@ def visualization_loop(
     save_dir=None,
     wandb_run=None,
     epoch=None,
-    tsne_method="tsne",
+    tsne_method="tsne",           # kept for backward compat; ignored when tsne_methods is set
+    # --- Advanced options (all default to None = single default) ---
+    embedding_sources=None,       # None→["backbone"], "all", or list of source names
+                                  # valid names: "backbone", "projector",
+                                  #              "layer1".."layer4"
+    activation_layers=None,       # None→["backbone.backbone.layer4"], "all", or list
+    tsne_methods=None,            # None→["tsne"], or ["tsne", "umap"]
 ):
     """
     Run all image_jepa visualizations.
 
-    Performs a single val_loader pass to extract embeddings and predictions,
-    then generates:
-      1. t-SNE (or UMAP) latent space plot
-      2. Confusion matrix
-      3. Activation maps from the last ResNet layer
+    Default behaviour (all advanced options None) is identical to before:
+      - one t-SNE plot of backbone features
+      - one confusion matrix
+      - one activation map from layer4
+    Keys in the returned dict are also unchanged: "tsne", "confusion", "activation".
+
+    Advanced options allow multi-layer / multi-method exploration from a notebook
+    without affecting training runs:
+
+        figs = visualization_loop(
+            ...,
+            embedding_sources=["layer2", "layer4", "backbone", "projector"],
+            activation_layers=["backbone.backbone.layer2", "backbone.backbone.layer4"],
+            tsne_methods=["tsne", "umap"],
+        )
+        # or use "all" to auto-discover:
+        figs = visualization_loop(..., embedding_sources="all", activation_layers="all")
+
+    When advanced options produce multiple items the dict keys encode what was used:
+      "tsne_backbone_tsne", "tsne_layer2_umap", "activation_layer2", ...
 
     Args:
-        model:         ImageSSL model
-        linear_probe:  LinearProbe classifier
-        val_loader:    validation DataLoader
-        device:        torch device
-        class_names:   list of class names (defaults to CIFAR-10)
-        use_amp:       enable mixed precision for the forward pass
-        save_dir:      directory to save PNG figures (None = no file output)
-        wandb_run:     wandb run object (None = no wandb logging)
-        epoch:         current epoch number (appended to save filenames)
-        tsne_method:   "tsne" or "umap"
+        model:              ImageSSL model
+        linear_probe:       LinearProbe classifier
+        val_loader:         validation DataLoader
+        device:             torch device
+        class_names:        list of class names (defaults to CIFAR-10)
+        use_amp:            enable mixed precision
+        save_dir:           directory to save PNGs (None = no file output)
+        wandb_run:          wandb run object (None = no wandb logging)
+        epoch:              current epoch (appended to filenames / wandb keys)
+        tsne_method:        "tsne" or "umap" — backward-compat single-method param
+        embedding_sources:  see above
+        activation_layers:  see above
+        tsne_methods:       see above
 
     Returns:
-        dict: {"tsne": fig, "confusion": fig, "activation": fig}
+        dict of matplotlib Figures
     """
     if class_names is None:
         class_names = CIFAR10_CLASSES
 
-    suffix = f"_epoch{epoch:04d}" if epoch is not None else ""
+    # Resolve the three option lists
+    sources    = _resolve_embedding_sources(embedding_sources)
+    act_layers = _resolve_activation_layers(activation_layers, model=model, device=device)
+    methods    = list(tsne_methods) if tsne_methods is not None else [tsne_method]
+
+    # Detect default mode: controls backward-compat key + filename format
+    is_default = (
+        sources    == _DEFAULT_EMBEDDING_SOURCES and
+        act_layers == _DEFAULT_ACTIVATION_LAYERS and
+        methods    == _DEFAULT_TSNE_METHODS
+    )
+
+    suffix   = f"_epoch{epoch:04d}" if epoch is not None else ""
     save_dir = Path(save_dir) if save_dir is not None else None
 
-    # --- Single pass: embeddings, predictions, targets ---
-    embeddings, preds, targets = _extract_embeddings_and_preds(
-        model, linear_probe, val_loader, device, use_amp=use_amp
+    # --- Single pass: embeddings from all requested sources + preds + targets ---
+    embeddings_dict, preds, targets = _extract_all_embeddings(
+        model, linear_probe, val_loader, device, sources, use_amp=use_amp
     )
 
-    # --- Vis 1: Latent space (t-SNE / UMAP) ---
-    fig_tsne = plot_latent_tsne(
-        embeddings, targets,
-        class_names=class_names,
-        save_path=str(save_dir / f"latent_{tsne_method}{suffix}.png") if save_dir else None,
-        wandb_run=wandb_run,
-        method=tsne_method,
-        title=f"Latent Space{suffix}",
-    )
+    figs = {}
 
-    # --- Vis 2: Confusion matrix ---
-    fig_cm = plot_confusion_matrix(
+    # --- Vis 1: Latent space (t-SNE / UMAP) — one plot per (source, method) ---
+    for source in sources:
+        for method in methods:
+            if is_default:
+                # Backward-compat: same short key and filename as before
+                fig_key = "tsne"
+                fname   = f"latent_{method}{suffix}.png"
+                title   = f"Latent Space{suffix}"
+            else:
+                # type_source_method_epoch order
+                fig_key = f"tsne_{source}_{method}"
+                fname   = f"latent_{source}_{method}{suffix}.png"
+                title   = f"Latent Space — {source}{suffix}"
+
+            figs[fig_key] = plot_latent_tsne(
+                embeddings_dict[source], targets,
+                class_names=class_names,
+                save_path=str(save_dir / fname) if save_dir else None,
+                wandb_run=wandb_run,
+                method=method,
+                title=title,
+            )
+
+    # --- Vis 2: Confusion matrix (always one; preds from backbone features) ---
+    figs["confusion"] = plot_confusion_matrix(
         preds, targets,
         class_names=class_names,
         save_path=str(save_dir / f"confusion_matrix{suffix}.png") if save_dir else None,
@@ -422,20 +642,32 @@ def visualization_loop(
         title=f"Confusion Matrix{suffix}",
     )
 
-    # --- Vis 3: Activation maps (own forward pass via hook) ---
-    fig_act = plot_activation_maps(
-        model, val_loader, device,
-        save_path=str(save_dir / f"activation_maps{suffix}.png") if save_dir else None,
-        wandb_run=wandb_run,
-        title=f"Activation Maps{suffix}",
-        use_amp=use_amp,
-    )
+    # --- Vis 3: Activation maps — one plot per requested layer ---
+    for layer_path in act_layers:
+        layer_label = layer_path.split(".")[-1]  # e.g. "layer4"
 
-    figs = {"tsne": fig_tsne, "confusion": fig_cm, "activation": fig_act}
+        if is_default:
+            # Backward-compat: same short key and filename as before
+            fig_key = "activation"
+            fname   = f"activation_maps{suffix}.png"
+            title   = f"Activation Maps{suffix}"
+        else:
+            # type_source_epoch order (no method for activation maps)
+            fig_key = f"activation_{layer_label}"
+            fname   = f"activation_{layer_label}{suffix}.png"
+            title   = f"Activation Maps — {layer_label}{suffix}"
 
-    # Close figures to free memory during long training runs.
-    # When called from a notebook, caller can display before this runs
-    # by passing save_dir=None and wandb_run=None to skip this cleanup.
+        figs[fig_key] = plot_activation_maps(
+            model, val_loader, device,
+            layer_name=layer_path,
+            save_path=str(save_dir / fname) if save_dir else None,
+            wandb_run=wandb_run,
+            title=title,
+            use_amp=use_amp,
+        )
+
+    # Close figures to free memory during training.
+    # Skipped when both save_dir and wandb_run are None (notebook display).
     if wandb_run is not None or save_dir is not None:
         for fig in figs.values():
             plt.close(fig)
@@ -452,7 +684,11 @@ def visualize_from_checkpoint(
     cfg_path=None,
     save_dir=None,
     wandb_run=None,
-    tsne_method="tsne",
+    tsne_method="tsne",           # backward-compat single-method param
+    # --- Advanced options; passed directly to visualization_loop ---
+    embedding_sources=None,       # None→["backbone"], "all", or list
+    activation_layers=None,       # None→["layer4"], "all", or list of dot-paths
+    tsne_methods=None,            # None→["tsne"], or ["tsne", "umap"]
 ):
     """
     Load a checkpoint and run all visualizations in one call.
@@ -464,17 +700,31 @@ def visualize_from_checkpoint(
         .../resnet_bcs_seed42/visualizations/latest/
         .../resnet_bcs_seed42/visualizations/epoch_0020/
 
-    Usage from notebook:
-        from examples.image_jepa.vis import visualize_from_checkpoint
-
-        figs = visualize_from_checkpoint(
-            ckpt_path=".../latest.pth.tar",
-            # cfg_path auto-discovered from config.yaml next to checkpoint
-            # save_dir auto-set to .../visualizations/latest/
-        )
+    Simple usage (same as always):
+        figs = visualize_from_checkpoint(ckpt_path=".../latest.pth.tar")
         figs["tsne"].show()
         figs["confusion"].show()
         figs["activation"].show()
+
+    Advanced usage (multi-layer, multi-method, no file saving for inline display):
+        figs = visualize_from_checkpoint(
+            ckpt_path=".../latest.pth.tar",
+            save_dir=None,                             # keep figures open for .show()
+            embedding_sources=["layer2", "layer3", "layer4", "backbone", "projector"],
+            activation_layers=["backbone.backbone.layer2", "backbone.backbone.layer4"],
+            tsne_methods=["tsne", "umap"],
+        )
+        figs["tsne_backbone_tsne"].show()
+        figs["tsne_layer2_umap"].show()
+        figs["activation_layer2"].show()
+
+        # Or auto-discover all layers (useful for larger backbones):
+        figs = visualize_from_checkpoint(
+            ckpt_path=".../latest.pth.tar",
+            save_dir=None,
+            embedding_sources="all",
+            activation_layers="all",
+        )
     """
     # Lazy imports — use model.py to avoid pulling in training-only deps (fire, wandb...)
     from examples.image_jepa.model import ImageSSL, ResNet18
@@ -543,4 +793,7 @@ def visualize_from_checkpoint(
         wandb_run=wandb_run,
         epoch=epoch,
         tsne_method=tsne_method,
+        embedding_sources=embedding_sources,
+        activation_layers=activation_layers,
+        tsne_methods=tsne_methods,
     )
