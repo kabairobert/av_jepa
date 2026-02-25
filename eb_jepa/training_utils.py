@@ -176,6 +176,21 @@ def save_checkpoint(
     logger.info(f"Saved checkpoint: {path}")
 
 
+def save_config(cfg: DictConfig, exp_dir: Union[str, Path]) -> None:
+    """Save a copy of the config to the experiment directory as config.yaml.
+
+    Does NOT overwrite an existing config.yaml so the original config that
+    started the experiment is always preserved, even on resume.
+    """
+    config_path = Path(exp_dir) / "config.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    if not config_path.exists():
+        OmegaConf.save(cfg, config_path)
+        logger.info(f"Saved config to {config_path}")
+    else:
+        logger.debug(f"Config already exists at {config_path}, skipping save.")
+
+
 def load_checkpoint(
     path: Union[str, Path],
     model: nn.Module,
