@@ -488,9 +488,10 @@ def visualize_from_checkpoint(
     ckpt_path = Path(ckpt_path)
 
     # Default save_dir: <exp_dir>/visualizations/<checkpoint_stem>
-    # e.g. .../resnet_bcs_seed42/visualizations/latest/
+    # Checkpoints are always saved as .pth.tar → strip both extensions. e.g. latest.pth.tar → latest, epoch_0020.pth.tar → epoch_0020
     if save_dir is None:
-        save_dir = ckpt_path.parent / "visualizations" / ckpt_path.stem
+        ckpt_stem = Path(ckpt_path.stem).stem  # strips .tar then .pth
+        save_dir = ckpt_path.parent / "visualizations" / ckpt_stem
 
     # Auto-discover config.yaml next to checkpoint if not provided
     if cfg_path is None:
