@@ -99,46 +99,82 @@ def _probe_model(model, device, input_shape=(2, 3, 32, 32)):
     return results
 
 
-def _naming_source_to_key(dot_path: str, class_name: str) -> str:
+def _naming_source_to_key(dot_path: str, class_name: str, idx: Optional[int] = None) -> str:
     """
     Filename/dict-key–safe string encoding both path and class.
 
-    Examples:
+    When *idx* is provided (the module's forward-order position in the probe
+    dict) it is prepended as a two-digit zero-padded prefix so filenames sort
+    in forward order.
+
+    Examples (no idx):
         "backbone.backbone.layer4" + "Sequential" → "backbone_backbone_layer4_Sequential"
-        "projector.2"              + "ReLU"        → "projector_2_ReLU"
+    Examples (idx=6):
+        "backbone.backbone.layer4" + "Sequential" → "06_backbone_backbone_layer4_Sequential"
     """
-    return f"{dot_path.replace('.', '_')}_{class_name}"
+    base = f"{dot_path.replace('.', '_')}_{class_name}"
+    return f"{idx:02d}_{base}" if idx is not None else base
 
 
-def _naming_source_to_display(dot_path: str, class_name: str, output_shape: tuple) -> str:
+def _naming_source_to_display(dot_path: str, class_name: str, output_shape: tuple, idx: Optional[int] = None) -> str:
     """
     Human-readable label used in plot titles.
 
-    Examples:
+    When *idx* is provided it is prepended as "[06] " so titles identify
+    which layer in the forward-pass order is being shown.
+
+    Examples (no idx):
         "backbone.backbone.layer4" shape (2,512,5,5) → "backbone.backbone.layer4 [Sequential | 512×5×5 → GAP'd]"
-        "projector.2"              shape (2,2048)     → "projector.2 [ReLU | 2048-d]"
+    Examples (idx=6):
+        "backbone.backbone.layer4" shape (2,512,5,5) → "[06] backbone.backbone.layer4 [Sequential | 512×5×5 → GAP'd]"
     """
     if len(output_shape) == 4:
         _, c, h, w = output_shape
-        return f"{dot_path} [{class_name} | {c}\u00d7{h}\u00d7{w} → GAP'd]"
-    d = output_shape[-1]
-    return f"{dot_path} [{class_name} | {d}-d]"
+        detail = f"{class_name} | {c}\u00d7{h}\u00d7{w} \u2192 GAP'd"
+    else:
+        d = output_shape[-1]
+        detail = f"{class_name} | {d}-d"
+    prefix = f"[{idx:02d}] " if idx is not None else ""
+    return f"{prefix}{dot_path} [{detail}]"
+
+
+def _has_sub_children(path: str, probe: Dict[str, "_LayerInfo"]) -> bool:
+    """Return True if *path* has any descendant paths in *probe*."""
+    prefix = path + "."
+    return any(p.startswith(prefix) for p in probe)
 
 
 def _meaningful_backbone_layers(probe: Dict[str, "_LayerInfo"]) -> List[str]:
     """
-    Return block-level backbone outputs only: direct children of
-    ``backbone.backbone.*`` (dot-path depth == 3).
+    Return block-level backbone outputs: the shallowest depth inside
+    ``backbone.*`` that has ≥ N "interesting" modules, where interesting
+    means the module is a container (has sub-children) or has "pool" in its
+    class name.
 
-    For a ResNet this gives: conv1, bn1, relu, maxpool, layer1, layer2,
-    layer3, layer4, avgpool, fc — the semantic boundaries, not the internals
-    of each BasicBlock.
+    Falls back from min_count 3 → 2 → 1 to handle small / shallow models.
+
+    Works for ResNet, ViT (torchvision), V-JEPA 2, WavJEPA, and any custom
+    backbone — no hardcoding of specific attribute paths required.
     """
-    return [
-        p for p in probe
-        if p.startswith("backbone.backbone.")
-        and len(p.split(".")) == 3
-    ]
+    backbone_paths = [p for p in probe if p.startswith("backbone.")]
+    if not backbone_paths:
+        return []
+
+    def _is_interesting(path: str) -> bool:
+        cls = probe[path].class_name.lower()
+        return "pool" in cls or _has_sub_children(path, probe)
+
+    depths = sorted({len(p.split(".")) for p in backbone_paths})
+    min_depth, max_depth = depths[0], depths[-1]
+
+    for min_count in (3, 2, 1):
+        for depth in range(min_depth, max_depth + 1):
+            at_depth = [p for p in backbone_paths if len(p.split(".")) == depth]
+            interesting = [p for p in at_depth if _is_interesting(p)]
+            if len(interesting) >= min_count:
+                return interesting
+
+    return backbone_paths  # absolute last resort
 
 
 def _meaningful_projector_layers(probe: Dict[str, "_LayerInfo"]) -> List[str]:
@@ -266,6 +302,7 @@ def _extract_all_embeddings(model, linear_probe, val_loader, device, dot_paths, 
         preds:           ``np.ndarray (N,)`` predicted class indices
         targets:         ``np.ndarray (N,)`` ground-truth class indices
     """
+    device = torch.device(device) if isinstance(device, str) else device
     model.eval()
     linear_probe.eval()
 
@@ -503,6 +540,7 @@ def plot_activation_maps(
     Returns:
         matplotlib Figure
     """
+    device = torch.device(device) if isinstance(device, str) else device
     model.eval()
     activations = {}
 
@@ -670,7 +708,20 @@ def visualization_loop(
     # Resolve which dot-paths to extract
     dot_paths = _resolve_layers(layers, model, device, probe=probe)
 
-    # single_mode → backward-compat short keys ("tsne", "activation")
+    # Validate: explicit paths may contain typos not present in probe
+    missing = [p for p in dot_paths if p not in probe]
+    if missing:
+        raise ValueError(
+            f"The following dot-paths were not found in the model: {missing}\n"
+            f"Available top-level namespaces: "
+            + str(sorted({p.split('.')[0] for p in probe}))
+        )
+
+    # Forward-order global index: position of each path in the probe dict.
+    # Used to prefix filenames/titles so they sort in model-execution order.
+    probe_index = {p: i for i, p in enumerate(probe.keys())}
+
+    # single_mode → backward-compat short keys ("tsne", "activation"), no idx prefix
     single_mode = len(dot_paths) == 1 and len(methods) == 1
 
     # Single pass over val_loader: embeddings for all layers + preds + targets
@@ -684,8 +735,10 @@ def visualization_loop(
     # --- Vis 1: Latent space (t-SNE / UMAP) — one plot per (layer, method) ---
     for dot_path in dot_paths:
         info = probe[dot_path]
-        key  = _naming_source_to_key(dot_path, info.class_name)
-        disp = _naming_source_to_display(dot_path, info.class_name, info.output_shape)
+        _idx = probe_index[dot_path]
+        key  = _naming_source_to_key(dot_path, info.class_name, idx=None if single_mode else _idx)
+        disp = _naming_source_to_display(dot_path, info.class_name, info.output_shape,
+                                         idx=None if single_mode else _idx)
 
         for method in methods:
             if single_mode:
@@ -731,8 +784,10 @@ def visualization_loop(
         if h <= 1 and w <= 1:
             continue
 
-        key  = _naming_source_to_key(dot_path, info.class_name)
-        disp = _naming_source_to_display(dot_path, info.class_name, info.output_shape)
+        _idx = probe_index[dot_path]
+        key  = _naming_source_to_key(dot_path, info.class_name, idx=None if single_mode else _idx)
+        disp = _naming_source_to_display(dot_path, info.class_name, info.output_shape,
+                                         idx=None if single_mode else _idx)
 
         if single_mode:
             fig_key = "activation"
