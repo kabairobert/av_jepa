@@ -13,21 +13,8 @@ Usage from notebook:
                                save_dir="visualizations", wandb_run=None)
 """
 
-import os
 from pathlib import Path
 
-def _is_notebook() -> bool:
-    """Return True when running inside a Jupyter kernel (Colab or local)."""
-    try:
-        shell = get_ipython().__class__.__name__  # type: ignore[name-defined]
-        return shell in ("ZMQInteractiveShell", "Shell")
-    except NameError:
-        return False
-
-
-import matplotlib
-if not _is_notebook():
-    matplotlib.use("Agg")  # Non-interactive backend for headless / training environments
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
