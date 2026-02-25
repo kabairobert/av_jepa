@@ -617,7 +617,7 @@ def run(
             visualization_loop(
                 model, linear_probe, val_loader, device,
                 use_amp=use_amp,
-                save_dir=exp_dir / "visualizations",
+                save_dir=exp_dir / "visualizations" / f"epoch_{epoch:04d}",
                 wandb_run=wandb_run if cfg.logging.log_wandb else None,
                 epoch=epoch,
             )
@@ -630,7 +630,7 @@ def run(
         visualization_loop(
             model, linear_probe, val_loader, device,
             use_amp=use_amp,
-            save_dir=exp_dir / "visualizations",
+            save_dir=exp_dir / "visualizations" / f"epoch_{cfg.optim.epochs - 1:04d}",
             wandb_run=wandb_run if cfg.logging.log_wandb else None,
             epoch=cfg.optim.epochs - 1,
         )
