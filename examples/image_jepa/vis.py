@@ -16,8 +16,18 @@ Usage from notebook:
 import os
 from pathlib import Path
 
+def _is_notebook() -> bool:
+    """Return True when running inside a Jupyter kernel (Colab or local)."""
+    try:
+        shell = get_ipython().__class__.__name__  # type: ignore[name-defined]
+        return shell in ("ZMQInteractiveShell", "Shell")
+    except NameError:
+        return False
+
+
 import matplotlib
-matplotlib.use("Agg")  # Non-interactive backend, safe for headless/Colab environments
+if not _is_notebook():
+    matplotlib.use("Agg")  # Non-interactive backend for headless / training environments
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -157,7 +167,7 @@ def plot_latent_tsne(
     if wandb_run is not None:
         import wandb
         key = f"vis/{title.lower().replace(' ', '_').replace('/', '_')}_{method_label.lower()}"
-        wandb_run.log({key: wandb.Image(fig)})
+        wandb_run.log({key: wandb.Image(fig)}, commit=False)
 
     return fig
 
@@ -229,7 +239,8 @@ def plot_confusion_matrix(
 
     if wandb_run is not None:
         import wandb
-        wandb_run.log({"vis/confusion_matrix": wandb.Image(fig)})
+        key = f"vis/{title.lower().replace(' ', '_').replace('/', '_')}"
+        wandb_run.log({key: wandb.Image(fig)}, commit=False)
 
     return fig
 
@@ -348,7 +359,8 @@ def plot_activation_maps(
 
     if wandb_run is not None:
         import wandb
-        wandb_run.log({"vis/activation_maps": wandb.Image(fig)})
+        key = f"vis/{title.lower().replace(' ', '_').replace('/', '_')}"
+        wandb_run.log({key: wandb.Image(fig)})
 
     return fig
 
@@ -432,7 +444,16 @@ def visualization_loop(
         use_amp=use_amp,
     )
 
-    return {"tsne": fig_tsne, "confusion": fig_cm, "activation": fig_act}
+    figs = {"tsne": fig_tsne, "confusion": fig_cm, "activation": fig_act}
+
+    # Close figures to free memory during long training runs.
+    # When called from a notebook, caller can display before this runs
+    # by passing save_dir=None and wandb_run=None to skip this cleanup.
+    if wandb_run is not None or save_dir is not None:
+        for fig in figs.values():
+            plt.close(fig)
+
+    return figs
 
 
 # ---------------------------------------------------------------------------
@@ -497,35 +518,13 @@ def visualize_from_checkpoint(
     cfg = load_config(cfg_path)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # 2. Build model
-    from torchvision.models import VisionTransformer
-    import torch.nn as nn
-    if cfg.model.type == "resnet":
-        backbone = ResNet18()
-        features_dim = backbone.features_dim
-    elif cfg.model.type in ("vit_s", "vit_b"):
-        features_dim = 384 if cfg.model.type == "vit_s" else 768
-        backbone = VisionTransformer(
-            image_size=32, patch_size=8, hidden_dim=features_dim,
-            num_layers=12,
-            num_heads=6 if cfg.model.type == "vit_s" else 12,
-            mlp_dim=4 * features_dim,
-        )
-        backbone.heads = nn.Identity()
-    else:
-        raise ValueError(f"Unknown model type: {cfg.model.type}")
-
-    model = ImageSSL(
-        backbone,
-        features_dim=features_dim,
-        proj_hidden_dim=cfg.model.proj_hidden_dim,
-        proj_output_dim=cfg.model.proj_output_dim,
-    ).to(device)
-    if not cfg.model.use_projector:
-        model.projector = nn.Identity()
+    # 2. Build model and linear probe (reuse helpers from main.py)
+    from examples.image_jepa.main import build_model, build_linear_probe
+    model, features_dim = build_model(cfg)
+    model = model.to(device)
 
     # 3. Build linear probe
-    linear_probe = LinearProbe(feature_dim=features_dim, num_classes=10).to(device)
+    linear_probe = build_linear_probe(features_dim).to(device)
 
     # 4. Load checkpoint weights
     ckpt_info = load_checkpoint(ckpt_path, model, optimizer=None, device=device)
