@@ -476,8 +476,8 @@ def visualize_from_checkpoint(
         figs["confusion"].show()
         figs["activation"].show()
     """
-    # Lazy imports to avoid circular dependencies when used from main.py
-    from examples.image_jepa.main import ImageSSL, ResNet18
+    # Lazy imports — use model.py to avoid pulling in training-only deps (fire, wandb...)
+    from examples.image_jepa.model import ImageSSL, ResNet18
     from examples.image_jepa.eval import LinearProbe
     from examples.image_jepa.dataset import get_val_transforms
     from eb_jepa.training_utils import load_config, load_checkpoint
@@ -505,8 +505,8 @@ def visualize_from_checkpoint(
     cfg = load_config(cfg_path)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # 2. Build model and linear probe (reuse helpers from main.py)
-    from examples.image_jepa.main import build_model, build_linear_probe
+    # 2. Build model and linear probe
+    from examples.image_jepa.model import build_model, build_linear_probe
     model, features_dim = build_model(cfg)
     model = model.to(device)
 
