@@ -10,7 +10,7 @@ All functions accept standard PyTorch objects and optionally log to wandb.
 Usage from notebook:
     from examples.image_jepa.vis import visualization_loop
     figs = visualization_loop(model, linear_probe, val_loader, device,
-                               save_dir="viz_output", wandb_run=None)
+                               save_dir="visualizations", wandb_run=None)
 """
 
 import os
@@ -452,13 +452,17 @@ def visualize_from_checkpoint(
     cfg_path is optional — if not provided, config.yaml is auto-discovered
     next to the checkpoint file (saved there automatically during training).
 
+    save_dir defaults to <exp_dir>/visualizations/<checkpoint_stem>, e.g.:
+        .../resnet_bcs_seed42/visualizations/latest/
+        .../resnet_bcs_seed42/visualizations/epoch_0020/
+
     Usage from notebook:
         from examples.image_jepa.vis import visualize_from_checkpoint
 
         figs = visualize_from_checkpoint(
             ckpt_path=".../latest.pth.tar",
             # cfg_path auto-discovered from config.yaml next to checkpoint
-            save_dir="viz_output",
+            # save_dir auto-set to .../visualizations/latest/
         )
         figs["tsne"].show()
         figs["confusion"].show()
@@ -474,6 +478,11 @@ def visualize_from_checkpoint(
     import os
 
     ckpt_path = Path(ckpt_path)
+
+    # Default save_dir: <exp_dir>/visualizations/<checkpoint_stem>
+    # e.g. .../resnet_bcs_seed42/visualizations/latest/
+    if save_dir is None:
+        save_dir = ckpt_path.parent / "visualizations" / ckpt_path.stem
 
     # Auto-discover config.yaml next to checkpoint if not provided
     if cfg_path is None:
