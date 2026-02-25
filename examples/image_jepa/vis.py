@@ -125,22 +125,65 @@ def _naming_source_to_display(dot_path: str, class_name: str, output_shape: tupl
     return f"{dot_path} [{class_name} | {d}-d]"
 
 
+def _meaningful_backbone_layers(probe: Dict[str, "_LayerInfo"]) -> List[str]:
+    """
+    Return block-level backbone outputs only: direct children of
+    ``backbone.backbone.*`` (dot-path depth == 3).
+
+    For a ResNet this gives: conv1, bn1, relu, maxpool, layer1, layer2,
+    layer3, layer4, avgpool, fc — the semantic boundaries, not the internals
+    of each BasicBlock.
+    """
+    return [
+        p for p in probe
+        if p.startswith("backbone.backbone.")
+        and len(p.split(".")) == 3
+    ]
+
+
+def _meaningful_projector_layers(probe: Dict[str, "_LayerInfo"]) -> List[str]:
+    """
+    Return only the output of each complete MLP unit in the projector:
+      - ReLU outputs  (end of a Linear→BN→ReLU unit)
+      - the final Linear layer (no activation after it)
+
+    Skips bare Linear and BatchNorm nodes that are mid-unit.
+    Works for any depth MLP projector.
+    """
+    # All direct children of projector (depth == 2: "projector.<i>")
+    proj_keys = [
+        p for p in probe
+        if p.startswith("projector.")
+        and len(p.split(".")) == 2
+    ]
+    if not proj_keys:
+        return []
+    last = proj_keys[-1]
+    return [
+        p for p in proj_keys
+        if probe[p].class_name == "ReLU" or p == last
+    ]
+
+
 def _resolve_layers(
     layers,
     model,
     device,
-    probe: Optional[Dict[str, _LayerInfo]] = None,
+    probe: Optional[Dict[str, "_LayerInfo"]] = None,
 ) -> List[str]:
     """
     Normalize the *layers* argument to a concrete list of dot-paths.
 
-    ``None``          → last spatial layer (H > 1) in backbone.* namespace;
-                        falls back to last 4-D layer, then last layer overall.
-    ``"all"``         → every named module in forward order.
-    ``"backbone"``    → every module whose dot-path starts with ``"backbone."``.
-    ``"projector"``   → every module whose dot-path starts with ``"projector."``.
-    ``"<prefix>"``    → any other string is treated as a dot-path prefix filter.
-    list              → returned as-is (explicit dot-paths).
+    Shorthand strings
+    -----------------
+    ``None``             → last spatial layer (H > 1) in backbone.* (default)
+    ``"all"``            → meaningful backbone layers + meaningful projector layers
+    ``"backbone"``       → block-level backbone outputs only (conv1, layer1–4, avgpool…)
+    ``"projector"``      → projector unit outputs only (ReLU ends + final Linear)
+    ``"backbone_full"``  → every submodule under backbone.*
+    ``"projector_full"`` → every submodule under projector.*
+    ``"<prefix>"``       → arbitrary dot-path prefix filter (fallback)
+    list                 → explicit dot-paths, returned as-is
     """
     if probe is None:
         probe = _probe_model(model, device)
@@ -149,21 +192,44 @@ def _resolve_layers(
         return list(layers)
 
     if layers == "all":
-        return list(probe.keys())
+        # Meaningful boundaries across the whole model
+        result = _meaningful_backbone_layers(probe) + _meaningful_projector_layers(probe)
+        return result if result else list(probe.keys())
 
-    if isinstance(layers, str) and layers not in (None,):
-        # Treat any non-None string (other than "all") as a namespace prefix
+    if layers == "backbone":
+        result = _meaningful_backbone_layers(probe)
+        if result:
+            return result
+        # Fallback for non-standard backbone nesting
+        result = [p for p in probe if p.startswith("backbone.") and len(p.split(".")) == 2]
+        return result if result else [p for p in probe if p.startswith("backbone.")]
+
+    if layers == "projector":
+        result = _meaningful_projector_layers(probe)
+        if result:
+            return result
+        # Fallback: all direct projector children
+        return [p for p in probe if p.startswith("projector.") and len(p.split(".")) == 2]
+
+    if layers == "backbone_full":
+        return [p for p in probe if p.startswith("backbone.")]
+
+    if layers == "projector_full":
+        return [p for p in probe if p.startswith("projector.")]
+
+    if isinstance(layers, str):
+        # Arbitrary prefix filter
         prefix = layers if layers.endswith(".") else layers + "."
         matched = [p for p in probe if p.startswith(prefix) or p == layers]
         if matched:
             return matched
         raise ValueError(
-            f"layers={layers!r} matched no modules.  "
+            f"layers={layers!r} matched no modules. "
             f"Available top-level namespaces: "
-            + str(sorted({p.split('.')[0] for p in probe}))
+            + str(sorted({p.split(".")[0] for p in probe}))
         )
 
-    # Default: last spatial (H > 1) layer in backbone.* namespace
+    # Default (layers is None): last spatial (H > 1) layer in backbone.*
     spatial_hgt1 = [
         p for p, info in probe.items()
         if info.is_spatial
@@ -578,12 +644,14 @@ def visualization_loop(
         epoch:        current epoch number (appended to filenames / keys)
         tsne_method:  ``"tsne"`` or ``"umap"`` — backward-compat single param
         layers:       dot-path(s) to visualize.
-                      ``None``        → auto (last backbone spatial layer)
-                      ``"all"``       → every named module
-                      ``"backbone"``  → all backbone.* modules
-                      ``"projector"`` → all projector.* modules
-                      ``"<prefix>"``  → any top-level namespace prefix
-                      list            → explicit dot-paths
+                      ``None``              → auto (last backbone spatial layer)
+                      ``"all"``             → meaningful backbone + projector layers
+                      ``"backbone"``        → block-level backbone outputs (layer1–4, etc.)
+                      ``"projector"``       → projector unit outputs (ReLU ends + final)
+                      ``"backbone_full"``   → every backbone.* submodule
+                      ``"projector_full"``  → every projector.* submodule
+                      ``"<prefix>"``        → arbitrary dot-path prefix filter
+                      list                  → explicit dot-paths
         tsne_methods: list of reduction methods — overrides ``tsne_method``
 
     Returns:
@@ -740,9 +808,11 @@ def visualize_from_checkpoint(
         figs["activation_backbone_backbone_layer2_Sequential"].show()
 
         # Namespace shorthands:
-        figs = visualize_from_checkpoint(ckpt_path="...", layers="all")        # everything
-        figs = visualize_from_checkpoint(ckpt_path="...", layers="backbone")   # only backbone.*
-        figs = visualize_from_checkpoint(ckpt_path="...", layers="projector")  # only projector.*
+        figs = visualize_from_checkpoint(ckpt_path="...", layers="all")             # meaningful backbone + projector
+        figs = visualize_from_checkpoint(ckpt_path="...", layers="backbone")        # block-level backbone only
+        figs = visualize_from_checkpoint(ckpt_path="...", layers="projector")       # projector unit outputs only
+        figs = visualize_from_checkpoint(ckpt_path="...", layers="backbone_full")   # every backbone.* submodule
+        figs = visualize_from_checkpoint(ckpt_path="...", layers="projector_full")  # every projector.* submodule
     """
     # Lazy imports — use model.py to avoid pulling in training-only deps (fire, wandb...)
     from examples.image_jepa.model import ImageSSL, ResNet18
