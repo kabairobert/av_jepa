@@ -287,13 +287,13 @@ def plot_latent_tsne(
 
     # Dimensionality reduction
     if method == "umap" and UMAP_AVAILABLE:
-        reducer = umap.UMAP(n_components=2, random_state=42)
+        reducer = umap.UMAP(n_components=2, random_state=42, n_jobs=1)
         reduced = reducer.fit_transform(embeddings)
         method_label = "UMAP"
     else:
         if method == "umap":
             print("[vis] umap-learn not installed, falling back to t-SNE.")
-        tsne = TSNE(n_components=2, random_state=42, perplexity=30, n_iter=1000)
+        tsne = TSNE(n_components=2, random_state=42, perplexity=30, max_iter=1000)
         reduced = tsne.fit_transform(embeddings)
         method_label = "t-SNE"
 
