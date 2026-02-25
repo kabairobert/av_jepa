@@ -334,6 +334,44 @@ def train_epoch(
     return metrics
 
 
+def build_model(cfg):
+    """Build and return an ImageSSL model (without moving to device)."""
+    if cfg.model.type == "resnet":
+        backbone = ResNet18()
+        features_dim = backbone.features_dim
+    elif cfg.model.type == "vit_s":
+        features_dim = 384
+        backbone = VisionTransformer(
+            image_size=32, patch_size=8, hidden_dim=features_dim,
+            num_layers=12, num_heads=6, mlp_dim=4 * features_dim,
+        )
+        backbone.heads = nn.Identity()
+    elif cfg.model.type == "vit_b":
+        features_dim = 768
+        backbone = VisionTransformer(
+            image_size=32, patch_size=8, hidden_dim=features_dim,
+            num_layers=12, num_heads=12, mlp_dim=4 * features_dim,
+        )
+        backbone.heads = nn.Identity()
+    else:
+        raise ValueError(f"Unknown model type: {cfg.model.type}")
+
+    model = ImageSSL(
+        backbone,
+        features_dim=features_dim,
+        proj_hidden_dim=cfg.model.proj_hidden_dim,
+        proj_output_dim=cfg.model.proj_output_dim,
+    )
+    if not cfg.model.use_projector:
+        model.projector = nn.Identity()
+    return model, features_dim
+
+
+def build_linear_probe(features_dim, num_classes=10):
+    """Build and return a LinearProbe (without moving to device)."""
+    return LinearProbe(feature_dim=features_dim, num_classes=num_classes)
+
+
 def run(
     fname: str = "examples/image_jepa/cfgs/default.yaml",
     cfg=None,
@@ -438,48 +476,11 @@ def run(
 
     # Initialize model
     logger.info("Initializing model...")
-    if cfg.model.type == "resnet":
-        backbone = ResNet18()
-        features_dim = backbone.features_dim
-    elif cfg.model.type == "vit_s":
-        features_dim = 384
-        model_kwargs = dict(
-            image_size=32,
-            patch_size=8,
-            hidden_dim=features_dim,
-            num_layers=12,
-            num_heads=6,
-            mlp_dim=4 * features_dim,
-        )
-        backbone = VisionTransformer(**model_kwargs)
-        backbone.heads = nn.Identity()
-    elif cfg.model.type == "vit_b":
-        features_dim = 768
-        model_kwargs = dict(
-            image_size=32,
-            patch_size=8,
-            hidden_dim=features_dim,
-            num_layers=12,
-            num_heads=12,
-            mlp_dim=4 * features_dim,
-        )
-        backbone = VisionTransformer(**model_kwargs)
-        backbone.heads = nn.Identity()
-
-    model = ImageSSL(
-        backbone,
-        features_dim=features_dim,
-        proj_hidden_dim=cfg.model.proj_hidden_dim,
-        proj_output_dim=cfg.model.proj_output_dim,
-    )
-
-    if not cfg.model.use_projector:
-        model.projector = nn.Identity()
-
+    model, features_dim = build_model(cfg)
     model = model.to(device)
 
     # Log model structure and parameters
-    encoder_params = sum(p.numel() for p in backbone.parameters())
+    encoder_params = sum(p.numel() for p in model.backbone.parameters())
     projector_params = (
         sum(p.numel() for p in model.projector.parameters())
         if cfg.model.use_projector
@@ -491,7 +492,7 @@ def run(
     log_config(cfg)
 
     # Initialize linear probe
-    linear_probe = LinearProbe(feature_dim=features_dim, num_classes=10).to(device)
+    linear_probe = build_linear_probe(features_dim).to(device)
 
     # Mixed precision setup
     dtype_map = {"bfloat16": torch.bfloat16, "float16": torch.float16}
