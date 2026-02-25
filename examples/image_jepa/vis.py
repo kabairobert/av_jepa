@@ -433,3 +433,118 @@ def visualization_loop(
     )
 
     return {"tsne": fig_tsne, "confusion": fig_cm, "activation": fig_act}
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint-based entry point (for notebook / ad-hoc use)
+# ---------------------------------------------------------------------------
+
+def visualize_from_checkpoint(
+    ckpt_path,
+    cfg_path=None,
+    save_dir=None,
+    wandb_run=None,
+    tsne_method="tsne",
+):
+    """
+    Load a checkpoint and run all visualizations in one call.
+
+    cfg_path is optional — if not provided, config.yaml is auto-discovered
+    next to the checkpoint file (saved there automatically during training).
+
+    Usage from notebook:
+        from examples.image_jepa.vis import visualize_from_checkpoint
+
+        figs = visualize_from_checkpoint(
+            ckpt_path=".../latest.pth.tar",
+            # cfg_path auto-discovered from config.yaml next to checkpoint
+            save_dir="viz_output",
+        )
+        figs["tsne"].show()
+        figs["confusion"].show()
+        figs["activation"].show()
+    """
+    # Lazy imports to avoid circular dependencies when used from main.py
+    from examples.image_jepa.main import ImageSSL, ResNet18
+    from examples.image_jepa.eval import LinearProbe
+    from examples.image_jepa.dataset import get_val_transforms
+    from eb_jepa.training_utils import load_config, load_checkpoint
+    from torchvision.datasets import CIFAR10
+    from torch.utils.data import DataLoader
+    import os
+
+    ckpt_path = Path(ckpt_path)
+
+    # Auto-discover config.yaml next to checkpoint if not provided
+    if cfg_path is None:
+        cfg_path = ckpt_path.parent / "config.yaml"
+        if not cfg_path.exists():
+            raise FileNotFoundError(
+                f"No config.yaml found next to checkpoint at {ckpt_path.parent}.\n"
+                "Either provide cfg_path explicitly or re-run training to save config.yaml."
+            )
+
+    # 1. Load config
+    cfg = load_config(cfg_path)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # 2. Build model
+    from torchvision.models import VisionTransformer
+    import torch.nn as nn
+    if cfg.model.type == "resnet":
+        backbone = ResNet18()
+        features_dim = backbone.features_dim
+    elif cfg.model.type in ("vit_s", "vit_b"):
+        features_dim = 384 if cfg.model.type == "vit_s" else 768
+        backbone = VisionTransformer(
+            image_size=32, patch_size=8, hidden_dim=features_dim,
+            num_layers=12,
+            num_heads=6 if cfg.model.type == "vit_s" else 12,
+            mlp_dim=4 * features_dim,
+        )
+        backbone.heads = nn.Identity()
+    else:
+        raise ValueError(f"Unknown model type: {cfg.model.type}")
+
+    model = ImageSSL(
+        backbone,
+        features_dim=features_dim,
+        proj_hidden_dim=cfg.model.proj_hidden_dim,
+        proj_output_dim=cfg.model.proj_output_dim,
+    ).to(device)
+    if not cfg.model.use_projector:
+        model.projector = nn.Identity()
+
+    # 3. Build linear probe
+    linear_probe = LinearProbe(feature_dim=features_dim, num_classes=10).to(device)
+
+    # 4. Load checkpoint weights
+    ckpt_info = load_checkpoint(ckpt_path, model, optimizer=None, device=device)
+    if "linear_probe_state_dict" in ckpt_info:
+        linear_probe.load_state_dict(ckpt_info["linear_probe_state_dict"])
+    epoch = ckpt_info.get("epoch", 0)
+    print(f"Loaded checkpoint from epoch {epoch}")
+
+    # 5. Build val loader
+    data_dir = os.environ.get("EBJEPA_DSETS", ".")
+    val_dataset = CIFAR10(root=data_dir, train=False, download=True,
+                          transform=get_val_transforms())
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=cfg.data.batch_size,
+        shuffle=False,
+        num_workers=cfg.data.num_workers,
+        pin_memory=True,
+    )
+
+    # 6. Run visualizations
+    return visualization_loop(
+        model=model,
+        linear_probe=linear_probe,
+        val_loader=val_loader,
+        device=device,
+        save_dir=save_dir,
+        wandb_run=wandb_run,
+        epoch=epoch,
+        tsne_method=tsne_method,
+    )
