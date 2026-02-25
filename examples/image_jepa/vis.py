@@ -611,6 +611,7 @@ def visualization_loop(
     )
 
     figs = {}
+    close_after = wandb_run is not None or save_dir is not None
 
     # --- Vis 1: Latent space (t-SNE / UMAP) — one plot per (layer, method) ---
     for dot_path in dot_paths:
@@ -628,7 +629,7 @@ def visualization_loop(
                 fname   = f"latent_{key}_{method}{suffix}.png"
                 title   = f"Latent Space — {disp}{suffix}"
 
-            figs[fig_key] = plot_latent_tsne(
+            fig = plot_latent_tsne(
                 embeddings_dict[dot_path], targets,
                 class_names=class_names,
                 save_path=str(save_dir / fname) if save_dir else None,
@@ -636,15 +637,21 @@ def visualization_loop(
                 method=method,
                 title=title,
             )
+            figs[fig_key] = fig
+            if close_after:
+                plt.close(fig)
 
     # --- Vis 2: Confusion matrix (always one) ---
-    figs["confusion"] = plot_confusion_matrix(
+    fig = plot_confusion_matrix(
         preds, targets,
         class_names=class_names,
         save_path=str(save_dir / f"confusion_matrix{suffix}.png") if save_dir else None,
         wandb_run=wandb_run,
         title=f"Confusion Matrix{suffix}",
     )
+    figs["confusion"] = fig
+    if close_after:
+        plt.close(fig)
 
     # --- Vis 3: Activation maps — spatial (4-D, H > 1) layers only ---
     for dot_path in dot_paths:
@@ -668,7 +675,7 @@ def visualization_loop(
             fname   = f"activation_{key}{suffix}.png"
             title   = f"Activation Maps — {disp}{suffix}"
 
-        figs[fig_key] = plot_activation_maps(
+        fig = plot_activation_maps(
             model, val_loader, device,
             layer_name=dot_path,
             save_path=str(save_dir / fname) if save_dir else None,
@@ -676,11 +683,8 @@ def visualization_loop(
             title=title,
             use_amp=use_amp,
         )
-
-    # Close figures to free memory during training.
-    # Skipped when both save_dir and wandb_run are None (notebook display).
-    if wandb_run is not None or save_dir is not None:
-        for fig in figs.values():
+        figs[fig_key] = fig
+        if close_after:
             plt.close(fig)
 
     return figs
