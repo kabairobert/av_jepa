@@ -911,7 +911,16 @@ def visualize_from_checkpoint(
     ckpt_info = load_checkpoint(ckpt_path, model, optimizer=None, device=device)
     if "linear_probe_state_dict" in ckpt_info:
         linear_probe.load_state_dict(ckpt_info["linear_probe_state_dict"])
-    epoch = ckpt_info.get("epoch", 0)
+
+    # Derive epoch from the checkpoint filename (e.g. "epoch_10.pth.tar" → 10)
+    # to avoid the off-by-one that arises when main.py increments epoch before
+    # saving (so the stored value is always 1 more than the filename suggests).
+    # Fall back to the stored value only if the filename has no trailing digits.
+    import re
+    _stem = Path(ckpt_path).stem                       # "epoch_10.pth" or "epoch_10"
+    _stem = re.sub(r"\.[^.]+$", "", _stem)             # strip inner ext: "epoch_10.pth.tar" → stem is already "epoch_10"
+    _m = re.search(r"(\d+)$", _stem)
+    epoch = int(_m.group(1)) if _m else ckpt_info.get("epoch", 0)
     print(f"Loaded checkpoint from epoch {epoch}")
 
     # 5. Build val loader
