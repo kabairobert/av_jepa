@@ -37,6 +37,7 @@ from eb_jepa.training_utils import (
     log_epoch,
     log_model_info,
     save_checkpoint,
+    save_config,
     setup_device,
     setup_seed,
     setup_wandb,
@@ -83,6 +84,7 @@ def run(
                 sweep_name=sweep_name,
                 exp_name=exp_name,
                 seed=cfg.meta.seed,
+                base_dir=cfg.meta.get("checkpoint_dir", None),
             )
     else:
         exp_dir = Path(folder)
@@ -90,6 +92,9 @@ def run(
         # Extract exp_name from folder name by removing _seed{seed} suffix
         folder_name = exp_dir.name  # e.g., "resnet_std10.0_cov100.0_seed1"
         exp_name = folder_name.rsplit("_seed", 1)[0]  # e.g., "resnet_std10.0_cov100.0"
+
+    # Save config next to checkpoints (skipped if already exists, e.g. on resume)
+    save_config(cfg, exp_dir)
 
     wandb_run = setup_wandb(
         project="eb_jepa",
