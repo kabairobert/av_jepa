@@ -152,7 +152,7 @@ def validation_loop(val_loader, jepa, detection_head, pixel_decoder, steps, devi
     # Aggregate val results and visualize last batch
     metrics = {k: float(np.mean(v)) for k, v in metrics.items()}
     videos = visualize_videos(
-        batch, jepa, pixel_decoder, detection_head, num_samples=16
+        batch, jepa, pixel_decoder, detection_head, num_samples=min(16, batch["video"].shape[0])
     )
     logs = {
         **metrics,
