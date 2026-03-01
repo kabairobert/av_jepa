@@ -399,3 +399,53 @@ class BCS(nn.Module):
         invariance_loss = F.mse_loss(z1, z2).mean()
         total_loss = invariance_loss + self.lmbd * bcs
         return {"loss": total_loss, "bcs_loss": bcs, "invariance_loss": invariance_loss}
+
+
+class VideoJEPA_BCS(nn.Module):
+    """SIGReg regularizer for Video JEPA, following LeJEPA (Balestriero & LeCun, 2025).
+
+    Applies the BCS Gaussianity test to the encoder output (or predictor input),
+    using a learned projector before the random slicing.
+
+    Matches VCLoss interface exactly:
+        forward(x, actions=None) -> (weighted_loss, unweighted_loss, loss_dict)
+
+    Args:
+        num_slices: Number of random 1-D projections for the Epps-Pulley test.
+        lmbd: Weight of the BCS loss term.
+        proj: Optional learned projector (nn.Module). If None, uses nn.Identity.
+    """
+
+    def __init__(self, num_slices: int = 256, lmbd: float = 0.05, proj=None):
+        super().__init__()
+        self.num_slices = num_slices
+        self.lmbd = lmbd
+        self.proj = nn.Identity() if proj is None else proj
+        self.step = 0
+
+    def forward(self, x, actions=None):
+        """
+        Args:
+            x: [B, C, T, H, W] - raw encoder output (same as VCLoss input)
+            actions: ignored, present for interface compatibility
+        Returns:
+            (weighted_loss, unweighted_bcs_loss, loss_dict)
+        """
+        # Flatten [B, C, T, H, W] -> [B*T*H*W, C], exactly as VCLoss does
+        x_flat = x.transpose(0, 1).flatten(1).transpose(0, 1)  # [B*T*H*W, C]
+        fx = self.proj(x_flat)  # [B*T*H*W, C']
+
+        D = fx.shape[1]
+        with torch.no_grad():
+            g = torch.Generator(device=fx.device)
+            g.manual_seed(self.step)
+            A = torch.randn(D, self.num_slices, device=fx.device, generator=g)
+            A /= A.norm(p=2, dim=0)  # unit columns: [C', num_slices]
+
+        z_proj = fx @ A  # [B*T*H*W, num_slices]
+        bcs_loss = epps_pulley(z_proj).mean()
+
+        self.step += 1
+
+        loss = self.lmbd * bcs_loss
+        return loss, bcs_loss, {"bcs_loss": bcs_loss.item()}

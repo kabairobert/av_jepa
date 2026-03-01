@@ -24,16 +24,16 @@ model:
   hpre: 32          # Hidden dimension in predictor
 
   # Training
-  steps: 4          # Number of prediction steps during training
+  steps: 2          # Number of prediction steps during training
 
 loss:
-  type: vcreg       # Regularizer type: vcreg or bcs
+  type: bcs       # Regularizer type: vcreg or bcs
   # VCReg-specific (used when type: vcreg)
-  cov_coeff: 100.0  # Covariance loss weight
-  std_coeff: 10.0   # Standard deviation loss weight
+  # cov_coeff: 100.0  # Covariance loss weight
+  # std_coeff: 10.0   # Standard deviation loss weight
   # BCS/SIGReg-specific (used when type: bcs)
-  # num_slices: 32  # Number of random 1-D projections
-  # lmbd: 0.05       # BCS loss weight
+  num_slices: 32  # Number of random 1-D projections
+  lmbd: 0.05       # BCS loss weight
 
 optim:
   epochs: 50
