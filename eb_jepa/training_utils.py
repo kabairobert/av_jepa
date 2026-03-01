@@ -352,11 +352,10 @@ def get_exp_name(example_name: str, cfg) -> str:
             return (
                 f"resnet_bcs_proj_bs{cfg.data.batch_size}"
                 f"_ep{cfg.optim.epochs}"
-                f"_ph{getattr(cfg.model, 'proj_hidden_dim', 'NA')}"
-                f"_po{getattr(cfg.model, 'proj_output_dim', 'NA')}"
-                f"_num_slices{cfg.loss.num_slices}"
-                f"_lmbd{cfg.loss.lmbd}"
-                f"_seed{cfg.meta.seed}"
+                f"_ph{cfg.model.dstc * 4}"
+                f"_po{cfg.model.dstc}"
+                f"_ns{cfg.loss.get('num_slices')}"
+                f"_lmbd{cfg.loss.get('lmbd')}"
             )
         else:
             return (
