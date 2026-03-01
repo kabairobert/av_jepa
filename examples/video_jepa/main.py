@@ -142,8 +142,8 @@ def run(
         # Smaller output dim for BCS/SIGReg (analogous to image_jepa: hidden=2048, output=128)
         projector = Projector(f"{cfg.model.dstc}-{cfg.model.dstc*4}-{cfg.model.dstc}")
         regularizer = VideoJEPA_BCS(
-            num_slices=cfg.loss.get("num_slices", 32),
-            lmbd=cfg.loss.get("lmbd", 0.05),
+            num_slices=cfg.loss.get("num_slices"),
+            lmbd=cfg.loss.get("lmbd"),
             proj=projector,
         )
     else:  # default: vcreg
