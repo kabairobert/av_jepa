@@ -341,12 +341,28 @@ def get_exp_name(example_name: str, cfg) -> str:
             parts.append(f"lmbd{cfg.loss.lmbd}")
         return "_".join(str(p) for p in parts)
     elif example_name == "video_jepa":
-        return (
-            f"resnet_bs{cfg.data.batch_size}"
-            f"_lr{cfg.optim.lr}"
-            f"_std{cfg.loss.std_coeff}"
-            f"_cov{cfg.loss.cov_coeff}"
-        )
+        if cfg.loss.type == "vcreg":
+            return (
+                f"resnet_bs{cfg.data.batch_size}"
+                f"_lr{cfg.optim.lr}"
+                f"_std{cfg.loss.std_coeff}"
+                f"_cov{cfg.loss.cov_coeff}"
+            )
+        elif cfg.loss.type == "bcs":
+            return (
+                f"resnet_bcs_proj_bs{cfg.data.batch_size}"
+                f"_ep{cfg.optim.epochs}"
+                f"_ph{getattr(cfg.model, 'proj_hidden_dim', 'NA')}"
+                f"_po{getattr(cfg.model, 'proj_output_dim', 'NA')}"
+                f"_num_slices{cfg.loss.num_slices}"
+                f"_lmbd{cfg.loss.lmbd}"
+                f"_seed{cfg.meta.seed}"
+            )
+        else:
+            return (
+                f"resnet_bs{cfg.data.batch_size}"
+                f"_lr{cfg.optim.lr}"
+            )
     elif example_name == "ac_video_jepa":
         return (
             f"{cfg.model.encoder_architecture}"
