@@ -25,7 +25,7 @@ from eb_jepa.datasets.moving_mnist import MovingMNISTDet
 from eb_jepa.image_decoder import ImageDecoder
 from eb_jepa.jepa import JEPA, JEPAProbe
 from eb_jepa.logging import get_logger
-from eb_jepa.losses import SquareLossSeq, VCLoss
+from eb_jepa.losses import SquareLossSeq, VCLoss, VideoJEPA_BCS
 from eb_jepa.training_utils import (
     get_default_dev_name,
     get_exp_name,
@@ -135,8 +135,20 @@ def run(
     encoder = ResNet5(cfg.model.dobs, cfg.model.henc, cfg.model.dstc)
     predictor_model = ResUNet(2 * cfg.model.dstc, cfg.model.hpre, cfg.model.dstc)
     predictor = StateOnlyPredictor(predictor_model, context_length=2)
-    projector = Projector(f"{cfg.model.dstc}-{cfg.model.dstc*4}-{cfg.model.dstc*4}")
-    regularizer = VCLoss(cfg.loss.std_coeff, cfg.loss.cov_coeff, proj=projector)
+
+    loss_type = cfg.loss.get("type", "vcreg")
+    logger.info(f"Using regularizer: {loss_type}")
+    if loss_type == "bcs":
+        # Smaller output dim for BCS/SIGReg (analogous to image_jepa: hidden=2048, output=128)
+        projector = Projector(f"{cfg.model.dstc}-{cfg.model.dstc*4}-{cfg.model.dstc}")
+        regularizer = VideoJEPA_BCS(
+            num_slices=cfg.loss.get("num_slices", 32),
+            lmbd=cfg.loss.get("lmbd", 0.05),
+            proj=projector,
+        )
+    else:  # default: vcreg
+        projector = Projector(f"{cfg.model.dstc}-{cfg.model.dstc*4}-{cfg.model.dstc*4}")
+        regularizer = VCLoss(cfg.loss.std_coeff, cfg.loss.cov_coeff, proj=projector)
     ploss = SquareLossSeq(projector)
     jepa = JEPA(encoder, encoder, predictor, regularizer, ploss).to(device)
 
