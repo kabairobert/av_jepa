@@ -32,7 +32,7 @@ loss:
   # cov_coeff: 100.0  # Covariance loss weight
   # std_coeff: 10.0   # Standard deviation loss weight
   # BCS/SIGReg-specific (used when type: bcs)
-  num_slices: 256  # Number of random 1-D projections
+  num_slices: 32  # Number of random 1-D projections
   lmbd: 10       # BCS loss weight
 
 optim:
