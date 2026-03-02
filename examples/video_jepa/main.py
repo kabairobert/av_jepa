@@ -139,7 +139,8 @@ def run(
     loss_type = cfg.loss.get("type", "vcreg")
     logger.info(f"Using regularizer: {loss_type}")
     # Determine default multipliers per loss type
-    if loss_type == "bcs":
+    _BCS_TYPES = ("bcs", "bcs-euler")
+    if loss_type in _BCS_TYPES:
         default_h_mult = 4
         default_o_mult = 1
     else:
@@ -153,13 +154,25 @@ def run(
     proj_hidden = cfg.model.dstc * h_mult
     proj_out = cfg.model.dstc * o_mult
 
-    if loss_type == "bcs":
+    if loss_type in _BCS_TYPES:
         # Smaller output dim for BCS/SIGReg (analogous to image_jepa: hidden=2048, output=128)
+        use_euler = loss_type == "bcs-euler"
+        # Preferred config: bool flag under loss.ecf_distributed_sync
+        # Backward compatible fallback: legacy string under loss.ecf_sync
+        ecf_distributed_sync = cfg.loss.get("ecf_distributed_sync", None)
+        if ecf_distributed_sync is None:
+            legacy_sync = cfg.loss.get("ecf_sync", "distributed")
+            ecf_distributed_sync = legacy_sync == "distributed"
+        logger.info(
+            f"  euler={use_euler}, ecf_distributed_sync={ecf_distributed_sync}"
+        )
         projector = Projector(f"{cfg.model.dstc}-{proj_hidden}-{proj_out}")
         regularizer = VideoJEPA_BCS(
             num_slices=cfg.loss.get("num_slices"),
             lmbd=cfg.loss.get("lmbd"),
             proj=projector,
+            euler=use_euler,
+            ecf_distributed_sync=ecf_distributed_sync,
         )
     else:  # default: vcreg
         projector = Projector(f"{cfg.model.dstc}-{proj_hidden}-{proj_out}")

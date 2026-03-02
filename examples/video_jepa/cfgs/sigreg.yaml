@@ -27,13 +27,19 @@ model:
   steps: 2          # Number of prediction steps during training
 
 loss:
-  type: bcs       # Regularizer type: vcreg or bcs
+  type: bcs-euler  # Regularizer type:
+                   #   vcreg          -- variance-covariance regularization
+                   #   bcs            -- BCS/SIGReg with original complex ECF
+                   #   bcs-euler      -- BCS/SIGReg with real-valued Euler ECF + distributed ECF sync
+  ecf_distributed_sync: true  # ECF synchronization scope (only used when type: bcs-euler):
+                              #   true  -- all_reduce ECF before squared distance (unbiased, recommended)
+                              #   false -- each worker independent (biased under DDP, ablation baseline)
   # VCReg-specific (used when type: vcreg)
   # cov_coeff: 100.0  # Covariance loss weight
   # std_coeff: 10.0   # Standard deviation loss weight
-  # BCS/SIGReg-specific (used when type: bcs)
+  # BCS/SIGReg-specific (used when type: bcs*)
   num_slices: 32  # Number of random 1-D projections
-  lmbd: 10       # BCS loss weight
+  lmbd: 10        # BCS loss weight
   # Projector multipliers (multiplied with model.dstc)
   proj_hidden_mult: 4
   proj_out_mult: 1
