@@ -323,45 +323,168 @@ def get_default_dev_name() -> str:
 def get_exp_name(example_name: str, cfg) -> str:
     """Get short experiment name encoding key hyperparameters (seed appended separately)."""
     if example_name == "image_jepa":
-        proj = "proj" if cfg.model.use_projector else "noproj"
-        parts = [
-            cfg.model.type,
-            cfg.loss.type,
-            proj,
-            f"bs{cfg.data.batch_size}",
-            f"ep{cfg.optim.epochs}",
-        ]
-        if cfg.model.use_projector:
-            parts.append(f"ph{cfg.model.proj_hidden_dim}")
-            parts.append(f"po{cfg.model.proj_output_dim}")
-        if cfg.loss.type == "vicreg":
-            parts.append(f"std{cfg.loss.std_coeff}")
-            parts.append(f"cov{cfg.loss.cov_coeff}")
-        elif cfg.loss.type == "bcs":
-            parts.append(f"lmbd{cfg.loss.lmbd}")
+        # Use same compact naming convention as video_jepa:
+        # model -> batch -> loss -> proj{HxO} -> loss-params -> lr
+        def _fmt_num(x):
+            try:
+                xf = float(x)
+            except Exception:
+                return str(x)
+            if xf.is_integer():
+                return str(int(xf))
+            return str(x)
+
+        parts = [str(cfg.model.type), f"bs{cfg.data.batch_size}"]
+
+        # loss type
+        try:
+            loss = cfg.loss.get("type", "vcreg")
+        except Exception:
+            loss = getattr(cfg.loss, "type", "vcreg")
+        parts.append(loss)
+
+        # projector dims (always include projHxO)
+        ph = getattr(cfg.model, "proj_hidden_dim", None)
+        po = getattr(cfg.model, "proj_output_dim", None)
+        if ph is None and hasattr(cfg.model, "proj_hidden_dim"):
+            ph = getattr(cfg.model, "proj_hidden_dim")
+        if po is None and hasattr(cfg.model, "proj_output_dim"):
+            po = getattr(cfg.model, "proj_output_dim")
+        # fallback to dstc if available
+        if ph is None and hasattr(cfg.model, "dstc"):
+            ph = cfg.model.dstc * 4
+        if po is None and hasattr(cfg.model, "dstc"):
+            po = cfg.model.dstc
+        if ph is None:
+            ph = 0
+        if po is None:
+            po = 0
+        parts.append(f"proj{_fmt_num(ph)}x{_fmt_num(po)}")
+
+        # loss params
+        if loss in ("vcreg", "vc", "vicreg"):
+            std = None
+            cov = None
+            try:
+                std = cfg.loss.get("std_coeff", None)
+            except Exception:
+                std = getattr(cfg.loss, "std_coeff", None)
+            try:
+                cov = cfg.loss.get("cov_coeff", None)
+            except Exception:
+                cov = getattr(cfg.loss, "cov_coeff", None)
+            if std is not None:
+                parts.append(f"std{_fmt_num(std)}")
+            if cov is not None:
+                parts.append(f"cov{_fmt_num(cov)}")
+        elif loss in ("bcs", "sigreg"):
+            lmbd = None
+            try:
+                lmbd = cfg.loss.get("lmbd", None)
+            except Exception:
+                lmbd = getattr(cfg.loss, "lmbd", None)
+            if lmbd is not None:
+                parts.append(f"lmbd{_fmt_num(lmbd)}")
+
+        # learning rate
+        if hasattr(cfg.optim, "lr"):
+            lr = cfg.optim.lr
+            try:
+                lr_f = float(lr)
+                if lr_f >= 1e-2:
+                    lr_str = f"{lr_f:.3g}"
+                else:
+                    lr_str = f"{lr_f:.0e}"
+            except Exception:
+                lr_str = str(lr)
+            parts.append(f"lr{lr_str}")
+
         return "_".join(str(p) for p in parts)
     elif example_name == "video_jepa":
-        if cfg.loss.type == "vcreg":
-            return (
-                f"resnet_bs{cfg.data.batch_size}"
-                f"_lr{cfg.optim.lr}"
-                f"_std{cfg.loss.std_coeff}"
-                f"_cov{cfg.loss.cov_coeff}"
-            )
-        elif cfg.loss.type == "bcs":
-            return (
-                f"resnet_bcs_proj_bs{cfg.data.batch_size}"
-                f"_ep{cfg.optim.epochs}"
-                f"_ph{cfg.model.dstc * 4}"
-                f"_po{cfg.model.dstc}"
-                f"_ns{cfg.loss.get('num_slices')}"
-                f"_lmbd{cfg.loss.get('lmbd')}"
-            )
-        else:
-            return (
-                f"resnet_bs{cfg.data.batch_size}"
-                f"_lr{cfg.optim.lr}"
-            )
+        # Build a consistent, compact run name:
+        # model -> batch -> loss -> proj{HxO} -> loss-params -> lr
+        def _fmt_num(x):
+            try:
+                xf = float(x)
+            except Exception:
+                return str(x)
+            if xf.is_integer():
+                return str(int(xf))
+            return str(x)
+
+        parts = ["resnet"]
+        parts.append(f"bs{cfg.data.batch_size}")
+
+        # Determine loss type robustly; default to 'vcreg' when unspecified
+        try:
+            loss = cfg.loss.get("type", "vcreg")
+        except Exception:
+            try:
+                loss = cfg.loss.type
+            except Exception:
+                loss = "vcreg"
+        parts.append(loss)
+
+        # Projector dims: always include proj{HxO}; use 0x0 when absent
+        ph = getattr(cfg.model, "proj_hidden_dim", None)
+        po = getattr(cfg.model, "proj_output_dim", None)
+        # fallback to dstc-derived dims for older configs
+        if ph is None and hasattr(cfg.model, "dstc"):
+            ph = cfg.model.dstc * 4
+        if po is None and hasattr(cfg.model, "dstc"):
+            po = cfg.model.dstc
+        if ph is None:
+            ph = 0
+        if po is None:
+            po = 0
+        parts.append(f"proj{_fmt_num(ph)}x{_fmt_num(po)}")
+
+        # Loss-specific params
+        if loss in ("vcreg", "vc", "vicreg"):
+            std = None
+            cov = None
+            try:
+                std = cfg.loss.get("std_coeff", None)
+            except Exception:
+                std = getattr(cfg.loss, "std_coeff", None)
+            try:
+                cov = cfg.loss.get("cov_coeff", None)
+            except Exception:
+                cov = getattr(cfg.loss, "cov_coeff", None)
+            if std is not None:
+                parts.append(f"std{_fmt_num(std)}")
+            if cov is not None:
+                parts.append(f"cov{_fmt_num(cov)}")
+        elif loss in ("bcs", "sigreg"):
+            # number of slices and lambda
+            try:
+                ns = cfg.loss.get("num_slices", None)
+            except Exception:
+                ns = getattr(cfg.loss, "num_slices", None)
+            try:
+                lmbd = cfg.loss.get("lmbd", None)
+            except Exception:
+                lmbd = getattr(cfg.loss, "lmbd", None)
+            if ns is not None:
+                parts.append(f"ns{_fmt_num(ns)}")
+            if lmbd is not None:
+                parts.append(f"lmbd{_fmt_num(lmbd)}")
+
+        # learning rate
+        if hasattr(cfg.optim, "lr"):
+            # format lr compactly (1e-3 -> 1e-3, 0.001 -> 1e-3)
+            lr = cfg.optim.lr
+            try:
+                lr_f = float(lr)
+                if lr_f >= 1e-2:
+                    lr_str = f"{lr_f:.3g}"
+                else:
+                    lr_str = f"{lr_f:.0e}"
+            except Exception:
+                lr_str = str(lr)
+            parts.append(f"lr{lr_str}")
+
+        return "_".join(str(p) for p in parts)
     elif example_name == "ac_video_jepa":
         return (
             f"{cfg.model.encoder_architecture}"
