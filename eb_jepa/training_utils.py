@@ -428,11 +428,30 @@ def get_exp_name(example_name: str, cfg) -> str:
         # Projector dims: always include proj{HxO}; use 0x0 when absent
         ph = getattr(cfg.model, "proj_hidden_dim", None)
         po = getattr(cfg.model, "proj_output_dim", None)
-        # fallback to dstc-derived dims for older configs
+
+        # Determine loss type defaults for multipliers
+        try:
+            loss_type = cfg.loss.get("type", "vcreg")
+        except Exception:
+            try:
+                loss_type = cfg.loss.type
+            except Exception:
+                loss_type = "vcreg"
+
+        if loss_type == "bcs":
+            default_h_mult = 4
+            default_o_mult = 1
+        else:
+            default_h_mult = 4
+            default_o_mult = 4
+
+        # fallback to dstc-derived dims for older configs; allow multipliers under cfg.loss
         if ph is None and hasattr(cfg.model, "dstc"):
-            ph = cfg.model.dstc * 4
+            h_mult = cfg.loss.get("proj_hidden_mult", default_h_mult)
+            ph = cfg.model.dstc * h_mult
         if po is None and hasattr(cfg.model, "dstc"):
-            po = cfg.model.dstc
+            o_mult = cfg.loss.get("proj_out_mult", default_o_mult)
+            po = cfg.model.dstc * o_mult
         if ph is None:
             ph = 0
         if po is None:
