@@ -358,7 +358,7 @@ def all_reduce(x, op):
         return x
 
 
-def epps_pulley(x, t_min=-3, t_max=3, n_points=10):
+def epps_pulley(x, t_min=-3, t_max=3, n_points=10):                     # my-comments: t:(-3,3) is Std.Normal 99% interval, excluding noise, n_points: resolution of the grid for numerical approximation of continuous integral
     """Epps-Pulley test statistic for Gaussianity."""
     # integration points
     t = torch.linspace(t_min, t_max, n_points, device=x.device)
@@ -372,6 +372,66 @@ def epps_pulley(x, t_min=-3, t_max=3, n_points=10):
     err = exp_f * (ecf - exp_f).abs() ** 2
     T = torch.trapz(err, t, dim=1)
     return T
+
+
+def epps_pulley_distributed_euler(x, t_min=-3, t_max=3, n_points=10, distributed=True):
+    """Epps-Pulley test statistic using real-valued Euler expansion.
+
+    Replaces complex exponential (1j*x).exp() with cos/sin decomposition via
+    Euler's identity: e^(itX) = cos(tX) + i·sin(tX). This keeps all tensors
+    in float32, avoiding the bfloat16→complex64 type promotion that evicts
+    operations from A100/H100 Tensor Core pathways. 
+    Inspired by Balestriero & LeCun, 2025.
+
+    Two synchronization modes (controlled by `distributed`, set via config
+    field `loss.ecf_distributed_sync`):
+
+    - distributed=True  (ecf_distributed_sync: true): all_reduce is applied to
+      the *linear* ECF components before computing the squared distance.
+      This is mathematically required for DDP: averaging losses post-hoc
+      produces biased gradients due to Jensen's inequality
+      (E[|ECF_local - phi|^2] >= |E[ECF_local] - phi|^2).
+      Inspired by (Terver et al., 2026).
+
+    - distributed=False (ecf_distributed_sync: false): each worker computes its own
+      squared distance independently; DDP averages gradients in the backward
+      pass. Faster but statistically biased at small per-GPU batch sizes.
+      Useful as an ablation baseline.
+
+    Args:
+        x:           [N, M] tensor of projected samples (real-valued)
+        t_min:       lower bound of integration grid (default -3, 99th pct of N(0,1))
+        t_max:       upper bound of integration grid (default  3)
+        n_points:    number of trapezoidal quadrature points
+        distributed: if True, synchronize ECF components across DDP workers
+                     before the squared-distance computation (recommended)
+    Returns:
+        [M] tensor of per-slice Epps-Pulley statistics
+    """
+    # Integration grid in float32 — stable exp(-t^2/2) even under bfloat16 training
+    t = torch.linspace(t_min, t_max, n_points, device=x.device, dtype=torch.float32)
+    # Theoretical CF for N(0,1): phi(t) = exp(-t^2/2), purely real
+    exp_f = torch.exp(-0.5 * t ** 2)  # [T]
+
+    # Cast to float32 before cos/sin: bfloat16 has only 7 mantissa bits,
+    # causing significant rounding error for cos/sin near multiples of pi
+    x_t = x.float().unsqueeze(2) * t  # [N, M, T]
+
+    # Euler expansion: e^(itX) = cos(tX) + i*sin(tX) — no complex dtype cast
+    real_ecf = torch.cos(x_t).mean(0)  # [M, T]
+    imag_ecf = torch.sin(x_t).mean(0)  # [M, T]
+
+    if distributed:
+        # Synchronize linear ECF components globally BEFORE the non-linear
+        # squared distance. Required for unbiased gradients under DDP.
+        real_ecf = all_reduce(real_ecf, op="AVG")
+        imag_ecf = all_reduce(imag_ecf, op="AVG")
+
+    # Squared complex distance in real arithmetic:
+    # |(real_ecf - exp_f) + i*imag_ecf|^2 = (real_ecf - exp_f)^2 + imag_ecf^2
+    err = exp_f * ((real_ecf - exp_f) ** 2 + imag_ecf ** 2)  # [M, T]
+
+    return torch.trapz(err, t, dim=1)  # [M]
 
 
 class BCS(nn.Module):
@@ -416,11 +476,34 @@ class VideoJEPA_BCS(nn.Module):
         proj: Optional learned projector (nn.Module). If None, uses nn.Identity.
     """
 
-    def __init__(self, num_slices: int = 256, lmbd: float = 0.05, proj=None):
+    def __init__(
+        self,
+        num_slices: int = 256,
+        lmbd: float = 0.05,
+        proj=None,
+        euler: bool = False,
+        ecf_distributed_sync: bool = True,
+    ):
+        """Args:
+            num_slices: number of random 1-D projections for the Epps-Pulley test.
+            lmbd:       weight of the BCS loss term.
+            proj:       optional learned projector (nn.Module); nn.Identity if None.
+            euler:      if True, use real-valued Euler ECF (epps_pulley_distributed_euler);
+                        if False, use original complex ECF (epps_pulley).
+                        Controlled by loss.type: 'bcs' -> False, 'bcs-euler' -> True.
+            ecf_distributed_sync:
+                        if True, all_reduce ECF components before squared distance
+                        (unbiased gradients, recommended for multi-GPU).
+                        if False, each worker computes squared distance independently
+                        (biased under DDP, useful as ablation baseline).
+                        Controlled by loss.ecf_distributed_sync in config.
+        """
         super().__init__()
         self.num_slices = num_slices
         self.lmbd = lmbd
         self.proj = nn.Identity() if proj is None else proj
+        self.euler = euler
+        self.ecf_distributed_sync = ecf_distributed_sync
         self.step = 0
 
     def forward(self, x, actions=None):
@@ -443,7 +526,13 @@ class VideoJEPA_BCS(nn.Module):
             A /= A.norm(p=2, dim=0)  # unit columns: [C', num_slices]
 
         z_proj = fx @ A  # [B*T*H*W, num_slices]
-        bcs_loss = epps_pulley(z_proj).mean()
+
+        if self.euler:
+            bcs_loss = epps_pulley_distributed_euler(
+                z_proj, distributed=self.ecf_distributed_sync
+            ).mean()
+        else:
+            bcs_loss = epps_pulley(z_proj).mean()
 
         self.step += 1
 
