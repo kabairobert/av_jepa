@@ -138,16 +138,31 @@ def run(
 
     loss_type = cfg.loss.get("type", "vcreg")
     logger.info(f"Using regularizer: {loss_type}")
+    # Determine default multipliers per loss type
+    if loss_type == "bcs":
+        default_h_mult = 4
+        default_o_mult = 1
+    else:
+        default_h_mult = 4
+        default_o_mult = 4
+
+    # Read multipliers from config under loss (defaults applied above)
+    h_mult = cfg.loss.get("proj_hidden_mult", default_h_mult)
+    o_mult = cfg.loss.get("proj_out_mult", default_o_mult)
+
+    proj_hidden = cfg.model.dstc * h_mult
+    proj_out = cfg.model.dstc * o_mult
+
     if loss_type == "bcs":
         # Smaller output dim for BCS/SIGReg (analogous to image_jepa: hidden=2048, output=128)
-        projector = Projector(f"{cfg.model.dstc}-{cfg.model.dstc*4}-{cfg.model.dstc}")
+        projector = Projector(f"{cfg.model.dstc}-{proj_hidden}-{proj_out}")
         regularizer = VideoJEPA_BCS(
             num_slices=cfg.loss.get("num_slices"),
             lmbd=cfg.loss.get("lmbd"),
             proj=projector,
         )
     else:  # default: vcreg
-        projector = Projector(f"{cfg.model.dstc}-{cfg.model.dstc*4}-{cfg.model.dstc*4}")
+        projector = Projector(f"{cfg.model.dstc}-{proj_hidden}-{proj_out}")
         regularizer = VCLoss(cfg.loss.std_coeff, cfg.loss.cov_coeff, proj=projector)
     ploss = SquareLossSeq(projector)
     jepa = JEPA(encoder, encoder, predictor, regularizer, ploss).to(device)

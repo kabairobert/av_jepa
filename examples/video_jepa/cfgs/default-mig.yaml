@@ -30,6 +30,9 @@ loss:
   # Variance-Covariance regularization
   cov_coeff: 100.0  # Covariance loss weight
   std_coeff: 10.0   # Standard deviation loss weight
+  # Projector multipliers (multiplied with model.dstc)
+  proj_hidden_mult: 4
+  proj_out_mult: 4
 
 optim:
   epochs: 50
