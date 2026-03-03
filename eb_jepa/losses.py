@@ -373,67 +373,6 @@ def epps_pulley(x, t_min=-3, t_max=3, n_points=10):                     # my-com
     T = torch.trapz(err, t, dim=1)
     return T
 
-
-def epps_pulley_distributed_euler(x, t_min=-3, t_max=3, n_points=10, distributed=True):
-    """Epps-Pulley test statistic using real-valued Euler expansion.
-
-    Replaces complex exponential (1j*x).exp() with cos/sin decomposition via
-    Euler's identity: e^(itX) = cos(tX) + i·sin(tX). This keeps all tensors
-    in float32, avoiding the bfloat16→complex64 type promotion that evicts
-    operations from A100/H100 Tensor Core pathways. 
-    Inspired by Balestriero & LeCun, 2025.
-
-    Two synchronization modes (controlled by `distributed`, set via config
-    field `loss.ecf_distributed_sync`):
-
-    - distributed=True  (ecf_distributed_sync: true): all_reduce is applied to
-      the *linear* ECF components before computing the squared distance.
-      This is mathematically required for DDP: averaging losses post-hoc
-      produces biased gradients due to Jensen's inequality
-      (E[|ECF_local - phi|^2] >= |E[ECF_local] - phi|^2).
-      Inspired by (Terver et al., 2026).
-
-    - distributed=False (ecf_distributed_sync: false): each worker computes its own
-      squared distance independently; DDP averages gradients in the backward
-      pass. Faster but statistically biased at small per-GPU batch sizes.
-      Useful as an ablation baseline.
-
-    Args:
-        x:           [N, M] tensor of projected samples (real-valued)
-        t_min:       lower bound of integration grid (default -3, 99th pct of N(0,1))
-        t_max:       upper bound of integration grid (default  3)
-        n_points:    number of trapezoidal quadrature points
-        distributed: if True, synchronize ECF components across DDP workers
-                     before the squared-distance computation (recommended)
-    Returns:
-        [M] tensor of per-slice Epps-Pulley statistics
-    """
-    # Integration grid in float32 — stable exp(-t^2/2) even under bfloat16 training
-    t = torch.linspace(t_min, t_max, n_points, device=x.device, dtype=torch.float32)
-    # Theoretical CF for N(0,1): phi(t) = exp(-t^2/2), purely real
-    exp_f = torch.exp(-0.5 * t ** 2)  # [T]
-
-    # Cast to float32 before cos/sin: bfloat16 has only 7 mantissa bits,
-    # causing significant rounding error for cos/sin near multiples of pi
-    x_t = x.float().unsqueeze(2) * t  # [N, M, T]
-
-    # Euler expansion: e^(itX) = cos(tX) + i*sin(tX) — no complex dtype cast
-    real_ecf = torch.cos(x_t).mean(0)  # [M, T]
-    imag_ecf = torch.sin(x_t).mean(0)  # [M, T]
-
-    if distributed:
-        # Synchronize linear ECF components globally BEFORE the non-linear
-        # squared distance. Required for unbiased gradients under DDP.
-        real_ecf = all_reduce(real_ecf, op="AVG")
-        imag_ecf = all_reduce(imag_ecf, op="AVG")
-
-    # Squared complex distance in real arithmetic:
-    # |(real_ecf - exp_f) + i*imag_ecf|^2 = (real_ecf - exp_f)^2 + imag_ecf^2
-    err = exp_f * ((real_ecf - exp_f) ** 2 + imag_ecf ** 2)  # [M, T]
-
-    return torch.trapz(err, t, dim=1)  # [M]
-
-
 class BCS(nn.Module):
     """BCS (Batched Characteristic Slicing) loss for SIGReg."""
 
@@ -481,8 +420,6 @@ class VideoJEPA_BCS(nn.Module):
         num_slices: int = 256,
         lmbd: float = 0.05,
         proj=None,
-        euler: bool = False,
-        ecf_distributed_sync: bool = True,
     ):
         """Args:
             num_slices: number of random 1-D projections for the Epps-Pulley test.
@@ -502,8 +439,6 @@ class VideoJEPA_BCS(nn.Module):
         self.num_slices = num_slices
         self.lmbd = lmbd
         self.proj = nn.Identity() if proj is None else proj
-        self.euler = euler
-        self.ecf_distributed_sync = ecf_distributed_sync
         self.step = 0
 
     def forward(self, x, actions=None):
@@ -526,15 +461,121 @@ class VideoJEPA_BCS(nn.Module):
             A /= A.norm(p=2, dim=0)  # unit columns: [C', num_slices]
 
         z_proj = fx @ A  # [B*T*H*W, num_slices]
-
-        if self.euler:
-            bcs_loss = epps_pulley_distributed_euler(
-                z_proj, distributed=self.ecf_distributed_sync
-            ).mean()
-        else:
-            bcs_loss = epps_pulley(z_proj).mean()
+        bcs_loss = epps_pulley(z_proj).mean()
 
         self.step += 1
 
         loss = self.lmbd * bcs_loss
         return loss, bcs_loss, {"bcs_loss": bcs_loss.item()}
+
+
+class EppsPulleyScaleInvariant(nn.Module):
+    """ Epps-Pulley test statistic using real-valued Euler expansion:
+        - Following LeJEPA and (Balestriero & LeCun, 2025) and mirrors 
+          lejepa.EppsPulley but without N * world_size scaling to make it scale invariant 
+          to batch size and number of DDP workers unlike the original implementation. 
+          This is important for stable training across different hardware setups and batch sizes.
+        - Replaces complex exponential (1j*x) .exp() with cos/sin decomposition via
+          Euler's identity: e^(itX) = cos(tX) + i.sin(tX) 
+          to keep all tensors in float32 and avoid bfloat16→complex64 type promotion.
+        - Uses a positive-half trapezoidal rule with precomputed `t', `phi' (=exp(-t^2/2))
+          and trapezoid weights stored as buffers so the forward pass is lightweight.
+    
+    Buffers (float32, same names as lejepa.EppsPulley):
+        t       : positive-half integration nodes [0, t_max], shape [n_points]
+        phi     : exp(-t^2/2), shape [n_points]
+        weights : trapezoid weights * phi, shape [n_points]
+                  (phi is folded in so forward only needs err @ weights)
+
+    Args:
+        t_max (float): upper integration bound (default 3.0)
+        n_points (int): number of positive-half quadrature nodes (default 10)
+    """
+
+    def __init__(self, t_max: float = 3.0, n_points: int = 10):
+        super().__init__()
+        # Positive-half trapezoidal grid: t in [0, t_max], dt = t_max / (n_points - 1)
+        # Interior weights doubled to account for the symmetric negative half.
+        t = torch.linspace(0.0, t_max, n_points, dtype=torch.float32)
+        dt = t_max / (n_points - 1)
+        weights = torch.full((n_points,), 2 * dt, dtype=torch.float32)
+        weights[[0, -1]] = dt  # half-weight at t=0 and t=t_max
+        phi = torch.exp(-0.5 * t ** 2)
+        # Fold phi into weights so forward only computes err @ self.weights
+        self.register_buffer("t", t)
+        self.register_buffer("phi", phi)
+        self.register_buffer("weights", weights * phi)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Compute per-slice Epps-Pulley statistics.
+
+        Args:
+            x: [N, M] real-valued projected samples (N samples, M slices)
+        Returns:
+            [M] per-slice test statistics
+        """
+        # Cast to float32 for stable trig (bfloat16 has only 7 mantissa bits)
+        x_t = x.to(self.t.dtype).unsqueeze(2) * self.t  # [N, M, T]
+
+        real_ecf = torch.cos(x_t).mean(0)  # [M, T]
+        imag_ecf = torch.sin(x_t).mean(0)  # [M, T]
+
+        # Synchronize linear ECF components across DDP ranks BEFORE squaring
+        # (required for unbiased gradients; no-op outside distributed training)
+        real_ecf = all_reduce(real_ecf, op="AVG")
+        imag_ecf = all_reduce(imag_ecf, op="AVG")
+
+        # Squared complex distance; phi already folded into self.weights
+        err = (real_ecf - self.phi).square() + imag_ecf.square()  # [M, T]
+        return err @ self.weights  # [M]
+
+
+class VideoJEPA_BCS_Euler_buffer(nn.Module):
+    """SIGReg regularizer using the buffered Epps-Pulley test (Balestriero & LeCun, 2025).
+
+    Combines random 1-D projection (BCS slicing) with EppsPulleyScaleInvariant.
+    Matches the VCLoss interface: forward(x, actions=None) -> (loss, bcs_loss, dict).
+
+    Args:
+        num_slices (int): number of random 1-D projections.
+        lmbd (float): weight of the BCS loss term.
+        proj: optional learned projector (nn.Module); nn.Identity if None.
+        t_max (float): passed to EppsPulleyScaleInvariant.
+        n_points (int): passed to EppsPulleyScaleInvariant.
+    """
+
+    def __init__(
+        self,
+        num_slices: int = 256,
+        lmbd: float = 0.05,
+        proj=None,
+        t_max: float = 3.0,
+        n_points: int = 10,
+    ):
+        super().__init__()
+        self.num_slices = num_slices
+        self.lmbd = lmbd
+        self.proj = nn.Identity() if proj is None else proj
+        self.epps_pulley = EppsPulleyScaleInvariant(t_max=t_max, n_points=n_points)
+        self.step = 0
+
+    def forward(self, x, actions=None):
+        # Flatten [B, C, T, H, W] -> [B*T*H*W, C]
+        x_flat = x.transpose(0, 1).flatten(1).transpose(0, 1)
+        fx = self.proj(x_flat)  # [N, C']
+
+        D = fx.shape[1]
+        with torch.no_grad():
+            g = torch.Generator(device=fx.device)
+            g.manual_seed(self.step)
+            A = torch.randn(D, self.num_slices, device=fx.device, generator=g)
+            A /= A.norm(p=2, dim=0)  # unit columns: [C', num_slices]
+
+        z_proj = fx @ A  # [N, num_slices]
+        bcs_loss = self.epps_pulley(z_proj).mean()
+
+        self.step += 1
+        loss = self.lmbd * bcs_loss
+        return loss, bcs_loss, {"bcs_loss": bcs_loss.item()}
+
+
