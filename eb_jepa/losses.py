@@ -525,7 +525,7 @@ class EppsPulleyScaleInvariant(nn.Module):
         return err @ self.weights  # [M]
 
 
-class VideoJEPA_BCS_Euler_buffer(nn.Module):
+class VideoJEPA_BCS_Euler_Scaleinvariant(nn.Module):
     """SIGReg regularizer using the buffered Epps-Pulley test (Balestriero & LeCun, 2025).
 
     Combines random 1-D projection (BCS slicing) with EppsPulleyScaleInvariant.

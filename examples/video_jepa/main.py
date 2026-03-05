@@ -25,7 +25,7 @@ from eb_jepa.datasets.moving_mnist import MovingMNISTDet
 from eb_jepa.image_decoder import ImageDecoder
 from eb_jepa.jepa import JEPA, JEPAProbe
 from eb_jepa.logging import get_logger
-from eb_jepa.losses import SquareLossSeq, VCLoss, VideoJEPA_BCS, VideoJEPA_BCS_Euler_buffer
+from eb_jepa.losses import SquareLossSeq, VCLoss, VideoJEPA_BCS, VideoJEPA_BCS_Euler_Scaleinvariant
 from eb_jepa.training_utils import (
     get_default_dev_name,
     get_exp_name,
@@ -163,7 +163,7 @@ def run(
             proj=projector,
         )
     elif loss_type == "bcs-euler-scalefree":
-        regularizer = VideoJEPA_BCS_Euler_buffer(
+        regularizer = VideoJEPA_BCS_Euler_Scaleinvariant(
             num_slices=cfg.loss.get("num_slices"),
             lmbd=cfg.loss.get("lmbd"),
             proj=projector,
