@@ -438,7 +438,7 @@ def get_exp_name(example_name: str, cfg) -> str:
             except Exception:
                 loss_type = "vcreg"
 
-        _BCS_TYPES = ("bcs", "bcs-euler")
+        _BCS_TYPES = ("bcs", "bcs-euler-scalefree")
         if loss_type in _BCS_TYPES:
             default_h_mult = 4
             default_o_mult = 1
@@ -475,7 +475,7 @@ def get_exp_name(example_name: str, cfg) -> str:
                 parts.append(f"std{_fmt_num(std)}")
             if cov is not None:
                 parts.append(f"cov{_fmt_num(cov)}")
-        elif loss in ("bcs", "bcs-euler", "sigreg"):
+        elif loss in ("bcs", "bcs-euler-scalefree", "sigreg"):
             # number of slices and lambda
             try:
                 ns = cfg.loss.get("num_slices", None)
@@ -489,26 +489,8 @@ def get_exp_name(example_name: str, cfg) -> str:
                 parts.append(f"ns{_fmt_num(ns)}")
             if lmbd is not None:
                 parts.append(f"lmbd{_fmt_num(lmbd)}")
-            # For Euler variants, encode the ECF sync mode in the run name
-            # so distributed vs local ablations produce distinct checkpoint dirs
-            if loss == "bcs-euler":
-                try:
-                    ecf_distributed_sync = cfg.loss.get("ecf_distributed_sync", None)
-                except Exception:
-                    ecf_distributed_sync = getattr(
-                        cfg.loss, "ecf_distributed_sync", None
-                    )
-
-                # Backward compatibility for old configs using ecf_sync string
-                if ecf_distributed_sync is None:
-                    try:
-                        legacy_sync = cfg.loss.get("ecf_sync", "distributed")
-                    except Exception:
-                        legacy_sync = getattr(cfg.loss, "ecf_sync", "distributed")
-                    ecf_distributed_sync = legacy_sync == "distributed"
-                # Abbreviate: distributed -> dist, local -> loc
-                sync_abbrev = "dist" if ecf_distributed_sync else "loc"
-                parts.append(f"sync{sync_abbrev}")
+            # Euler-specific sync naming was removed; we no longer append
+            # sync-related suffixes to run names (ECF uses distributed sync).
 
         # learning rate
         if hasattr(cfg.optim, "lr"):

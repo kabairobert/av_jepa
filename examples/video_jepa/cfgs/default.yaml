@@ -30,14 +30,12 @@ loss:
   type: vcreg       # Regularizer type:
                     #   vcreg          -- variance-covariance regularization
                     #   bcs            -- BCS/SIGReg with original complex ECF
-                    #   bcs-euler      -- BCS/SIGReg with real-valued Euler ECF + distributed ECF sync
+                    #   bcs-euler-scalefree -- BCS/SIGReg with real-valued Euler ECF (scale-free Euler ECF)
   # VCReg-specific (used when type: vcreg)
   cov_coeff: 100.0  # Covariance loss weight
   std_coeff: 10.0   # Standard deviation loss weight
   # BCS/SIGReg-specific (used when type: bcs*)
-  # ecf_distributed_sync: true  # only used for bcs-euler:
-  #                             #   true  -- all_reduce ECF before squared distance
-  #                             #   false -- local ECF only (ablation; biased under DDP)
+  # (Note) `ecf_distributed_sync` config was removed; Euler ECF uses distributed sync.
   # num_slices: 32  # Number of random 1-D projections
   # lmbd: 0.05       # BCS loss weight
   # Projector multipliers (multiplied with model.dstc)

@@ -427,13 +427,8 @@ class VideoJEPA_BCS(nn.Module):
             proj:       optional learned projector (nn.Module); nn.Identity if None.
             euler:      if True, use real-valued Euler ECF (epps_pulley_distributed_euler);
                         if False, use original complex ECF (epps_pulley).
-                        Controlled by loss.type: 'bcs' -> False, 'bcs-euler' -> True.
-            ecf_distributed_sync:
-                        if True, all_reduce ECF components before squared distance
-                        (unbiased gradients, recommended for multi-GPU).
-                        if False, each worker computes squared distance independently
-                        (biased under DDP, useful as ablation baseline).
-                        Controlled by loss.ecf_distributed_sync in config.
+                        The Euler ECF implementation uses distributed synchronization
+                        (all-reduce) for unbiased gradients in multi-GPU training.
         """
         super().__init__()
         self.num_slices = num_slices
