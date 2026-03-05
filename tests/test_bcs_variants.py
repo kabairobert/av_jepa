@@ -1,5 +1,5 @@
 import torch
-from eb_jepa.losses import VideoJEPA_BCS, VideoJEPA_BCS_Euler_buffer
+from eb_jepa.losses import VideoJEPA_BCS, VideoJEPA_BCS_Euler_Scaleinvariant
 
 
 def make_data(dist: str, B=2, C=8, T=2, H=4, W=4, seed=0):
@@ -18,7 +18,7 @@ def run_once():
     torch.manual_seed(0)
     variants = [
         ("VideoJEPA_BCS_complex", VideoJEPA_BCS(num_slices=64, lmbd=10)),
-        ("VideoJEPA_BCS_euler", VideoJEPA_BCS_Euler_buffer(num_slices=64, lmbd=10)),
+        ("VideoJEPA_BCS_euler", VideoJEPA_BCS_Euler_Scaleinvariant(num_slices=64, lmbd=10)),
     ]
 
     dists = ["normal", "uniform", "shifted"]
