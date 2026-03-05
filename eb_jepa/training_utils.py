@@ -592,3 +592,100 @@ def log_config(cfg: Union[Dict, DictConfig], title: str = "Run Configuration") -
         else:
             logger.info(f"  {section}={values}")
     logger.info("=" * 60)
+
+
+# Memory / dtype probe helpers (moved from examples/video_jepa/main.py)
+try:
+    import psutil
+except Exception:
+    psutil = None
+
+
+def _get_process_rss_mb():
+    if psutil is None:
+        return None
+    try:
+        return psutil.Process().memory_info().rss / 1024 ** 2
+    except Exception:
+        return None
+
+
+def _get_cuda_mem_mb():
+    if not torch.cuda.is_available():
+        return {}
+    # sync to get accurate numbers
+    try:
+        torch.cuda.synchronize()
+    except Exception:
+        pass
+    return {
+        "cuda_allocated_mb": torch.cuda.memory_allocated() / 1024 ** 2,
+        "cuda_reserved_mb": torch.cuda.memory_reserved() / 1024 ** 2,
+        "cuda_max_allocated_mb": torch.cuda.max_memory_allocated() / 1024 ** 2,
+        "cuda_max_reserved_mb": torch.cuda.max_memory_reserved() / 1024 ** 2,
+    }
+
+
+def _get_param_mem_breakdown(modules: dict):
+    out = {}
+    for name, mod in modules.items():
+        try:
+            bytes_sz = sum(p.numel() * p.element_size() for p in mod.parameters())
+            out[f"params_mb/{name}"] = bytes_sz / 1024 ** 2
+        except Exception:
+            out[f"params_mb/{name}"] = None
+    return out
+
+
+def _get_param_dtype_counts(modules: dict):
+    out = {}
+    for name, mod in modules.items():
+        try:
+            dtypes = {}
+            for p in mod.parameters():
+                k = str(p.dtype)
+                dtypes[k] = dtypes.get(k, 0) + p.numel()
+            out[f"dtype_count/{name}"] = {k: v for k, v in dtypes.items()}
+        except Exception:
+            out[f"dtype_count/{name}"] = None
+    return out
+
+
+def _log_memory_snapshot(step, modules: dict, wandb_run=None, prefix="train", dtype=None):
+    rss = _get_process_rss_mb()
+    cuda = _get_cuda_mem_mb()
+    params = _get_param_mem_breakdown(modules)
+    dtype_counts = _get_param_dtype_counts(modules)
+
+    metrics = {f"{prefix}/mem/rss_mb": rss if rss is not None else -1}
+    metrics.update({f"{prefix}/{k}": v for k, v in cuda.items()})
+    metrics.update(params)
+
+    # Console log
+    rss_s = f"{rss:.1f}MB" if rss is not None else "N/A"
+    cuda_s = (
+        f"alloc={metrics.get(f'{prefix}/cuda_allocated_mb', -1):.1f}MB, reserved={metrics.get(f'{prefix}/cuda_reserved_mb', -1):.1f}MB"
+        if torch.cuda.is_available()
+        else "no-cuda"
+    )
+    dtype_s = str(dtype) if dtype is not None else "unknown"
+    logger.info(f"Memory snapshot step={step} rss={rss_s} cuda={cuda_s} dtype={dtype_s}")
+
+    # Prepare wandb metrics (flatten dtype counts to numbers where possible)
+    if wandb_run:
+        try:
+            import wandb
+
+            log_dict = metrics.copy()
+            # add dtype_counts as wandb-friendly entries
+            for k, v in dtype_counts.items():
+                if isinstance(v, dict):
+                    for dt, cnt in v.items():
+                        log_dict[f"{k}/{dt}"] = cnt
+                else:
+                    log_dict[k] = -1
+            # include dtype string
+            log_dict[f"{prefix}/dtype"] = dtype_s
+            wandb.log(log_dict, step=step)
+        except Exception:
+            logger.warning("Failed to log memory snapshot to WandB")
