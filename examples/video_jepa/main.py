@@ -11,6 +11,10 @@ import fire
 import torch
 import torch.nn as nn
 from torch.amp import GradScaler, autocast
+try:
+    import psutil
+except Exception:
+    psutil = None
 from omegaconf import OmegaConf
 from torch.optim import Adam
 from torch.utils.data import DataLoader
@@ -43,10 +47,16 @@ from eb_jepa.training_utils import (
     setup_device,
     setup_seed,
     setup_wandb,
+    _get_process_rss_mb,
+    _get_cuda_mem_mb,
+    _get_param_mem_breakdown,
+    _get_param_dtype_counts,
+    _log_memory_snapshot,
 )
 from examples.video_jepa.eval import validation_loop
 
 logger = get_logger(__name__)
+# Memory/dtype probe helpers have been centralized in `eb_jepa.training_utils`.
 
 
 def run(
@@ -190,6 +200,21 @@ def run(
     detection_head.train()
     pixel_decoder.train()
 
+    # One-time probe flags
+    first_train_probe_done = False
+    first_val_probe_done = False
+
+    # Modules to include in param memory breakdown (add probes for decoder/head/jepa)
+    probe_modules = {
+        "jepa": jepa,
+        "encoder": encoder,
+        "predictor": predictor,
+        "projector": projector,
+        "regularizer": regularizer,
+        "pixel_decoder": pixel_decoder,
+        "detection_head": detection_head,
+    }
+
     # Mixed precision setup
     train_cfg = cfg.get("training", {})
     use_amp = train_cfg.get("use_amp", False)
@@ -200,7 +225,12 @@ def run(
         "float32": torch.float32,
     }
     dtype = dtype_map.get(dtype_str, torch.float32)
-    scaler = GradScaler(device.type, enabled=use_amp)
+    # Guard AMP usage on CPU-only setups to avoid unsupported float16 paths
+    if use_amp and not torch.cuda.is_available():
+        logger.warning("AMP requested but CUDA not available — disabling AMP for safety on CPU")
+        use_amp = False
+
+    scaler = GradScaler(enabled=use_amp)
     logger.info(f"Using AMP: {use_amp} with dtype: {dtype}")
 
     # Set learning rates for different components
@@ -258,6 +288,14 @@ def run(
             scaler.step(optimizer)
             scaler.update()
 
+            # One-time post-first-step memory probe
+            try:
+                if (not first_train_probe_done):
+                    _log_memory_snapshot(global_step, probe_modules, wandb_run=wandb_run, prefix="train")
+                    first_train_probe_done = True
+            except Exception:
+                logger.exception("Failed running post-first-step memory probe")
+
             # Update progress bar
             pbar.set_postfix(
                 {
@@ -274,6 +312,14 @@ def run(
             val_logs = validation_loop(
                 val_loader, jepa, detection_head, pixel_decoder, cfg.model.steps, device, use_amp=use_amp, dtype=dtype
             )
+
+            # One-time post-first-validation memory probe
+            try:
+                if (not first_val_probe_done):
+                    _log_memory_snapshot(global_step, probe_modules, wandb_run=wandb_run, prefix="val")
+                    first_val_probe_done = True
+            except Exception:
+                logger.exception("Failed running post-first-validation memory probe")
 
             train_metrics = {
                 "epoch": epoch,

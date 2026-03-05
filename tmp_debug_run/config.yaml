@@ -1,0 +1,55 @@
+meta:
+  seed: 2025
+  device: cpu
+  checkpoint_dir: checkpoints
+data:
+  dataset: moving_mnist
+  batch_size: 1
+  num_workers: 0
+model:
+  dobs: 1
+  henc: 32
+  dstc: 16
+  hpre: 32
+  steps: 4
+loss:
+  type: vcreg
+  cov_coeff: 100.0
+  std_coeff: 10.0
+  proj_hidden_mult: 4
+  proj_out_mult: 4
+optim:
+  epochs: 1
+  lr: 0.001
+logging:
+  log_wandb: false
+  wandb_group: null
+  log_every: 1
+  save_every: 10
+  tqdm_silent: false
+training:
+  use_amp: true
+  dtype: bfloat16
+sweep:
+  param_grid:
+    data.batch_size:
+    - 32
+    - 64
+    optim.lr:
+    - 0.001
+    - 0.0001
+    - 0.0005
+    loss.std_coeff:
+    - 1
+    - 10
+    - 100
+    - 200
+    loss.cov_coeff:
+    - 1
+    - 10
+    - 100
+    - 200
+    meta.seed:
+    - 1
+    - 1000
+    - 10000
