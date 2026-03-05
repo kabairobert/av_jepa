@@ -240,7 +240,7 @@ class DetHead(nn.Module):
         # [8, T, 8, 8]
         x = self.head(x).squeeze(1)
 
-        return torch.sigmoid(x)
+        return x  # logits; sigmoid is applied inside BCEWithLogitsLoss
 
     @torch.no_grad()
     def score(self, preds, targets):

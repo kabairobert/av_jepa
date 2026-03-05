@@ -189,7 +189,7 @@ def run(
     decoder = ImageDecoder(cfg.model.dstc, cfg.model.dobs)
     dethead = DetHead(cfg.model.dstc, cfg.model.hpre, cfg.model.dobs)
     pixel_decoder = JEPAProbe(jepa, decoder, nn.MSELoss()).to(device)
-    detection_head = JEPAProbe(jepa, dethead, nn.BCELoss()).to(device)
+    detection_head = JEPAProbe(jepa, dethead, nn.BCEWithLogitsLoss()).to(device)
 
     # Log model structure and parameters
     encoder_params = sum(p.numel() for p in encoder.parameters())
