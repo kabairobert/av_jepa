@@ -8,7 +8,9 @@ Joint Embedding Predictive Architecture (JEPA) with VC regularization.
 from pathlib import Path
 
 import fire
+import torch
 import torch.nn as nn
+from torch.amp import GradScaler, autocast
 from omegaconf import OmegaConf
 from torch.optim import Adam
 from torch.utils.data import DataLoader
@@ -188,6 +190,19 @@ def run(
     detection_head.train()
     pixel_decoder.train()
 
+    # Mixed precision setup
+    train_cfg = cfg.get("training", {})
+    use_amp = train_cfg.get("use_amp", False)
+    dtype_str = train_cfg.get("dtype", "float32").lower()
+    dtype_map = {
+        "float16": torch.float16,
+        "bfloat16": torch.bfloat16,
+        "float32": torch.float32,
+    }
+    dtype = dtype_map.get(dtype_str, torch.float32)
+    scaler = GradScaler(device.type, enabled=use_amp)
+    logger.info(f"Using AMP: {use_amp} with dtype: {dtype}")
+
     # Set learning rates for different components
     # Lower learning rate for pixel decoder to prevent overfitting
     optimizer = Adam(
@@ -226,20 +241,22 @@ def run(
             loc_map = batch["digit_location"]
 
             optimizer.zero_grad()
-            _, (jepa_loss, regl, _, regldict, pl) = jepa.unroll(
-                x,
-                actions=None,
-                nsteps=cfg.model.steps,
-                unroll_mode="parallel",
-                compute_loss=True,
-                return_all_steps=False,
-            )
-            recon_loss = pixel_decoder(x, x)
-            det_loss = detection_head(x, loc_map)
-            total_loss = jepa_loss + recon_loss + det_loss
+            with autocast(device.type, dtype=dtype, enabled=use_amp):
+                _, (jepa_loss, regl, _, regldict, pl) = jepa.unroll(
+                    x,
+                    actions=None,
+                    nsteps=cfg.model.steps,
+                    unroll_mode="parallel",
+                    compute_loss=True,
+                    return_all_steps=False,
+                )
+                recon_loss = pixel_decoder(x, x)
+                det_loss = detection_head(x, loc_map)
+                total_loss = jepa_loss + recon_loss + det_loss
 
-            total_loss.backward()
-            optimizer.step()
+            scaler.scale(total_loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             # Update progress bar
             pbar.set_postfix(
@@ -255,7 +272,7 @@ def run(
         # Validation and logging
         if epoch % cfg.logging.log_every == 0:
             val_logs = validation_loop(
-                val_loader, jepa, detection_head, pixel_decoder, cfg.model.steps, device
+                val_loader, jepa, detection_head, pixel_decoder, cfg.model.steps, device, use_amp=use_amp, dtype=dtype
             )
 
             train_metrics = {
