@@ -255,11 +255,14 @@ class DetHead(nn.Module):
             y = targets[:, T:]
             x = x[:, T:]
 
-            ap = average_precision_score(
-                y.flatten().detach().long().cpu().numpy(),
-                x.flatten().detach().cpu().numpy(),
-                average="weighted",
-            )
+            # Convert predictions to probabilities and ensure float32 for sklearn
+            try:
+                x_np = torch.sigmoid(x).to(torch.float32).flatten().detach().cpu().numpy()
+            except Exception:
+                x_np = torch.sigmoid(x).float().flatten().detach().cpu().numpy()
+            y_np = y.flatten().detach().long().cpu().numpy()
+
+            ap = average_precision_score(y_np, x_np, average="weighted")
             scores.append(ap)
 
         return scores
