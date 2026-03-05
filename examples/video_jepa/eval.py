@@ -2,6 +2,7 @@ import collections
 
 import numpy as np
 import torch
+from torch.amp import autocast
 import torch.nn.functional as F
 import wandb
 from einops import rearrange, repeat
@@ -113,7 +114,7 @@ def visualize_videos(
 
 # Run full loop over validation set and compute metrics
 @torch.inference_mode()
-def validation_loop(val_loader, jepa, detection_head, pixel_decoder, steps, device):
+def validation_loop(val_loader, jepa, detection_head, pixel_decoder, steps, device, use_amp=False, dtype=torch.float32):
 
     # Set modules to eval mode
     jepa.eval()
@@ -126,26 +127,28 @@ def validation_loop(val_loader, jepa, detection_head, pixel_decoder, steps, devi
         x = batch["video"]
         loc_map = batch["digit_location"]
 
-        recon_loss = pixel_decoder(x, x)
-        det_loss = detection_head(x, loc_map)
+        with autocast(device.type, dtype=dtype, enabled=use_amp):
+            recon_loss = pixel_decoder(x, x)
+            det_loss = detection_head(x, loc_map)
 
-        logs = {
-            "val/recon_loss": float(recon_loss.item()),
-            "val/det_loss": float(det_loss.item()),
-        }
-        for k, v in logs.items():
-            metrics[k].append(v)
+            logs = {
+                "val/recon_loss": float(recon_loss.item()),
+                "val/det_loss": float(det_loss.item()),
+            }
+            for k, v in logs.items():
+                metrics[k].append(v)
 
-        T = x.shape[2]
-        preds, _ = jepa.unroll(
-            x,
-            actions=None,
-            nsteps=T - 2,
-            unroll_mode="parallel",
-            compute_loss=False,
-            return_all_steps=True,
-        )
-        scores = detection_head.head.score(preds, loc_map[:, 2:])
+            T = x.shape[2]
+            preds, _ = jepa.unroll(
+                x,
+                actions=None,
+                nsteps=T - 2,
+                unroll_mode="parallel",
+                compute_loss=False,
+                return_all_steps=True,
+            )
+            scores = detection_head.head.score(preds, loc_map[:, 2:])
+            
         for s, score in enumerate(scores):
             metrics[f"AP_{s}"].append(float(score))
 

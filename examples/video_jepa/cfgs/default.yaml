@@ -55,7 +55,7 @@ logging:
 
 training:
   use_amp: true       # Use automatic mixed precision
-  dtype: float16      # float16 or bfloat16
+  dtype: bfloat16     # float16, bfloat16, or float32
 
 # --- Parameters used when running with --full-sweep
 # By default, only the parameters specified above are used
