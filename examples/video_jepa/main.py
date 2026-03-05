@@ -139,7 +139,7 @@ def run(
     loss_type = cfg.loss.get("type", "vcreg")
     logger.info(f"Using regularizer: {loss_type}")
     # Determine default multipliers per loss type
-    _BCS_TYPES = ("bcs", "bcs-euler")
+    _BCS_TYPES = ("bcs", "bcs-euler-scalefree")
     if loss_type in _BCS_TYPES:
         # Smaller output dim for BCS/SIGReg (analogous to image_jepa: hidden=2048, output=128)
         default_h_mult = 4
@@ -162,7 +162,7 @@ def run(
             lmbd=cfg.loss.get("lmbd"),
             proj=projector,
         )
-    elif loss_type == "bcs-euler":
+    elif loss_type == "bcs-euler-scalefree":
         regularizer = VideoJEPA_BCS_Euler_buffer(
             num_slices=cfg.loss.get("num_slices"),
             lmbd=cfg.loss.get("lmbd"),

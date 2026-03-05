@@ -27,13 +27,10 @@ model:
   steps: 2          # Number of prediction steps during training
 
 loss:
-  type: bcs-euler  # Regularizer type:
+  type: bcs-euler-scalefree  # Regularizer type:
                    #   vcreg          -- variance-covariance regularization
                    #   bcs            -- BCS/SIGReg with original complex ECF
-                   #   bcs-euler      -- BCS/SIGReg with real-valued Euler ECF + distributed ECF sync
-  ecf_distributed_sync: true  # ECF synchronization scope (only used when type: bcs-euler):
-                              #   true  -- all_reduce ECF before squared distance (unbiased, recommended)
-                              #   false -- each worker independent (biased under DDP, ablation baseline)
+                   #   bcs-euler-scalefree -- BCS/SIGReg with real-valued Euler ECF (scale-free Euler ECF)
   # VCReg-specific (used when type: vcreg)
   # cov_coeff: 100.0  # Covariance loss weight
   # std_coeff: 10.0   # Standard deviation loss weight
