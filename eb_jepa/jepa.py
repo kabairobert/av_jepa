@@ -185,9 +185,23 @@ class JEPA(JEPAbase):
                 if return_all_steps:
                     all_steps.append(predicted_states.clone())
                 if compute_loss:
-                    ploss += (
-                        self.predcost(pred_step, state[:, :, i + 1 : i + 2]) / nsteps
-                    )
+                    # Debug: log shapes to diagnose empty prediction steps
+                    target_slice = state[:, :, i + 1 : i + 2]
+                    try:
+                        logging.debug(
+                            f"JEPA.unroll debug i={i} nsteps={nsteps} effective_ctxt_window={effective_ctxt_window} "
+                            f"context_states.shape={tuple(context_states.shape)} pred_step.shape={tuple(pred_step.shape)} "
+                            f"target.shape={tuple(target_slice.shape)} state.shape={tuple(state.shape)} predicted_states.shape={tuple(predicted_states.shape)}"
+                        )
+                    except Exception:
+                        pass
+                    # Guard against empty pred_step (helps diagnose misaligned unroll/config)
+                    if getattr(pred_step, "numel", lambda: 1)() == 0 or (hasattr(pred_step, "shape") and len(pred_step.shape) >= 3 and pred_step.shape[2] == 0):
+                        raise RuntimeError(
+                            f"Empty pred_step at i={i}; pred_step.shape={getattr(pred_step,'shape',None)}; "
+                            f"target.shape={tuple(target_slice.shape)}; nsteps={nsteps}; effective_ctxt_window={effective_ctxt_window}; state_T={state.shape[2]}"
+                        )
+                    ploss += self.predcost(pred_step, target_slice) / nsteps
         else:
             raise ValueError(f"Unknown unroll_mode: {unroll_mode}")
 
