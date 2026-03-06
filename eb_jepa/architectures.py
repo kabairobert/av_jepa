@@ -122,8 +122,17 @@ class StateOnlyPredictor(SimplePredictor):
 
     def forward(self, x, a):
         # action not used on purpose
-        prev_state = x[:, :, :-1]  # [B, C, T-1, H, W]
-        next_state = x[:, :, 1:]  # [B, C, T-1, H, W]
+        t = x.shape[2]
+        if t <= 1:
+            # If only a single context frame is provided, duplicate it so that
+            # the predictor receives a non-empty pair of (prev, next) frames.
+            # This makes autoregressive step with context window == 1 usable with
+            # convolutional predictors that expect pairs of frames.
+            prev_state = x
+            next_state = x
+        else:
+            prev_state = x[:, :, :-1]  # [B, C, T-1, H, W]
+            next_state = x[:, :, 1:]  # [B, C, T-1, H, W]
         combined_xa = torch.cat((prev_state, next_state), dim=1)
         return self.predictor(combined_xa)
 
