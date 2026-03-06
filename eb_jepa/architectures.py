@@ -253,26 +253,58 @@ class DetHead(nn.Module):
 
     @torch.no_grad()
     def score(self, preds, targets):
+        """Score predictions against targets using average precision.
+
+        Handles two preds formats:
+        - Parallel mode: list of nsteps tensors, each [B, C, T_pred, H, W] (same T_pred)
+        - Autoregressive mode: list of nsteps tensors where preds[i] has shape
+          [B, C, ctxt+i+1, H, W] (grows each step); only the freshly predicted last
+          frame is scored at each step.
+        """
+        if not isinstance(preds, (list, tuple)):
+            preds = [preds]
+
+        # Detect autoregressive format: successive tensors have different time lengths
+        is_autoregressive = (
+            len(preds) >= 2
+            and hasattr(preds[0], "shape")
+            and hasattr(preds[1], "shape")
+            and preds[0].shape[2] != preds[1].shape[2]
+        )
 
         scores = []
-        for T in range(len(preds) - 1):
-            x = preds[T]
-            x = [F.adaptive_avg_pool2d(x[:, :, t], (8, 8)) for t in range(x.shape[2])]
-            x = torch.stack(x, 2)
-            x = self.head(x).squeeze(1)
 
-            y = targets[:, T:]
-            x = x[:, T:]
-
-            # Convert predictions to probabilities and ensure float32 for sklearn
-            try:
-                x_np = torch.sigmoid(x).to(torch.float32).flatten().detach().cpu().numpy()
-            except Exception:
-                x_np = torch.sigmoid(x).float().flatten().detach().cpu().numpy()
-            y_np = y.flatten().detach().long().cpu().numpy()
-
-            ap = average_precision_score(y_np, x_np, average="weighted")
-            scores.append(ap)
+        if is_autoregressive:
+            # Score only the last (newly predicted) frame at each step
+            for i, pred in enumerate(preds[:-1]):
+                x = pred[:, :, -1:]  # [B, C, 1, H, W]
+                x = [F.adaptive_avg_pool2d(x[:, :, t], (8, 8)) for t in range(x.shape[2])]
+                x = torch.stack(x, 2)   # [B, C, 1, 8, 8]
+                x = self.head(x).squeeze(1)  # [B, 1, 8, 8]
+                y = targets[:, i : i + 1]   # [B, 1, 8, 8]
+                try:
+                    x_np = torch.sigmoid(x).to(torch.float32).flatten().detach().cpu().numpy()
+                except Exception:
+                    x_np = torch.sigmoid(x).float().flatten().detach().cpu().numpy()
+                y_np = y.flatten().detach().long().cpu().numpy()
+                ap = average_precision_score(y_np, x_np, average="weighted")
+                scores.append(ap)
+        else:
+            # Parallel mode: all preds[T] have the same time length
+            for T in range(len(preds) - 1):
+                x = preds[T]
+                x = [F.adaptive_avg_pool2d(x[:, :, t], (8, 8)) for t in range(x.shape[2])]
+                x = torch.stack(x, 2)
+                x = self.head(x).squeeze(1)
+                y = targets[:, T:]
+                x = x[:, T:]
+                try:
+                    x_np = torch.sigmoid(x).to(torch.float32).flatten().detach().cpu().numpy()
+                except Exception:
+                    x_np = torch.sigmoid(x).float().flatten().detach().cpu().numpy()
+                y_np = y.flatten().detach().long().cpu().numpy()
+                ap = average_precision_score(y_np, x_np, average="weighted")
+                scores.append(ap)
 
         return scores
 

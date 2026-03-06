@@ -198,11 +198,9 @@ def validation_loop(val_loader, jepa, detection_head, pixel_decoder, steps, devi
                 compute_loss=False,
                 return_all_steps=True,
             )
-            try:
-                preds_aligned = align_preds_for_visualization(preds, jepa.encoder(x), unroll_mode=unroll_mode, ctxt_window=ctxt_window)
-            except Exception:
-                preds_aligned = preds
-            scores = detection_head.head.score(preds_aligned, loc_map[:, 2:])
+            # score always receives the raw preds list (one tensor per step);
+            # preds_aligned (single tensor) is only used for visualization
+            scores = detection_head.head.score(preds, loc_map[:, 2:])
 
         for s, score in enumerate(scores):
             metrics[f"AP_{s}"].append(float(score))
