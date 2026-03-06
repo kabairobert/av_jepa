@@ -1,0 +1,57 @@
+# Video JEPA Training Configuration (Autoregressive)
+# Based on sigreg-mig.yaml with autoregressive unroll settings
+meta:
+  seed: 2025
+  device: auto  # auto, cuda, or cpu
+  checkpoint_dir: checkpoints  # Directory to save checkpoints and logs
+
+data:
+  dataset: moving_mnist
+  batch_size: 32
+  num_workers: 8
+
+model:
+  # Encoder (ResNet5)
+  dobs: 1           # Input channels (grayscale)
+  henc: 32          # Hidden dimension in encoder
+  dstc: 16          # Output representation dimension
+
+  # Predictor (ResUNet)
+  hpre: 32          # Hidden dimension in predictor
+
+  # Training
+  steps: 2          # Number of prediction steps during training
+  # Unroll mode: 'parallel' or 'autoregressive'
+  unroll_mode: autoregressive
+  # Context window length used for predictor / alignment
+  ctxt_window_time: 2
+
+loss:
+  type: bcs-euler-scalefree
+  num_slices: 32
+  lmbd: 10
+  proj_hidden_mult: 4
+  proj_out_mult: 4
+
+optim:
+  epochs: 50
+  lr: 1.0e-3
+
+logging:
+  log_wandb: true
+  wandb_group:
+  log_every: 1
+  save_every: 10
+  tqdm_silent: false
+
+training:
+  use_amp: true
+  dtype: bfloat16
+
+sweep:
+  param_grid:
+    data.batch_size: [32, 64]
+    optim.lr: [0.001, 0.0001, 0.0005]
+    loss.std_coeff: [1, 10, 100, 200]
+    loss.cov_coeff: [1, 10, 100, 200]
+    meta.seed: [1, 1000, 10000]

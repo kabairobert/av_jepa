@@ -146,7 +146,9 @@ def run(
     logger.info("Initializing model...")
     encoder = ResNet5(cfg.model.dobs, cfg.model.henc, cfg.model.dstc)
     predictor_model = ResUNet(2 * cfg.model.dstc, cfg.model.hpre, cfg.model.dstc)
-    predictor = StateOnlyPredictor(predictor_model, context_length=2)
+    # Context window for predictor (configurable for autoregressive mode)
+    ctxt_window = int(cfg.model.get("ctxt_window_time", 2))
+    predictor = StateOnlyPredictor(predictor_model, context_length=ctxt_window)
 
     loss_type = cfg.loss.get("type", "vcreg")
     logger.info(f"Using regularizer: {loss_type}")
@@ -233,6 +235,9 @@ def run(
     scaler = GradScaler(enabled=use_amp)
     logger.info(f"Using AMP: {use_amp} with dtype: {dtype}")
 
+    # Unroll mode (parallel or autoregressive)
+    unroll_mode = cfg.model.get("unroll_mode", "parallel")
+
     # Set learning rates for different components
     # Lower learning rate for pixel decoder to prevent overfitting
     optimizer = Adam(
@@ -276,7 +281,7 @@ def run(
                     x,
                     actions=None,
                     nsteps=cfg.model.steps,
-                    unroll_mode="parallel",
+                    unroll_mode=unroll_mode,
                     compute_loss=True,
                     return_all_steps=False,
                 )
@@ -310,7 +315,16 @@ def run(
         # Validation and logging
         if epoch % cfg.logging.log_every == 0:
             val_logs = validation_loop(
-                val_loader, jepa, detection_head, pixel_decoder, cfg.model.steps, device, use_amp=use_amp, dtype=dtype
+                val_loader,
+                jepa,
+                detection_head,
+                pixel_decoder,
+                cfg.model.steps,
+                device,
+                use_amp=use_amp,
+                dtype=dtype,
+                unroll_mode=unroll_mode,
+                ctxt_window=ctxt_window,
             )
 
             # One-time post-first-validation memory probe

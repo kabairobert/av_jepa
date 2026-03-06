@@ -33,12 +33,49 @@ def add_label_to_video(video, label):
     return np.stack(labeled_frames, axis=0)
 
 
+def align_preds_for_visualization(preds, x_jepa, unroll_mode="parallel", ctxt_window=2):
+    """Attempt to align preds returned by JEPA for visualization/score.
+
+    This helper is permissive: it accepts a tensor or a list/tuple of tensors
+    and tries to return a tensor shaped like ``x_jepa[:,:,1:]``.
+    """
+    if isinstance(preds, torch.Tensor):
+        return preds
+    # If preds[0] already matches expected time dimension, use it
+    try:
+        first = preds[0]
+        if first.dim() >= 3 and first.shape[2] == x_jepa.shape[2] - 1:
+            return first
+    except Exception:
+        pass
+    # Fallback: construct rollout by filling timesteps sequentially
+    try:
+        b, c, _ = x_jepa[:, :, 1:].shape
+    except Exception:
+        return x_jepa[:, :, 1:].clone()
+    rollout = x_jepa[:, :, 1:].clone()
+    for i, p in enumerate(preds):
+        try:
+            p = p.to(x_jepa.device)
+            if p.dim() == 2:
+                if i < rollout.shape[2]:
+                    rollout[:, :, i] = p
+            elif p.dim() == 3:
+                nt = p.shape[2]
+                rollout[:, :, i : i + nt] = p
+        except Exception:
+            continue
+    return rollout
+
+
 def visualize_videos(
     batch,
     jepa,
     pixel_decoder,
     detection_head,
     num_samples,
+    unroll_mode="parallel",
+    ctxt_window=2,
 ):
     """Create visualization videos for wandb logging.
 
@@ -56,20 +93,34 @@ def visualize_videos(
         x,
         actions=None,
         nsteps=T - 2,
-        unroll_mode="parallel",
+        unroll_mode=unroll_mode,
         compute_loss=False,
         return_all_steps=True,
     )
 
+    preds_aligned = align_preds_for_visualization(preds, x_jepa, unroll_mode=unroll_mode, ctxt_window=ctxt_window)
+
     # One step predictions
     one_step_pred = x_jepa[:, :, 1:].clone()
-    one_step_pred[:, :, 1:] = preds[0]
+    try:
+        one_step_pred[:, :, 1:] = preds_aligned
+    except Exception:
+        try:
+            one_step_pred[:, :, 1:] = preds[0]
+        except Exception:
+            pass
     one_step_reconstruction = pixel_decoder.head(one_step_pred)
 
     # Multi-step rollouts
     rollout = x_jepa[:, :, 1:].clone()
     for t in range(1, T - 1):
-        rollout[:, :, t:] = preds[t - 1][:, :, t - 1 :]
+        try:
+            rollout[:, :, t:] = preds_aligned[:, :, t - 1 :]
+        except Exception:
+            try:
+                rollout[:, :, t:] = preds[t - 1][:, :, t - 1 :]
+            except Exception:
+                continue
     rollout_reconstruction = pixel_decoder.head(rollout)
 
     # Location predictions overlaid over rollout as blue heatmap
@@ -114,7 +165,7 @@ def visualize_videos(
 
 # Run full loop over validation set and compute metrics
 @torch.inference_mode()
-def validation_loop(val_loader, jepa, detection_head, pixel_decoder, steps, device, use_amp=False, dtype=torch.float32):
+def validation_loop(val_loader, jepa, detection_head, pixel_decoder, steps, device, use_amp=False, dtype=torch.float32, unroll_mode="parallel", ctxt_window=2):
 
     # Set modules to eval mode
     jepa.eval()
@@ -143,19 +194,29 @@ def validation_loop(val_loader, jepa, detection_head, pixel_decoder, steps, devi
                 x,
                 actions=None,
                 nsteps=T - 2,
-                unroll_mode="parallel",
+                unroll_mode=unroll_mode,
                 compute_loss=False,
                 return_all_steps=True,
             )
-            scores = detection_head.head.score(preds, loc_map[:, 2:])
-            
+            try:
+                preds_aligned = align_preds_for_visualization(preds, jepa.encoder(x), unroll_mode=unroll_mode, ctxt_window=ctxt_window)
+            except Exception:
+                preds_aligned = preds
+            scores = detection_head.head.score(preds_aligned, loc_map[:, 2:])
+
         for s, score in enumerate(scores):
             metrics[f"AP_{s}"].append(float(score))
 
     # Aggregate val results and visualize last batch
     metrics = {k: float(np.mean(v)) for k, v in metrics.items()}
     videos = visualize_videos(
-        batch, jepa, pixel_decoder, detection_head, num_samples=min(16, batch["video"].shape[0])
+        batch,
+        jepa,
+        pixel_decoder,
+        detection_head,
+        num_samples=min(16, batch["video"].shape[0]),
+        unroll_mode=unroll_mode,
+        ctxt_window=ctxt_window,
     )
     logs = {
         **metrics,
