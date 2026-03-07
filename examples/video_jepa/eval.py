@@ -34,38 +34,31 @@ def add_label_to_video(video, label):
 
 
 def align_preds_for_visualization(preds, x_jepa, unroll_mode="parallel", ctxt_window=2):
-    """Attempt to align preds returned by JEPA for visualization/score.
+    """Align list-of-step preds from jepa.unroll into a single [B, C, T, H, W] tensor
+    suitable for visualization.
 
-    This helper is permissive: it accepts a tensor or a list/tuple of tensors
-    and tries to return a tensor shaped like ``x_jepa[:,:,1:]``.
+    - Parallel mode: preds[0] has shape [B, C, T-1, H, W] matching x_jepa[:,: 1:],
+      so it is returned directly.
+    - Autoregressive mode: preds[i] grows each step [B, C, ctxt+i+1, H, W].
+      We extract only the newly predicted last frame from each step and stack
+      them into a [B, C, nsteps, H, W] rollout tensor.
     """
     if isinstance(preds, torch.Tensor):
         return preds
-    # If preds[0] already matches expected time dimension, use it
+    if not preds:
+        return x_jepa[:, :, 1:].clone()
+
+    # Parallel mode: preds[0] spans all prediction timesteps
+    first = preds[0]
+    if first.dim() >= 3 and first.shape[2] == x_jepa.shape[2] - 1:
+        return first
+
+    # Autoregressive mode: stack the last (freshly predicted) frame from each step
     try:
-        first = preds[0]
-        if first.dim() >= 3 and first.shape[2] == x_jepa.shape[2] - 1:
-            return first
-    except Exception:
-        pass
-    # Fallback: construct rollout by filling timesteps sequentially
-    try:
-        b, c, _ = x_jepa[:, :, 1:].shape
+        frames = [p[:, :, -1:] for p in preds]
+        return torch.cat(frames, dim=2)  # [B, C, nsteps, H, W]
     except Exception:
         return x_jepa[:, :, 1:].clone()
-    rollout = x_jepa[:, :, 1:].clone()
-    for i, p in enumerate(preds):
-        try:
-            p = p.to(x_jepa.device)
-            if p.dim() == 2:
-                if i < rollout.shape[2]:
-                    rollout[:, :, i] = p
-            elif p.dim() == 3:
-                nt = p.shape[2]
-                rollout[:, :, i : i + nt] = p
-        except Exception:
-            continue
-    return rollout
 
 
 def visualize_videos(
