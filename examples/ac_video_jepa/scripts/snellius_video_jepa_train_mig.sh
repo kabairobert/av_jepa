@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=ejv
+#SBATCH --job-name=ejacv
 #SBATCH --partition=gpu_mig
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=9
 #SBATCH --gpus=1
 #SBATCH --mem=60G
-#SBATCH --time=06:00:00
+#SBATCH --time=04:00:00
 #SBATCH --output=%x_%j.out
 #SBATCH --error=%x_%j.err
 
@@ -36,7 +36,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 # Run training
 echo "Starting training..."
-uv run python -m examples.video_jepa.main \
-    --fname examples/video_jepa/cfgs/sigreg-mig.yaml
+uv run python -m examples.ac_video_jepa.main \
+    --fname examples/ac_video_jepa/cfgs/train.yaml
 
 echo "Training complete."
