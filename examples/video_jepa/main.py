@@ -68,29 +68,74 @@ def _capture_shapes(sample_x, encoder, projector, device):
     try:
         with torch.no_grad():
             x = sample_x.to(device)
+
+            # Normalize possible single-sample shapes to have a batch dim.
+            # Common dataset single-sample shapes: (C, T, H, W) or (C, H, W).
+            try:
+                if x.dim() == 4:
+                    # Heuristic: if first dim looks like channels (small) and second dim > 1 (time),
+                    # then treat as (C, T, H, W) and add batch dim -> (1, C, T, H, W).
+                    if x.shape[0] <= 4 and x.shape[1] > 1:
+                        x = x.unsqueeze(0)
+                elif x.dim() == 3:
+                    # (C, H, W) -> (1, C, H, W)
+                    x = x.unsqueeze(0)
+            except Exception:
+                logger.exception("Failed normalizing sample shape for capture")
+
             # encoder: prefer full input, fall back to single frame if needed
             try:
                 enc_out = encoder(x)
             except Exception:
+                logger.exception("Encoder failed on full input when capturing shapes")
                 try:
+                    # Try single-frame fallback if time dim exists
                     if x.dim() == 5:
                         enc_out = encoder(x[:, :, 0])
                     else:
                         enc_out = encoder(x)
                 except Exception:
+                    logger.exception("Encoder single-frame fallback also failed when capturing shapes")
                     enc_out = None
 
             enc_shape = str(list(enc_out.shape)) if enc_out is not None else None
 
             proj_str = None
             if enc_out is not None:
-                proj_in = enc_out
-                if proj_in.dim() > 2:
-                    proj_in = proj_in.view(proj_in.size(0), -1)
+                # Build projector input as [N_samples, C] where C is feature dim.
+                # Encoder outputs are typically [B, C, T, H, W] (or [B, C, H, W]).
                 try:
+                    if enc_out.dim() == 5:
+                        b, c, t, h, w = enc_out.shape
+                        proj_in = enc_out.permute(0, 2, 3, 4, 1).reshape(-1, c)
+                    elif enc_out.dim() == 4:
+                        b, c, h, w = enc_out.shape
+                        proj_in = enc_out.permute(0, 2, 3, 1).reshape(-1, c)
+                    elif enc_out.dim() == 2:
+                        proj_in = enc_out
+                    else:
+                        proj_in = enc_out.reshape(enc_out.size(0), -1)
+
+                    # Move to projector device and ensure contiguous float tensor
+                    try:
+                        dev = next(projector.parameters()).device
+                        proj_in = proj_in.to(dev)
+                    except Exception:
+                        pass
+                    proj_in = proj_in.contiguous().float()
+
+                    # Use only a small sample to avoid heavy computation
+                    if proj_in.size(0) > 8:
+                        proj_in = proj_in[:8]
+
                     # Use Projector.shape_str() as single source of truth (includes hidden shapes)
-                    proj_str = projector.shape_str(proj_in)
+                    try:
+                        proj_str = projector.shape_str(proj_in)
+                    except Exception:
+                        logger.exception("Projector.shape_str failed when capturing shapes")
+                        proj_str = None
                 except Exception:
+                    logger.exception("Failed preparing projector input for shape capture")
                     proj_str = None
 
             return {
@@ -99,6 +144,7 @@ def _capture_shapes(sample_x, encoder, projector, device):
                 "projector_output": proj_str,
             }
     except Exception:
+        logger.exception("Failed capturing tensor shapes")
         return {"raw_input": str(list(sample_x.shape))}
 
 
