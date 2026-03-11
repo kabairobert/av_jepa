@@ -689,3 +689,35 @@ def _log_memory_snapshot(step, modules: dict, wandb_run=None, prefix="train", dt
             wandb.log(log_dict, step=step)
         except Exception:
             logger.warning("Failed to log memory snapshot to WandB")
+
+
+def _log_tensor_shapes(step, shapes: dict, wandb_run=None, prefix="train"):
+    """Log tensor shapes once: console + flat WandB keys (strings only).
+
+    `shapes` is a dict mapping 'raw_input', 'encoder_output', 'projector_output' to
+    string representations of shapes.
+    """
+    try:
+        raw = shapes.get("raw_input") if shapes is not None else None
+        enc = shapes.get("encoder_output") if shapes is not None else None
+        proj = shapes.get("projector_output") if shapes is not None else None
+
+        logger.info(f"TensorShapes {prefix}: raw={raw} enc={enc} proj={proj}")
+
+        if wandb_run:
+            try:
+                import wandb
+
+                logd = {}
+                if raw is not None:
+                    logd[f"{prefix}/shape/raw_input"] = raw
+                if enc is not None:
+                    logd[f"{prefix}/shape/encoder_output"] = enc
+                if proj is not None:
+                    logd[f"{prefix}/shape/projector_output"] = proj
+                if logd:
+                    wandb.log(logd, step=step)
+            except Exception:
+                logger.exception("Failed to log tensor shapes to WandB")
+    except Exception:
+        logger.exception("Failed to produce tensor shapes log")

@@ -222,6 +222,33 @@ class Projector(nn.Module):
     def forward(self, x):
         return self.net(x)
 
+    def shape_str(self, input_tensor=None):
+        """Return a concise single-line description of projector input/output shapes.
+
+        If `input_tensor` is provided, runs a forward pass under no_grad to get output
+        shape; otherwise returns the configured output dimension.
+        """
+        try:
+            if input_tensor is None:
+                return f"out_dim={self.out_dim}"
+
+            # Run forward under no_grad and capture shapes after each Linear layer.
+            linear_shapes = []
+            x = input_tensor
+            with torch.no_grad():
+                for module in self.net:
+                    x = module(x)
+                    if isinstance(module, nn.Linear):
+                        linear_shapes.append(list(x.shape))
+
+            # linear_shapes[-1] is final output; the rest are hidden activations
+            hidden_shapes = linear_shapes[:-1] if len(linear_shapes) > 1 else []
+            out_shape = linear_shapes[-1] if linear_shapes else None
+
+            return f"in={list(input_tensor.shape)} hidden={hidden_shapes} out={out_shape}"
+        except Exception:
+            return f"out_dim={self.out_dim}"
+
 
 class DetHead(nn.Module):
     """Detection head that pools features and predicts binary maps."""

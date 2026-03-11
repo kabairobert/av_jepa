@@ -52,11 +52,54 @@ from eb_jepa.training_utils import (
     _get_param_mem_breakdown,
     _get_param_dtype_counts,
     _log_memory_snapshot,
+    _log_tensor_shapes,
 )
 from examples.video_jepa.eval import validation_loop
 
 logger = get_logger(__name__)
 # Memory/dtype probe helpers have been centralized in `eb_jepa.training_utils`.
+
+
+def _capture_shapes(sample_x, encoder, projector, device):
+    """Capture raw input, encoder output, and projector output shapes safely.
+
+    Returns a dict with stringified shapes for keys: raw_input, encoder_output, projector_output.
+    """
+    try:
+        with torch.no_grad():
+            x = sample_x.to(device)
+            # encoder: prefer full input, fall back to single frame if needed
+            try:
+                enc_out = encoder(x)
+            except Exception:
+                try:
+                    if x.dim() == 5:
+                        enc_out = encoder(x[:, :, 0])
+                    else:
+                        enc_out = encoder(x)
+                except Exception:
+                    enc_out = None
+
+            enc_shape = str(list(enc_out.shape)) if enc_out is not None else None
+
+            proj_str = None
+            if enc_out is not None:
+                proj_in = enc_out
+                if proj_in.dim() > 2:
+                    proj_in = proj_in.view(proj_in.size(0), -1)
+                try:
+                    # Use Projector.shape_str() as single source of truth (includes hidden shapes)
+                    proj_str = projector.shape_str(proj_in)
+                except Exception:
+                    proj_str = None
+
+            return {
+                "raw_input": str(list(sample_x.shape)),
+                "encoder_output": enc_shape,
+                "projector_output": proj_str,
+            }
+    except Exception:
+        return {"raw_input": str(list(sample_x.shape))}
 
 
 def run(
@@ -288,13 +331,17 @@ def run(
             scaler.step(optimizer)
             scaler.update()
 
-            # One-time post-first-step memory probe
-            try:
-                if (not first_train_probe_done):
+            # One-time post-first-step memory probe (simplified)
+            if not first_train_probe_done:
+                try:
                     _log_memory_snapshot(global_step, probe_modules, wandb_run=wandb_run, prefix="train")
+                    if cfg.logging.get("log_tensor_shapes", True):
+                        shapes = _capture_shapes(x, encoder, projector, device)
+                        _log_tensor_shapes(global_step, shapes, wandb_run=wandb_run, prefix="train")
+                except Exception:
+                    logger.exception("Failed running post-first-step memory probe")
+                finally:
                     first_train_probe_done = True
-            except Exception:
-                logger.exception("Failed running post-first-step memory probe")
 
             # Update progress bar
             pbar.set_postfix(
@@ -313,13 +360,29 @@ def run(
                 val_loader, jepa, detection_head, pixel_decoder, cfg.model.steps, device, use_amp=use_amp, dtype=dtype
             )
 
-            # One-time post-first-validation memory probe
-            try:
-                if (not first_val_probe_done):
+            # One-time post-first-validation memory probe (simplified)
+            if not first_val_probe_done:
+                try:
                     _log_memory_snapshot(global_step, probe_modules, wandb_run=wandb_run, prefix="val")
+                    if cfg.logging.get("log_tensor_shapes", True):
+                        # Safely attempt to fetch a single validation sample without nested try/excepts
+                        sample_batch = next(iter(val_loader), None)
+                        if sample_batch is not None:
+                            sample_batch = {k: v.to(device) for k, v in sample_batch.items()}
+                            x_val = sample_batch.get("video")
+                        else:
+                            x_val = None
+
+                        if x_val is not None:
+                            shapes = _capture_shapes(x_val, encoder, projector, device)
+                        else:
+                            shapes = {"raw_input": None, "encoder_output": None, "projector_output": None}
+
+                        _log_tensor_shapes(global_step, shapes, wandb_run=wandb_run, prefix="val")
+                except Exception:
+                    logger.exception("Failed running post-first-validation memory probe")
+                finally:
                     first_val_probe_done = True
-            except Exception:
-                logger.exception("Failed running post-first-validation memory probe")
 
             train_metrics = {
                 "epoch": epoch,

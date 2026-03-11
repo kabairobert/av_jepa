@@ -42,6 +42,7 @@ logging:
   log_wandb: true
   wandb_group:        # Set to group runs (e.g., for seed averaging)
   log_every: 1        # Log every N epochs
+  log_tensor_shapes: true
   save_every: 10      # Save checkpoint every N epochs
   tqdm_silent: false  # Disable tqdm progress bars
 
