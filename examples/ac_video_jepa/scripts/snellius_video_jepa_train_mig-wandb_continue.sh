@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=ejv
+#SBATCH --job-name=ejacv
 #SBATCH --partition=gpu_mig
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=9
 #SBATCH --gpus=1
 #SBATCH --mem=60G
-#SBATCH --time=06:00:00
+#SBATCH --time=06:30:00
 #SBATCH --output=%x_%j.out
 #SBATCH --error=%x_%j.err
 
@@ -33,6 +33,11 @@ cd ~/github/eb_jepa_private
 
 # Add uv to PATH
 export PATH="$HOME/.cargo/bin:$PATH"
+
+# --- NEW: Wandb Resume Variables ---
+export WANDB_RUN_ID="6dqi0uop"   # Replace with your actual 8-character run ID
+export WANDB_RESUME="must"       # Forces wandb to resume or fail if it can't find it
+export WANDB_PROJECT="eb_jepa" # Highly recommended to include this too
 
 # Run training
 echo "Starting training..."
