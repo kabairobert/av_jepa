@@ -16,12 +16,12 @@ class ResNet18(nn.Module):
     def __init__(self):
         super().__init__()
         self.backbone = torchvision.models.resnet18()
-        self.backbone.fc = nn.Identity()  # Remove final classification layer
+        self.backbone.fc = nn.Identity()  # Remove final classification layer       # my: resnet18 originally had a fc for classification.
         self.backbone.conv1 = nn.Conv2d(
-            3, 64, kernel_size=3, stride=1, padding=2, bias=False
+            3, 64, kernel_size=3, stride=1, padding=2, bias=False                   # my: Adjust first conv layer for CIFAR-10 to retain more resolution, avoid early downsampling. (originally designed for ImageNet with 7x7 kernel and stride 2.
         )
-        self.backbone.maxpool = nn.Identity()
-        self.features_dim = 512
+        self.backbone.maxpool = nn.Identity()                                       # my: Remove maxpool for CIFAR-10
+        self.features_dim = 512                                         
 
     def forward(self, x):
         return self.backbone(x)

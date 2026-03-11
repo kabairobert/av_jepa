@@ -61,16 +61,16 @@ def visualize_videos(
         return_all_steps=True,
     )
 
-    # One step predictions
-    one_step_pred = x_jepa[:, :, 1:].clone()
-    one_step_pred[:, :, 1:] = preds[0]
-    one_step_reconstruction = pixel_decoder.head(one_step_pred)
+    # One step predictions                                             # my: [S1, S2', S3', ..., S{T-1}'],        Out Shape: [B, D, T-1, H', W'] (B=batch, D=latent dim, T-1 frames, spatial).
+    one_step_pred = x_jepa[:, :, 1:].clone()                           # my: [S1, S2, S3, ..., S{T-1}],           In  Shape: [B, D, T, H', W'] -> Out Shape: [B, D, T-1, H', W'] (start with the original context)(we skip t=0 to align predicted vs GT)
+    one_step_pred[:, :, 1:] = preds[0]                                 # my: [S1, S2', S3', ..., S{T-1}'],        Shape: [B, D, T-1, H', W'] (replace future frames with 1-step preds)
+    one_step_reconstruction = pixel_decoder.head(one_step_pred)        # my: latent [B, D, T-1, H', W'] -> decode to pixel [B, C, T-1, H, W] for visualization
 
-    # Multi-step rollouts
-    rollout = x_jepa[:, :, 1:].clone()
+    # Multi-step rollouts                                              # my: [S1, S2'(1), S3'(2), …, S{T-1}'(T-2)],  where S{t}'{t-1} is the t-th step prediction (shape [B, D, T-1, H', W'] or compatible). We iteratively overwrite future timesteps with each step's predictions to build a multi-step rollout in latent space.
+    rollout = x_jepa[:, :, 1:].clone()                                 # my: [S1, S2, S3, ..., S{T-1}],           Same context slice Shape: [B, D, T-1, H', W']
     for t in range(1, T - 1):
-        rollout[:, :, t:] = preds[t - 1][:, :, t - 1 :]
-    rollout_reconstruction = pixel_decoder.head(rollout)
+        rollout[:, :, t:] = preds[t - 1][:, :, t - 1 :]                # my: iteratively overwrite future timesteps: preds[t-1] is the t-th step prediction (shape [B, D, T-1, H', W'] or compatible). Slicing [:, :, t-1:] aligns the predicted frames so that as t increases more of the right-hand future is replaced -> builds a multi-step rollout in latent space using each step's predictions
+    rollout_reconstruction = pixel_decoder.head(rollout)               # my: decode the assembled multi-step latent rollout into pixels [B, C, T-1, H, W] for visualization and detection overlay
 
     # Location predictions overlaid over rollout as blue heatmap
     loc_prediction = detection_head.head(rollout)

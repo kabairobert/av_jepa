@@ -79,7 +79,7 @@ def get_train_transforms():
             Solarization(prob=0.1),
             HorizontalFlip(prob=0.5),
             transforms.ToTensor(),
-            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),       # standard normalization for CIFAR-10 dataset. do this also for videos
         ]
     )
 
@@ -91,7 +91,7 @@ def get_val_transforms():
     return transforms.Compose(
         [
             transforms.ToTensor(),
-            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),       # standard normalization for CIFAR-10 dataset. do this also for videos
         ]
     )
 
@@ -109,5 +109,5 @@ class ImageDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         image, label = self.dataset[idx]
-        views = [self.transform(image) for _ in range(self.num_crops)]
+        views = [self.transform(image) for _ in range(self.num_crops)]                      # creates multiple augmented views of the same image for JEA type SSL
         return views, label

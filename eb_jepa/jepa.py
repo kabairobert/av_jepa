@@ -140,18 +140,18 @@ class JEPA(JEPAbase):
 
         # Parallel mode: process all timesteps at once, refeed GT context
         if unroll_mode == "parallel":
-            predicted_states = state
-            for _ in range(nsteps):
+            predicted_states = state                                                            # my: dimensions [B, D, T, H', W']
+            for _ in range(nsteps):                                                             # my: loop over prediction steps. at each step, we predict all timesteps in parallel, but only keep up to T-1 since we predict t+1 from t. we refeed GT context on the left at each step.
                 # Predict all timesteps, discard last (no target for it)
-                predicted_states = self.predictor(predicted_states, actions_encoded)[
-                    :, :, :-1
-                ]
+                predicted_states = self.predictor(predicted_states, actions_encoded)[           # my: new prediction for all timesteps, but we only keep up to T-1 since we predict t+1 from t
+                    :, :, :-1                                                                   # my: removing last timestep since we don't have a target for it (we predict t+1 from t, so last prediction has no t+1 target)
+                ]   
                 # Collect step if requested
-                if return_all_steps:
-                    all_steps.append(predicted_states)
+                if return_all_steps:                                                            # my: ← store predicted states at this step. structure of all_steps: list of length nsteps, each element is [B, D, T-1, H', W'] (predicted states for all timesteps except last). 
+                    all_steps.append(predicted_states)                                          # my: all_steps[0] corresponds to step 1 predictions, all_steps[1] to step 2 predictions, etc.
                 # Refeed ground truth context on the left
-                predicted_states = torch.cat(
-                    (state[:, :, :context_length], predicted_states), dim=2
+                predicted_states = torch.cat(                                                   # my: re-anchor: GT frames 0,1 on left, predictions on right → back to [B, D, T, H, W]
+                    (state[:, :, :context_length], predicted_states), dim=2                     # my: context_length frames from GT, then predictions for the rest
                 )
                 if compute_loss:
                     ploss += self.predcost(state, predicted_states) / nsteps

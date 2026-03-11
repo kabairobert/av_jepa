@@ -233,29 +233,29 @@ def train_epoch(
     pbar = tqdm(train_loader, desc=f"Epoch {epoch}", disable=tqdm_silent)
     for batch_idx, (views, target) in enumerate(pbar):
         view1, view2 = views[0].to(device, non_blocking=True), views[1].to(
-            device, non_blocking=True
+            device, non_blocking=True                                   # my: non_blocking=True allows data transfer to GPU to happen asynchronously with computation, improving performance
         )
         target = target.to(device, non_blocking=True)
 
-        with autocast(device.type, enabled=use_amp, dtype=dtype):
-            features, z1 = model(view1)
+        with autocast(device.type, enabled=use_amp, dtype=dtype):       # my: for mixed precision training
+            features, z1 = model(view1)                                 # my: features are the output of the backbone (encoder), z1 is the output of the projector for view1
             _, z2 = model(view2)
-            loss_dict = loss_fn(z1, z2)
+            loss_dict = loss_fn(z1, z2)                                 # my: ssl loss that is backpropagated through the backbone
             loss = loss_dict["loss"]
 
-        with torch.no_grad():
+        with torch.no_grad():                                           # my: NOT backpropagating through the backbone for the linear probe
             features_frozen = features.detach().float()
 
         linear_outputs = linear_probe(features_frozen)
-        linear_loss = F.cross_entropy(linear_outputs, target)
+        linear_loss = F.cross_entropy(linear_outputs, target)           # my: for downstream classification - linear probe
 
         _, predicted = linear_outputs.max(1)
         linear_correct_batch = predicted.eq(target).sum().item()
 
-        total_loss_batch = loss + linear_loss
+        total_loss_batch = loss + linear_loss                           # my: Only 'loss' backpropagates through the backbone; 'linear_loss' updates only the linear probe (features are detached)
 
         optimizer.zero_grad()
-        scaler.scale(total_loss_batch).backward()
+        scaler.scale(total_loss_batch).backward()                       # my: scales the loss because mixed precision (float16, float32) is used for faster compute and lower mem. float16 can cause underflow -> let's prevent it.
         scaler.step(optimizer)
         scaler.update()
 

@@ -1,6 +1,4 @@
-
-
-### The Mechanics of `parallel` Mode
+# Mechanics of `video_jepa` and `parallel` Mode
 
 The predictor doesn't hardcode a subtraction. It is an intricate 3D Convolution (`ResUNet`) mapping a sliding window. In this network, temporal convolutions are typically **"valid" (no padding in the time dimension)**, meaning they naturally reduce the time dimension. 
 
@@ -68,7 +66,7 @@ Step 2 (if nsteps=2):
 
 ---
 
-### What happens on the next `nsteps`?
+#### What happens on the next `nsteps`?
 This is where **Teacher Forcing** truly happens.
 If `nsteps=2`, the loop runs again. But what goes into the predictor now?
 The tensor `[S0, S1, P2, P3]`.
@@ -78,7 +76,9 @@ The CNN slides over *this* mixed tensor:
 * Window `[S1, P2]` $\rightarrow$ Outputs `P'3` *(Notice it's now using its own past prediction!)*
 * Window `[P2, P3]` $\rightarrow$ Outputs `P'4`
 
-### Summary
+---
+
+#### Summary
 * My previous diagram of "velocity mapping `S1-S0` to `S1`" was logically flawed. 
 * The predictor natively learns feature transformations from blocks of `[S_t, S_{t+1}]` to output `P_{t+2}`.
 * The `parallel` mode simply parallelizes this sliding window across the entire time sequence simultaneously, perfectly constrained by tensor indexing to prevent it from "looking into the future."
@@ -86,7 +86,7 @@ The CNN slides over *this* mixed tensor:
 ---
 
 
-### ! Deprecated ### The Mechanics of `autoregressive` Mode 
+#### ! Deprecated ### The Mechanics of `autoregressive` Mode 
 In autoregressive mode, we do not start with the full sequence. We only start with the designated context window (e.g., T=2). The sequence grows continuously.
 
 Initial context: [S0, S1] (T=2).
@@ -109,3 +109,10 @@ Step 2:
 
 **Warning**:
     ! Autoregressive mode does not work well with convolutional StateOnlyPredictors! very inefficient, wasteful!
+
+
+
+# Mechanics of `ac_video_jepa` and `autoregressive` Mode
+
+## Questions
+- In top figure, why is $a_t$ shown as a data input, isn't it the case that no actions are available for this dataset, only video, and actions are learned/optimized in training mode as well?

@@ -26,22 +26,22 @@ class SquareLossSeq(nn.Module):
         return square_cost_seq(state, predi)
 
 
-class VCLoss(nn.Module):
+class VCLoss(nn.Module):                                                    # my: written with video_jepa in mind, wants to own a projector that he applies to the state as an intermediate step for computing the V/C loss.
     """Variance-Covariance loss attracting means to zero and covariance to identity."""
 
     def __init__(self, std_coeff, cov_coeff, proj=None):
         super().__init__()
         self.std_coeff = std_coeff
         self.cov_coeff = cov_coeff
-        self.proj = nn.Identity() if proj is None else proj
+        self.proj = nn.Identity() if proj is None else proj                 # my: proj=None in header only executed at fn def. re-assign in __init__ to avoid shared state across instances
         self.std_loss_fn = HingeStdLoss(std_margin=1.0)
         self.cov_loss_fn = CovarianceLoss()
 
-    def forward(self, x, actions=None):
-        x = x.transpose(0, 1).flatten(1).transpose(0, 1)  # [B*T*H*W, C]
-        fx = self.proj(x)  # [B*T*H*W, C']
+    def forward(self, x, actions=None):                                     # my: B=batch, C=channels/features, T=time, H=height, W=width
+        x = x.transpose(0, 1).flatten(1).transpose(0, 1)  # [B*T*H*W, C]    # my: [B, C, T, H, W] -> transpose(0,1) -> [C, B, T, H, W] -> flatten(1) -> [C, B*T*H*W] -> transpose(0,1) -> [B*T*H*W, C]
+        fx = self.proj(x)  # [B*T*H*W, C']                                  # my: output Channels C' changed by projection
 
-        std_loss = self.std_loss_fn(fx)
+        std_loss = self.std_loss_fn(fx)                                     # my: V/C loss by features C', not just sample but time and location agnostic
         cov_loss = self.cov_loss_fn(fx)
 
         loss = self.std_coeff * std_loss + self.cov_coeff * cov_loss
@@ -94,6 +94,11 @@ class CovarianceLoss(torch.nn.Module):
     def off_diagonal(self, x):
         n, m = x.shape
         assert n == m
+        # my-comments
+        # 3x3 Example (D=Diag, O=Off-diag):
+        # [D1 O1 O2]   flatten() & [:-1]   [D1 O1 O2 O3 D2 O4 O5 O6]   view(2, 4)   [D1 | O1 O1 O3]   [:, 1:]   [O1 O2 O3]
+        # [O3 D2 O4]  ------------------>  (removes last index D3)  ------------->  [D2 | O4 O5 O6]  -------->  [O4 O5 O6]
+        # [O5 O6 D3]                       (Len: n^2 - 1 = 8)        (n-1, n+1)        ^ Col 0 is Diag           (Final Off-Diags)
         return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
 
     def forward(self, x: torch.Tensor):
@@ -111,7 +116,7 @@ class CovarianceLoss(torch.nn.Module):
         return cov_loss
 
 
-class TemporalSimilarityLoss(torch.nn.Module):
+class TemporalSimilarityLoss(torch.nn.Module):                              # my: usually for discouraging rapid oscillations or temporal jitter
     def __init__(self):
         """
         Temporal Similarity Loss.
@@ -127,7 +132,7 @@ class TemporalSimilarityLoss(torch.nn.Module):
         """
         if x.shape[0] <= 1:
             return torch.tensor(0.0, device=x.device)
-        sim_loss_t = (x[1:] - x[:-1]).pow(2).mean()
+        sim_loss_t = (x[1:] - x[:-1]).pow(2).mean()                         # my: element-wise subtraction, quare, mean.
         return sim_loss_t
 
 
@@ -303,7 +308,7 @@ class VC_IDM_Sim_Regularizer(torch.nn.Module):
         return total_weighted_loss, total_unweighted_loss, loss_dict
 
 
-class VICRegLoss(nn.Module):
+class VICRegLoss(nn.Module):                                                # my: written with image_jepa in mind, does not own a projector (in image_jepa, the projector is part of the model).
     """VICReg loss combining invariance, variance (std), and covariance terms."""
 
     def __init__(self, std_coeff=1.0, cov_coeff=1.0):
@@ -358,7 +363,7 @@ def all_reduce(x, op):
         return x
 
 
-def epps_pulley(x, t_min=-3, t_max=3, n_points=10):                     # my-comments: t:(-3,3) is Std.Normal 99% interval, excluding noise, n_points: resolution of the grid for numerical approximation of continuous integral
+def epps_pulley(x, t_min=-3, t_max=3, n_points=10):                     # my: t:(-3,3) is Std.Normal 99% interval, excluding noise, n_points: resolution of the grid for numerical approximation of continuous integral
     """Epps-Pulley test statistic for Gaussianity."""
     # integration points
     t = torch.linspace(t_min, t_max, n_points, device=x.device)
@@ -366,7 +371,7 @@ def epps_pulley(x, t_min=-3, t_max=3, n_points=10):                     # my-com
     exp_f = torch.exp(-0.5 * t**2)
     # ECF
     x_t = x.unsqueeze(2) * t  # (N, M, T)
-    ecf = (1j * x_t).exp().mean(0)
+    ecf = (1j * x_t).exp().mean(0)                                          # my: Empirical characteristic function (ECF) of the data at points t, averaged over samples (N)
     ecf = all_reduce(ecf, op="AVG")
     # weighted L2 distance
     err = exp_f * (ecf - exp_f).abs() ** 2
@@ -388,9 +393,9 @@ class BCS(nn.Module):
             g = torch.Generator(device=dev)
             g.manual_seed(self.step)
             proj_shape = (z1.size(1), self.num_slices)
-            A = torch.randn(proj_shape, device=dev, generator=g)
-            A /= A.norm(p=2, dim=0)
-        view1 = z1 @ A
+            A = torch.randn(proj_shape, device=dev, generator=g)            # my: 1. Generate random vectors. proj_shape=(space_dim, num_rand_vectors)
+            A /= A.norm(p=2, dim=0)                                         # my: 2. Normalize each random vector to unit length (L2 norm along space_dim)
+        view1 = z1 @ A                                                      # my: 3. Project z1 and z2 onto the random vectors to get 2D views (N, num_rand_vectors)
         view2 = z2 @ A
 
         self.step += 1
