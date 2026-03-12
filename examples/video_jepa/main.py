@@ -60,7 +60,7 @@ logger = get_logger(__name__)
 # Memory/dtype probe helpers have been centralized in `eb_jepa.training_utils`.
 
 
-def _capture_shapes(sample_x, encoder, projector, device):
+def _capture_shapes(sample_x, encoder, projector, device, force_runtime_shapes: bool = False):
     """Capture raw input, encoder output, and projector output shapes safely.
 
     Returns a dict with stringified shapes for keys: raw_input, encoder_output, projector_output.
@@ -102,38 +102,64 @@ def _capture_shapes(sample_x, encoder, projector, device):
 
             proj_str = None
             if enc_out is not None:
-                # Build projector input as [N_samples, C] where C is feature dim.
                 # Encoder outputs are typically [B, C, T, H, W] (or [B, C, H, W]).
                 try:
+                    proj_str = None
+                    # Infer sample count without materializing the full flattened tensor
                     if enc_out.dim() == 5:
                         b, c, t, h, w = enc_out.shape
-                        proj_in = enc_out.permute(0, 2, 3, 4, 1).reshape(-1, c)
+                        n_samples = int(b * t * h * w)
                     elif enc_out.dim() == 4:
                         b, c, h, w = enc_out.shape
-                        proj_in = enc_out.permute(0, 2, 3, 1).reshape(-1, c)
+                        n_samples = int(b * h * w)
+                        t = None
                     elif enc_out.dim() == 2:
-                        proj_in = enc_out
+                        n_samples = int(enc_out.size(0))
+                        c = enc_out.size(1)
+                        t = None
                     else:
-                        proj_in = enc_out.reshape(enc_out.size(0), -1)
+                        # Fallback: try to infer from flattened view
+                        try:
+                            proj_in_tmp = enc_out.reshape(enc_out.size(0), -1)
+                            n_samples = int(proj_in_tmp.size(0))
+                            c = proj_in_tmp.size(1)
+                            t = None
+                        except Exception:
+                            n_samples = None
 
-                    # Move to projector device and ensure contiguous float tensor
-                    try:
-                        dev = next(projector.parameters()).device
-                        proj_in = proj_in.to(dev)
-                    except Exception:
-                        pass
-                    proj_in = proj_in.contiguous().float()
+                    # Use memory-free reporting by default; optionally run a lightweight
+                    # runtime forward pass only when explicitly requested.
+                    if force_runtime_shapes:
+                        # Materialize a small runtime sample for accurate runtime shapes
+                        try:
+                            if enc_out.dim() == 5:
+                                proj_in = enc_out.permute(0, 2, 3, 4, 1).reshape(-1, c)
+                            elif enc_out.dim() == 4:
+                                proj_in = enc_out.permute(0, 2, 3, 1).reshape(-1, c)
+                            else:
+                                proj_in = enc_out
 
-                    # Use only a small sample to avoid heavy computation
-                    if proj_in.size(0) > 8:
-                        proj_in = proj_in[:8]
+                            try:
+                                dev = next(projector.parameters()).device
+                                proj_in = proj_in.to(dev)
+                            except Exception:
+                                pass
+                            proj_in = proj_in.contiguous().float()
 
-                    # Use Projector.shape_str() as single source of truth (includes hidden shapes)
-                    try:
-                        proj_str = projector.shape_str(proj_in)
-                    except Exception:
-                        logger.exception("Projector.shape_str failed when capturing shapes")
-                        proj_str = None
+                            # sample small number of rows to avoid heavy compute
+                            if proj_in.size(0) > 8:
+                                proj_in = proj_in[:8]
+
+                            proj_str = projector.shape_str(input_tensor=proj_in)
+                        except Exception:
+                            logger.exception("Projector.shape_str runtime evaluation failed")
+                            proj_str = None
+                    else:
+                        try:
+                            proj_str = projector.shape_str(input_tensor=None, n_samples=n_samples)
+                        except Exception:
+                            logger.exception("Projector.shape_str inference failed")
+                            proj_str = None
                 except Exception:
                     logger.exception("Failed preparing projector input for shape capture")
                     proj_str = None
@@ -382,7 +408,13 @@ def run(
                 try:
                     _log_memory_snapshot(global_step, probe_modules, wandb_run=wandb_run, prefix="train")
                     if cfg.logging.get("log_tensor_shapes", True):
-                        shapes = _capture_shapes(x, encoder, projector, device)
+                        shapes = _capture_shapes(
+                            x,
+                            encoder,
+                            projector,
+                            device,
+                            cfg.logging.get("projector_force_runtime_shapes", False),
+                        )
                         _log_tensor_shapes(global_step, shapes, wandb_run=wandb_run, prefix="train")
                 except Exception:
                     logger.exception("Failed running post-first-step memory probe")
@@ -420,7 +452,13 @@ def run(
                             x_val = None
 
                         if x_val is not None:
-                            shapes = _capture_shapes(x_val, encoder, projector, device)
+                            shapes = _capture_shapes(
+                                x_val,
+                                encoder,
+                                projector,
+                                device,
+                                cfg.logging.get("projector_force_runtime_shapes", False),
+                            )
                         else:
                             shapes = {"raw_input": None, "encoder_output": None, "projector_output": None}
 

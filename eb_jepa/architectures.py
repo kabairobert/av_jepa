@@ -222,17 +222,40 @@ class Projector(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-    def shape_str(self, input_tensor=None):
+    def shape_str(self, input_tensor=None, n_samples: int = None):
         """Return a concise single-line description of projector input/output shapes.
 
-        If `input_tensor` is provided, runs a forward pass under no_grad to get output
-        shape; otherwise returns the configured output dimension.
+        Memory-free mode: when `input_tensor` is None, infer layer widths from the
+        `nn.Linear` modules in the MLP and include `n_samples` (if provided) so
+        the returned string matches the runtime shape formatting used elsewhere.
+
+        If `input_tensor` is provided, fall back to running a lightweight forward
+        (kept for compatibility) and capture actual tensor shapes.
         """
         try:
+            # If no runtime tensor is provided, infer dims from module attributes
             if input_tensor is None:
-                return f"out_dim={self.out_dim}"
+                # gather linear modules in order
+                linear_modules = [m for m in self.net if isinstance(m, nn.Linear)]
+                if not linear_modules:
+                    return f"out_dim={self.out_dim}"
 
-            # Run forward under no_grad and capture shapes after each Linear layer.
+                in_dim = linear_modules[0].in_features
+                hidden_dims = [m.out_features for m in linear_modules[:-1]]
+                out_dim = linear_modules[-1].out_features
+
+                if n_samples is not None:
+                    in_str = f"in=[{n_samples},{in_dim}]"
+                    hidden_list_str = "[" + ",".join(f"[{n_samples},{d}]" for d in hidden_dims) + "]" if hidden_dims else "[]"
+                    out_str = f"out=[{n_samples},{out_dim}]"
+                else:
+                    in_str = f"in=[{in_dim}]"
+                    hidden_list_str = "[" + ",".join(f"[{d}]" for d in hidden_dims) + "]" if hidden_dims else "[]"
+                    out_str = f"out=[{out_dim}]"
+
+                return f"{in_str} hidden={hidden_list_str} {out_str}"
+
+            # Runtime tensor path: run forward under no_grad and capture shapes
             linear_shapes = []
             x = input_tensor
             with torch.no_grad():
@@ -241,10 +264,8 @@ class Projector(nn.Module):
                     if isinstance(module, nn.Linear):
                         linear_shapes.append(list(x.shape))
 
-            # linear_shapes[-1] is final output; the rest are hidden activations
             hidden_shapes = linear_shapes[:-1] if len(linear_shapes) > 1 else []
             out_shape = linear_shapes[-1] if linear_shapes else None
-
             return f"in={list(input_tensor.shape)} hidden={hidden_shapes} out={out_shape}"
         except Exception:
             return f"out_dim={self.out_dim}"
