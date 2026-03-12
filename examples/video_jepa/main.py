@@ -55,6 +55,7 @@ from eb_jepa.training_utils import (
     _log_tensor_shapes,
 )
 from examples.video_jepa.eval import validation_loop
+from examples.video_jepa.vis import assemble_geometry_viz_videos
 
 logger = get_logger(__name__)
 # Memory/dtype probe helpers have been centralized in `eb_jepa.training_utils`.
@@ -332,6 +333,7 @@ def run(
 
     # Mixed precision setup
     train_cfg = cfg.get("training", {})
+    geometry_cfg = cfg.logging.get("geometry_viz", {})
     use_amp = train_cfg.get("use_amp", False)
     dtype_str = train_cfg.get("dtype", "float32").lower()
     dtype_map = {
@@ -435,7 +437,17 @@ def run(
         # Validation and logging
         if epoch % cfg.logging.log_every == 0:
             val_logs = validation_loop(
-                val_loader, jepa, detection_head, pixel_decoder, cfg.model.steps, device, use_amp=use_amp, dtype=dtype
+                val_loader,
+                jepa,
+                detection_head,
+                pixel_decoder,
+                cfg.model.steps,
+                device,
+                use_amp=use_amp,
+                dtype=dtype,
+                geometry_cfg=geometry_cfg,
+                epoch=epoch,
+                exp_dir=exp_dir,
             )
 
             # One-time post-first-validation memory probe (simplified)
@@ -513,6 +525,21 @@ def run(
                 epoch=epoch,
                 step=global_step,
             )
+
+    geometry_enabled = bool(geometry_cfg.get("enabled", False))
+    if geometry_enabled and wandb_run:
+        try:
+            import wandb
+
+            evo_logs = assemble_geometry_viz_videos(
+                exp_dir=exp_dir,
+                fps=int(geometry_cfg.get("evolution_fps", 2)),
+                wandb_prefix="geometry_viz",
+            )
+            if evo_logs:
+                wandb.log(evo_logs, step=global_step)
+        except Exception:
+            logger.exception("Failed assembling/logging geometry evolution videos")
 
     if wandb_run:
         import wandb

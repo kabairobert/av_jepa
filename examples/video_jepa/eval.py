@@ -8,6 +8,15 @@ import wandb
 from einops import rearrange, repeat
 from PIL import Image, ImageDraw, ImageFont
 from tqdm import tqdm
+from eb_jepa.logging import get_logger
+
+from examples.video_jepa.vis import (
+    geometry_visualization_loop,
+    log_and_save_geometry_viz,
+)
+
+logger = get_logger(__name__)
+_LONG_SEQUENCE_NOTICE_LOGGED = False
 
 
 def add_label_to_video(video, label):
@@ -114,7 +123,19 @@ def visualize_videos(
 
 # Run full loop over validation set and compute metrics
 @torch.inference_mode()
-def validation_loop(val_loader, jepa, detection_head, pixel_decoder, steps, device, use_amp=False, dtype=torch.float32):
+def validation_loop(
+    val_loader,
+    jepa,
+    detection_head,
+    pixel_decoder,
+    steps,
+    device,
+    use_amp=False,
+    dtype=torch.float32,
+    geometry_cfg=None,
+    epoch=None,
+    exp_dir=None,
+):
 
     # Set modules to eval mode
     jepa.eval()
@@ -161,6 +182,40 @@ def validation_loop(val_loader, jepa, detection_head, pixel_decoder, steps, devi
         **metrics,
         "viz": [wandb.Video(video, fps=4, format="mp4") for video in videos],
     }
+
+    geometry_enabled = bool((geometry_cfg or {}).get("enabled", False)) if isinstance(geometry_cfg, dict) else bool(getattr(geometry_cfg, "enabled", False) if geometry_cfg is not None else False)
+    if geometry_enabled and exp_dir is not None and epoch is not None:
+        try:
+            figures, meta = geometry_visualization_loop(
+                batch=batch,
+                jepa=jepa,
+                device=device,
+                geometry_cfg=geometry_cfg,
+                detection_targets=batch.get("digit_location"),
+                epoch=epoch,
+            )
+            global _LONG_SEQUENCE_NOTICE_LOGGED
+            if not _LONG_SEQUENCE_NOTICE_LOGGED:
+                logger.info(
+                    "Geometry viz long-sequence controls: enabled=%s mode=%s used=%s details=%s",
+                    bool(meta.get("long_sequence_enabled", False)),
+                    str(meta.get("long_sequence_mode", "uniform")),
+                    bool(meta.get("long_sequence_used", False)),
+                    str(meta.get("long_sequence_details", "none")),
+                )
+                _LONG_SEQUENCE_NOTICE_LOGGED = True
+            logs.update(
+                log_and_save_geometry_viz(
+                    figures=figures,
+                    exp_dir=exp_dir,
+                    epoch=epoch,
+                    wandb_prefix="geometry_viz",
+                    include_epoch_in_filename=bool((geometry_cfg or {}).get("include_epoch_in_filename", True)) if isinstance(geometry_cfg, dict) else bool(getattr(geometry_cfg, "include_epoch_in_filename", True) if geometry_cfg is not None else True),
+                )
+            )
+        except Exception as exc:
+            print(f"[geometry_viz] Skipping geometry plots due to error: {exc}")
+
     print(metrics)
 
     # Set modules back to train mode

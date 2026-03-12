@@ -53,6 +53,33 @@ logging:
   projector_force_runtime_shapes: false
   save_every: 10      # Save checkpoint every N epochs
   tqdm_silent: false  # Disable tqdm progress bars
+  geometry_viz:
+    enabled: false            # values: true|false; turns all geometry plots on/off
+    num_samples: 12           # recommended interval: [4, 16]; sampled videos for multi-trajectory panels
+    tsne_method: umap         # values: umap|tsne; umap preferred, tsne fallback
+    activation_layer: null    # values: null|"<dot.path>"; null auto-detects final spatial encoder layer
+    stage_label: encoder_rollout  # values: any string; displayed in plot titles
+    include_epoch_in_title: true   # values: true|false; append epoch to figure titles
+    include_epoch_in_filename: true  # values: true|false; write *_epoch_XXXX.png filenames
+    spatial_tsne_max_points: 10000  # recommended interval: [5000, 30000]; cap points for UMAP/t-SNE speed
+    covariance_max_samples: 2048    # recommended interval: [512, 8192]; samples used in scree/covariance plot
+    evolution_fps: 2          # recommended interval: [1, 8]; fps for end-of-training timelapse mp4
+    long_sequence:
+      enabled: true           # values: true|false; activate long-sequence controls
+      time_subsample_mode: uniform  # values: uniform|windowed; default keeps global coverage
+      window_size: 96         # recommended interval: [48, 192]; used when mode=windowed
+      window_stride: 48       # recommended interval: [16, 96]; used when mode=windowed
+      max_frames_for_plots: 96  # recommended interval: [64, 192]; cap for trajectory/self-sim/phase plots
+      max_frames_for_embedding: 96  # recommended interval: [32, 128]; cap temporal frames for occupancy embedding
+      max_frames_activation_overlay: 24  # recommended interval: [12, 48]; cap storyboard frames
+    plots:
+      latent_trajectories_avgpool: true      # values: true|false; Vis 1.1
+      latent_trajectories_spatialflat: true  # values: true|false; Vis 1.2
+      temporal_self_similarity: true         # values: true|false; Vis 2
+      occupancy_spatial_embedding: true      # values: true|false; Vis 3 (GT-dependent)
+      covariance_spectrum: true              # values: true|false; Vis 4
+      activation_overlays: true              # values: true|false; Vis 5
+      phase_space_portrait: true             # values: true|false; Vis 6
 
 training:
   use_amp: true       # Use automatic mixed precision
