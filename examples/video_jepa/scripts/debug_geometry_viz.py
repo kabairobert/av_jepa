@@ -17,7 +17,7 @@ from eb_jepa.datasets.moving_mnist import MovingMNISTDet
 from eb_jepa.jepa import JEPA
 from eb_jepa.losses import SquareLossSeq, VCLoss, VideoJEPA_BCS, VideoJEPA_BCS_Euler_Scaleinvariant
 from eb_jepa.training_utils import load_config, setup_seed
-from examples.video_jepa.vis import geometry_visualization_loop
+from examples.video_jepa.vis import assemble_geometry_viz_videos, geometry_visualization_loop
 
 
 class _DummyReg:
@@ -113,9 +113,20 @@ def main():
     parser.add_argument("--height", type=int, default=64, help="Synthetic frame height")
     parser.add_argument("--width", type=int, default=64, help="Synthetic frame width")
     parser.add_argument("--epoch", type=int, default=0)
+    parser.add_argument("--seed", type=int, default=None, help="Base seed; defaults to cfg.meta.seed")
+    parser.add_argument(
+        "--no-seed-by-epoch",
+        action="store_true",
+        help="Disable seed offset by epoch (default behavior offsets seed by epoch)",
+    )
     parser.add_argument("--synthetic", action="store_true", help="Use random synthetic batch instead of dataset")
     parser.add_argument("--checkpoint", type=str, default="", help="Optional JEPA checkpoint path")
     parser.add_argument("--out-dir", type=str, default="examples/video_jepa/debug_outputs")
+    parser.add_argument(
+        "--assemble-videos",
+        action="store_true",
+        help="Assemble geometry evolution videos from out-dir/geometry_viz/epoch_*",
+    )
     parser.add_argument("--time-mode", type=str, default="", help="Optional override: uniform|windowed")
     parser.add_argument(
         "--use-dummy-jepa",
@@ -125,7 +136,10 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config(args.cfg)
-    setup_seed(cfg.meta.seed)
+    base_seed = int(args.seed) if args.seed is not None else int(cfg.meta.seed)
+    run_seed = base_seed if args.no_seed_by_epoch else base_seed + int(args.epoch)
+    setup_seed(run_seed)
+    print(f"seed={run_seed} (base={base_seed}, epoch_offset={not args.no_seed_by_epoch})")
 
     device = torch.device("cpu")
     use_dummy_jepa = bool(args.use_dummy_jepa or (args.synthetic and not args.checkpoint))
@@ -188,13 +202,17 @@ def main():
     print("figure keys:", sorted(figures.keys()))
     print("long-sequence meta:", meta)
 
-    out_dir = Path(args.out_dir) / f"epoch_{int(args.epoch):04d}"
+    out_dir = Path(args.out_dir) / "geometry_viz" / f"epoch_{int(args.epoch):04d}"
     _save_figures(
         figures,
         out_dir,
         epoch=args.epoch,
         include_epoch_in_filename=bool(geometry_cfg.get("include_epoch_in_filename", True)),
     )
+
+    if args.assemble_videos:
+        logs = assemble_geometry_viz_videos(args.out_dir, fps=int(geometry_cfg.get("evolution_fps", 2)))
+        print("assembled video keys:", sorted(logs.keys()))
 
 
 if __name__ == "__main__":

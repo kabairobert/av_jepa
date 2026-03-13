@@ -59,6 +59,7 @@ logging:
     tsne_method: umap         # values: umap|tsne; umap preferred, tsne fallback
     activation_layer: null    # values: null|"<dot.path>"; null auto-detects final spatial encoder layer
     stage_label: encoder_rollout  # values: any string; displayed in plot titles
+    temporal_self_similarity_num_samples: 2  # recommended interval: [1, 4]; number of videos shown in Vis 2
     include_epoch_in_title: true   # values: true|false; append epoch to figure titles
     include_epoch_in_filename: true  # values: true|false; write *_epoch_XXXX.png filenames
     spatial_tsne_max_points: 10000  # recommended interval: [5000, 30000]; cap points for UMAP/t-SNE speed
@@ -77,7 +78,7 @@ logging:
       latent_trajectories_spatialflat: true  # values: true|false; Vis 1.2
       temporal_self_similarity: true         # values: true|false; Vis 2
       occupancy_spatial_embedding: true      # values: true|false; Vis 3 (GT-dependent)
-      covariance_spectrum: true              # values: true|false; Vis 4
+      cov_eig_spectrum: true                 # values: true|false; Vis 4
       activation_overlays: true              # values: true|false; Vis 5
       phase_space_portrait: true             # values: true|false; Vis 6
 

@@ -131,6 +131,10 @@ def _pick_indices(batch_size, max_count):
     return list(range(min(batch_size, max_count)))
 
 
+def _progressive_groups(idxs):
+    return [idxs[:1], idxs[:2], idxs[:4]]
+
+
 def _trajectory_panel(
     gt_bt,
     pred_bt,
@@ -154,12 +158,11 @@ def _trajectory_panel(
     axes = axes.flatten()
     colors = plt.get_cmap("tab10")(np.linspace(0, 1, 10))
 
-    groups = [idxs[0:4], idxs[4:8], idxs[8:12]]
-    groups = [g for g in groups if g]
+    groups = _progressive_groups(idxs)
 
     for panel_i in range(3):
         ax = axes[panel_i]
-        group = groups[panel_i] if panel_i < len(groups) else []
+        group = groups[panel_i]
         if not group:
             ax.axis("off")
             continue
@@ -170,7 +173,7 @@ def _trajectory_panel(
             ax.plot(gt2[:, 0], gt2[:, 1], color=color, linewidth=2)
             ax.plot(pred2[:, 0], pred2[:, 1], color=color, linestyle="--", linewidth=2)
             ax.scatter(gt2[0, 0], gt2[0, 1], color=color, s=20)
-        ax.set_title(f"{title} - group {panel_i + 1}")
+        ax.set_title(f"{title} - first {len(group)} pair(s)")
         ax.set_xlabel("PC1")
         ax.set_ylabel("PC2")
         ax.grid(alpha=0.25)
@@ -250,7 +253,7 @@ def plot_latent_trajectories_spatialflat(
 
 def plot_temporal_self_similarity(
     gt_latent,
-    num_samples=4,
+    num_samples=2,
     stage_label="encoder_rollout",
     epoch=None,
     include_epoch_in_title=False,
@@ -262,28 +265,32 @@ def plot_temporal_self_similarity(
     if not idxs:
         return None
 
-    fig, axes = plt.subplots(2, 2, figsize=(10, 9))
-    axes = axes.flatten()
+    n = len(idxs)
+    ncols = min(2, n)
+    nrows = int(np.ceil(n / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5.2 * ncols, 4.4 * nrows), squeeze=False)
+    axes_flat = axes.flatten()
 
-    for i in range(4):
-        ax = axes[i]
-        if i >= len(idxs):
+    for i, ax in enumerate(axes_flat):
+        if i >= n:
             ax.axis("off")
             continue
         x = bt[idxs[i]]
         x = F.normalize(x, dim=-1)
         sim = x @ x.transpose(0, 1)
         im = ax.imshow(sim.cpu().numpy(), vmin=-1, vmax=1, cmap="viridis")
-        ax.set_title(f"Temporal Self-Similarity - sample {idxs[i]}")
+        ax.set_title(f"sample_idx={idxs[i]}")
         ax.set_xlabel("t")
         ax.set_ylabel("t")
-    fig.colorbar(im, ax=axes.tolist(), shrink=0.8)
+
+    cax = fig.add_axes([0.90, 0.15, 0.02, 0.70])
+    fig.colorbar(im, cax=cax)
     fig.suptitle(
-        f"Temporal Self-Similarity [{stage_label}]" + _epoch_suffix(epoch, include_epoch_in_title),
+        f"Temporal Self-Similarity [{stage_label}] | sample_indices={idxs}"
+        + _epoch_suffix(epoch, include_epoch_in_title),
         fontsize=12,
     )
-    # tight_layout can warn with a figure-level colorbar; adjust spacing manually.
-    fig.subplots_adjust(left=0.07, right=0.90, bottom=0.07, top=0.90, wspace=0.28, hspace=0.32)
+    fig.subplots_adjust(left=0.07, right=0.88, bottom=0.07, top=0.90, wspace=0.24, hspace=0.28)
     return fig
 
 
@@ -359,7 +366,7 @@ def _get_projector_module(jepa):
     return proj
 
 
-def plot_covariance_spectrum(
+def plot_cov_eig_spectrum(
     gt_latent,
     jepa,
     max_samples=2048,
@@ -389,7 +396,7 @@ def plot_covariance_spectrum(
     ax.plot(k, eigvals, linewidth=2, label="spectrum")
     ax.plot(k, uniform, linestyle="--", linewidth=1.5, label="uniform ref")
     ax.set_yscale("log")
-    ax.set_title(f"Covariance Spectrum [{stage_label}]" + _epoch_suffix(epoch, include_epoch_in_title))
+    ax.set_title(f"Covariance Eigenvalue Spectrum [{stage_label}]" + _epoch_suffix(epoch, include_epoch_in_title))
     ax.set_xlabel("eigenvalue rank")
     ax.set_ylabel("eigenvalue (log)")
     ax.grid(alpha=0.25)
@@ -519,23 +526,46 @@ def plot_phase_space_portrait(
         return None
 
     fig = plt.figure(figsize=(12, 9))
-    for i, vid_idx in enumerate(idxs[:4]):
+    groups = _progressive_groups(idxs)
+    groups.append(idxs)
+
+    for i, group in enumerate(groups[:4]):
         ax = fig.add_subplot(2, 2, i + 1, projection="3d")
-        fit = np.concatenate([gt_bt[vid_idx].cpu().numpy(), pred_bt[vid_idx].cpu().numpy()], axis=0)
+        if not group:
+            ax.set_axis_off()
+            continue
+
+        fit = np.concatenate(
+            [
+                np.concatenate([gt_bt[vid_idx].cpu().numpy(), pred_bt[vid_idx].cpu().numpy()], axis=0)
+                for vid_idx in group
+            ],
+            axis=0,
+        )
         pca = PCA(n_components=3)
         pca.fit(fit)
 
-        gt3 = pca.transform(gt_bt[vid_idx].cpu().numpy())
-        pr3 = pca.transform(pred_bt[vid_idx].cpu().numpy())
+        colors = plt.get_cmap("tab10")(np.linspace(0, 1, 10))
+        for j, vid_idx in enumerate(group):
+            color = colors[j % len(colors)]
+            gt3 = pca.transform(gt_bt[vid_idx].cpu().numpy())
+            pr3 = pca.transform(pred_bt[vid_idx].cpu().numpy())
+            ax.plot(gt3[:, 0], gt3[:, 1], gt3[:, 2], color=color, linewidth=2)
+            ax.plot(pr3[:, 0], pr3[:, 1], pr3[:, 2], color=color, linestyle="--", linewidth=2)
 
-        ax.plot(gt3[:, 0], gt3[:, 1], gt3[:, 2], linewidth=2, label="GT")
-        ax.plot(pr3[:, 0], pr3[:, 1], pr3[:, 2], linestyle="--", linewidth=2, label="Pred")
-        ax.set_title(f"sample {vid_idx}")
+        if i < 3:
+            ax.set_title(f"first {len(group)} pair(s)")
+        else:
+            ax.set_title("summary")
         ax.set_xlabel("PC1")
         ax.set_ylabel("PC2")
         ax.set_zlabel("PC3")
         if i == 0:
-            ax.legend(loc="best")
+            style_handles = [
+                Line2D([0], [0], color="black", linewidth=2, label="GT"),
+                Line2D([0], [0], color="black", linestyle="--", linewidth=2, label="Pred"),
+            ]
+            ax.legend(handles=style_handles, loc="best")
     fig.suptitle(
         f"Phase Space Portrait (static 3D) [{stage_label}]" + _epoch_suffix(epoch, include_epoch_in_title)
     )
@@ -564,6 +594,7 @@ def geometry_visualization_loop(
     include_epoch_in_title = bool(_cfg_get(geometry_cfg, "include_epoch_in_title", True))
     tsne_max_points = int(_cfg_get(geometry_cfg, "spatial_tsne_max_points", 10000))
     cov_max_samples = int(_cfg_get(geometry_cfg, "covariance_max_samples", 2048))
+    tss_num_samples = int(_cfg_get(geometry_cfg, "temporal_self_similarity_num_samples", 2))
 
     long_cfg = _cfg_get(geometry_cfg, "long_sequence", {})
     long_enabled = bool(_cfg_get(long_cfg, "enabled", True))
@@ -624,7 +655,7 @@ def geometry_visualization_loop(
     if _plot_enabled(geometry_cfg, "temporal_self_similarity"):
         figs["temporal_self_similarity"] = plot_temporal_self_similarity(
             gt_seq,
-            num_samples=4,
+            num_samples=tss_num_samples,
             stage_label=stage_label,
             epoch=epoch,
             include_epoch_in_title=include_epoch_in_title,
@@ -652,8 +683,8 @@ def geometry_visualization_loop(
                 f"embed[{time_subsample_mode}]:{gt_latent.shape[2]}->{min(window_size, max_frames_for_embedding) if time_subsample_mode == 'windowed' else max_frames_for_embedding}"
             )
 
-    if _plot_enabled(geometry_cfg, "covariance_spectrum"):
-        figs["covariance_spectrum"] = plot_covariance_spectrum(
+    if _plot_enabled(geometry_cfg, "cov_eig_spectrum"):
+        figs["cov_eig_spectrum"] = plot_cov_eig_spectrum(
             gt_latent,
             jepa,
             max_samples=cov_max_samples,
@@ -729,6 +760,21 @@ def log_and_save_geometry_viz(
 def assemble_geometry_viz_videos(exp_dir, fps=2, wandb_prefix="geometry_viz"):
     import imageio.v2 as imageio
 
+    def _pad_frame_to_macroblock(frame, block=16):
+        if block is None or block <= 1:
+            return frame
+        h, w = frame.shape[:2]
+        nh = ((h + block - 1) // block) * block
+        nw = ((w + block - 1) // block) * block
+        if nh == h and nw == w:
+            return frame
+
+        if frame.ndim == 3:
+            pad = ((0, nh - h), (0, nw - w), (0, 0))
+        else:
+            pad = ((0, nh - h), (0, nw - w))
+        return np.pad(frame, pad, mode="edge")
+
     exp_dir = Path(exp_dir)
     base = exp_dir / "geometry_viz"
     if not base.exists():
@@ -765,7 +811,7 @@ def assemble_geometry_viz_videos(exp_dir, fps=2, wandb_prefix="geometry_viz"):
         video_path = base / f"{key}_evolution.mp4"
         with imageio.get_writer(video_path, fps=fps) as writer:
             for fr in frames:
-                writer.append_data(fr)  # type: ignore[attr-defined]
+                writer.append_data(_pad_frame_to_macroblock(fr))  # type: ignore[attr-defined]
 
         logs[f"{wandb_prefix}/{key}_evolution"] = wandb.Video(str(video_path), fps=fps, format="mp4")
 
