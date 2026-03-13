@@ -48,7 +48,7 @@ logging:
   save_every: 10      # Save checkpoint every N epochs
   tqdm_silent: false  # Disable tqdm progress bars
   geometry_viz:
-    enabled: false            # values: true|false; turns all geometry plots on/off
+    enabled: true            # values: true|false; turns all geometry plots on/off
     num_samples: 12           # recommended interval: [4, 16]; sampled videos for multi-trajectory panels
     tsne_method: umap         # values: umap|tsne; umap preferred, tsne fallback
     activation_layer: null    # values: null|"<dot.path>"; null auto-detects final spatial encoder layer
