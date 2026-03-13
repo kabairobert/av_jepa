@@ -1,16 +1,26 @@
 import collections
+from pathlib import Path
+import re
 
+import fire
 import numpy as np
 import torch
 from torch.amp import autocast
 import torch.nn.functional as F
 import wandb
 from einops import rearrange, repeat
+from omegaconf import OmegaConf
 from PIL import Image, ImageDraw, ImageFont
+from torch.utils.data import DataLoader
 from tqdm import tqdm
-from eb_jepa.logging import get_logger
 
+from eb_jepa.datasets.moving_mnist import MovingMNISTDet
+from eb_jepa.logging import get_logger
+from eb_jepa.training_utils import load_config, setup_device, setup_seed, setup_wandb
+
+from examples.video_jepa.model_builder import build_video_jepa_and_probes
 from examples.video_jepa.vis import (
+    assemble_geometry_viz_videos,
     geometry_visualization_loop,
     log_and_save_geometry_viz,
 )
@@ -135,6 +145,7 @@ def validation_loop(
     geometry_cfg=None,
     epoch=None,
     exp_dir=None,
+    max_batches=None,
 ):
 
     # Set modules to eval mode
@@ -143,7 +154,7 @@ def validation_loop(
     pixel_decoder.eval()
 
     metrics = collections.defaultdict(list)
-    for batch in tqdm(val_loader):
+    for bi, batch in enumerate(tqdm(val_loader)):
         batch = {k: v.to(device) for k, v in batch.items()}
         x = batch["video"]
         loc_map = batch["digit_location"]
@@ -173,6 +184,9 @@ def validation_loop(
         for s, score in enumerate(scores):
             metrics[f"AP_{s}"].append(float(score))
 
+        if max_batches is not None and (bi + 1) >= int(max_batches):
+            break
+
     # Aggregate val results and visualize last batch
     metrics = {k: float(np.mean(v)) for k, v in metrics.items()}
     videos = visualize_videos(
@@ -183,8 +197,8 @@ def validation_loop(
         "viz": [wandb.Video(video, fps=4, format="mp4") for video in videos],
     }
 
-    geometry_enabled = bool((geometry_cfg or {}).get("enabled", False)) if isinstance(geometry_cfg, dict) else bool(getattr(geometry_cfg, "enabled", False) if geometry_cfg is not None else False)
-    if geometry_enabled and exp_dir is not None and epoch is not None:
+    geometry_vis_enabled = bool((geometry_cfg or {}).get("enabled", False)) if isinstance(geometry_cfg, dict) else bool(getattr(geometry_cfg, "enabled", False) if geometry_cfg is not None else False)
+    if geometry_vis_enabled and exp_dir is not None and epoch is not None:
         try:
             figures, meta = geometry_visualization_loop(
                 batch=batch,
@@ -211,6 +225,7 @@ def validation_loop(
                     epoch=epoch,
                     wandb_prefix="geometry_viz",
                     include_epoch_in_filename=bool((geometry_cfg or {}).get("include_epoch_in_filename", True)) if isinstance(geometry_cfg, dict) else bool(getattr(geometry_cfg, "include_epoch_in_filename", True) if geometry_cfg is not None else True),
+                    log_to_wandb=bool((geometry_cfg or {}).get("wandb_log_geometry", True)) if isinstance(geometry_cfg, dict) else bool(getattr(geometry_cfg, "wandb_log_geometry", True) if geometry_cfg is not None else True),
                 )
             )
         except Exception as exc:
@@ -224,3 +239,219 @@ def validation_loop(
     pixel_decoder.train()
 
     return logs
+
+
+def _checkpoint_epoch(path):
+    m = re.search(r"epoch_(\d+)\.pth\.tar$", path.name)
+    if m:
+        return int(m.group(1))
+    return -1
+
+
+def _discover_checkpoints(run_dir):
+    run_dir = Path(run_dir)
+    ckpts = sorted(run_dir.glob("epoch_*.pth.tar"), key=_checkpoint_epoch)
+    latest = run_dir / "latest.pth.tar"
+    if latest.exists():
+        ckpts.append(latest)
+    return ckpts
+
+
+def _load_jepa_weights(jepa, checkpoint_path, device):
+    ckpt = torch.load(checkpoint_path, map_location=device)
+    epoch = None
+    if isinstance(ckpt, dict):
+        epoch = ckpt.get("epoch", None)
+        if "model_state_dict" in ckpt:
+            jepa.load_state_dict(ckpt["model_state_dict"], strict=False)
+        elif "state_dict" in ckpt:
+            jepa.load_state_dict(ckpt["state_dict"], strict=False)
+        else:
+            jepa.load_state_dict(ckpt, strict=False)
+    else:
+        jepa.load_state_dict(ckpt, strict=False)
+    return epoch
+
+
+def _to_bool_or_none(val):
+    if val is None:
+        return None
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return bool(val)
+    sval = str(val).strip().lower()
+    if sval in ("1", "true", "yes", "y", "on"):
+        return True
+    if sval in ("0", "false", "no", "n", "off"):
+        return False
+    raise ValueError(f"Cannot parse boolean value: {val}")
+
+
+def run(
+    folder=None,
+    cfg=None,
+    eval_cfg=None,
+    checkpoint=None,
+    log_wandb=None,
+    max_batches=None,
+    batch_size=None,
+    num_workers=None,
+    **overrides,
+):
+    """Evaluate a trained video JEPA model.
+
+    Config priority (highest last):
+      1. Run's saved config.yaml  (model architecture / data / optimizer)
+      2. --eval_cfg YAML          (only logging.* is applied; all other keys ignored)
+      3. CLI **overrides          (dot-notation, e.g. logging.geometry_viz.enabled=true)
+    """
+    if folder is None and checkpoint is None:
+        raise ValueError("Provide at least one of: folder or checkpoint")
+
+    folder_path = Path(folder) if folder is not None else None
+    checkpoint_path = Path(checkpoint) if checkpoint is not None else None
+
+    cfg_path = None
+    if cfg is not None:
+        cfg_path = Path(cfg)
+    elif folder_path is not None:
+        cand = folder_path / "config.yaml"
+        if cand.exists():
+            cfg_path = cand
+
+    if cfg_path is None:
+        raise ValueError("Could not resolve config path. Pass --cfg or provide --folder containing config.yaml")
+
+    # --- Phase 1: base config from the run's saved config.yaml ---
+    cfg_obj = load_config(str(cfg_path))
+
+    # --- Phase 2: merge only logging.* from the eval-specific YAML (if given) ---
+    if eval_cfg is not None:
+        _eval_cfg_path = Path(eval_cfg)
+        if not _eval_cfg_path.exists():
+            raise FileNotFoundError(f"eval_cfg not found: {_eval_cfg_path}")
+        _eval_cfg_obj = OmegaConf.load(_eval_cfg_path)
+        if "logging" in _eval_cfg_obj:
+            cfg_obj = OmegaConf.merge(
+                cfg_obj,
+                OmegaConf.create({"logging": OmegaConf.to_container(_eval_cfg_obj.logging, resolve=True)}),
+            )
+            logger.info(f"Applied eval config logging overrides from {_eval_cfg_path}")
+        else:
+            logger.warning(f"eval_cfg {_eval_cfg_path} has no 'logging' key — nothing applied")
+
+    # --- Phase 3: CLI dot-notation overrides (highest priority) ---
+    if overrides:
+        _override_dict: dict = {}
+        for key, value in overrides.items():
+            keys = key.split(".")
+            current = _override_dict
+            for k in keys[:-1]:
+                current = current.setdefault(k, {})
+            current[keys[-1]] = value
+        cfg_obj = OmegaConf.merge(cfg_obj, OmegaConf.create(_override_dict))
+        logger.info(f"Applied {len(overrides)} CLI override(s)")
+
+    device = setup_device("cpu")
+    setup_seed(cfg_obj.meta.seed)
+
+    if folder_path is None:
+        if checkpoint_path is None:
+            raise ValueError("checkpoint path is required when folder is not provided")
+        folder_path = checkpoint_path.parent
+
+    val_set = MovingMNISTDet(split="val")
+    effective_batch_size = int(batch_size) if batch_size is not None else int(cfg_obj.data.batch_size)
+    effective_num_workers = int(num_workers) if num_workers is not None else int(cfg_obj.data.num_workers)
+    val_loader = DataLoader(
+        val_set,
+        batch_size=effective_batch_size,
+        shuffle=False,
+        num_workers=effective_num_workers,
+    )
+
+    built = build_video_jepa_and_probes(cfg_obj, device)
+    jepa = built["jepa"]
+    pixel_decoder = built["pixel_decoder"]
+    detection_head = built["detection_head"]
+
+    geometry_cfg = cfg_obj.logging.get("geometry_viz", {})
+
+    log_wandb_override = _to_bool_or_none(log_wandb)
+    enabled_wandb = bool(cfg_obj.logging.log_wandb) if log_wandb_override is None else bool(log_wandb_override)
+
+    run_name = f"{folder_path.name}_eval"
+    wandb_run = setup_wandb(
+        project="eb_jepa",
+        config={
+            "example": "video_jepa_eval",
+            "eval_mode": "standalone",
+            "eval_source_folder": str(folder_path),
+            **OmegaConf.to_container(cfg_obj, resolve=True),
+        },
+        run_dir=folder_path / "eval_wandb",
+        run_name=run_name,
+        tags=["video_jepa", "eval", f"seed_{cfg_obj.meta.seed}"],
+        group=cfg_obj.logging.get("wandb_group"),
+        enabled=enabled_wandb,
+        resume=False,
+    )
+
+    if checkpoint_path is not None:
+        ckpts = [checkpoint_path]
+    else:
+        ckpts = _discover_checkpoints(folder_path)
+
+    if not ckpts:
+        raise ValueError(f"No checkpoints found in {folder_path}")
+
+    for ckpt in ckpts:
+        loaded_epoch = _load_jepa_weights(jepa, ckpt, device)
+        epoch_step = int(loaded_epoch) if loaded_epoch is not None else _checkpoint_epoch(ckpt)
+        if epoch_step < 0:
+            epoch_step = 0
+
+        logs = validation_loop(
+            val_loader=val_loader,
+            jepa=jepa,
+            detection_head=detection_head,
+            pixel_decoder=pixel_decoder,
+            steps=cfg_obj.model.steps,
+            device=device,
+            use_amp=False,
+            dtype=torch.float32,
+            geometry_cfg=geometry_cfg,
+            epoch=epoch_step,
+            exp_dir=folder_path,
+            max_batches=max_batches,
+        )
+
+        logs["eval/checkpoint_name"] = ckpt.name
+        logs["eval/checkpoint_path"] = str(ckpt)
+        logs["eval/epoch_step"] = int(epoch_step)
+
+        if wandb_run:
+            wandb.log(logs, step=epoch_step)
+
+        logger.info("Evaluated checkpoint %s at step=%d", ckpt.name, epoch_step)
+
+    geometry_enabled = bool((geometry_cfg or {}).get("enabled", False)) if isinstance(geometry_cfg, dict) else bool(getattr(geometry_cfg, "enabled", False) if geometry_cfg is not None else False)
+    if geometry_enabled and wandb_run:
+        try:
+            evo_logs = assemble_geometry_viz_videos(
+                exp_dir=folder_path,
+                fps=int((geometry_cfg or {}).get("evolution_fps", 2)) if isinstance(geometry_cfg, dict) else int(getattr(geometry_cfg, "evolution_fps", 2)),
+                wandb_prefix="geometry_viz",
+            )
+            if evo_logs:
+                wandb.log(evo_logs)
+        except Exception:
+            logger.exception("Failed assembling/logging geometry evolution videos")
+
+    if wandb_run:
+        wandb.finish()
+
+
+if __name__ == "__main__":
+    fire.Fire(run)

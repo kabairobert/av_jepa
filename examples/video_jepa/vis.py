@@ -740,6 +740,7 @@ def log_and_save_geometry_viz(
     epoch,
     wandb_prefix="geometry_viz",
     include_epoch_in_filename=True,
+    log_to_wandb=True,
 ):
     exp_dir = Path(exp_dir)
     epoch_dir = exp_dir / "geometry_viz" / f"epoch_{int(epoch):04d}"
@@ -753,7 +754,8 @@ def log_and_save_geometry_viz(
             out_path = epoch_dir / f"{key}.png"
         fig.savefig(out_path, dpi=140, bbox_inches="tight")
         plt.close(fig)
-        logs[f"{wandb_prefix}/{key}"] = wandb.Image(str(out_path), caption=f"epoch={int(epoch)}")
+        if log_to_wandb:
+            logs[f"{wandb_prefix}/{key}"] = wandb.Image(str(out_path), caption=f"epoch={int(epoch)}")
     return logs
 
 

@@ -1,0 +1,54 @@
+# eval_overrides_template.yaml
+#
+# Copy and rename this file (e.g. eval_geometry.yaml or eval_local.yaml).
+# Pass it to the eval CLI via --eval_cfg path/to/this.yaml
+#
+# Only the `logging` block is read from this file.
+# Model architecture, data, and optimizer params always come from the run's
+# saved config.yaml so the evaluation is always consistent with training.
+#
+# Config priority (highest last):
+#   1. run's config.yaml   (model / data / optimizer — immutable)
+#   2. this file           (logging.* overrides)
+#   3. CLI **overrides     (dot-notation, e.g. --logging.geometry_viz.enabled=true)
+#
+# Example usage:
+#   uv run python -m examples.video_jepa.eval run \
+#     --folder checkpoints/video_jepa/my_run/my_exp_seed42 \
+#     --eval_cfg examples/video_jepa/cfgs/eval_overrides_template.yaml \
+#     --batch_size 4 --num_workers 0 --max_batches 4 --log_wandb false
+
+logging:
+  log_wandb: false           # values: true|false; set true to log eval metrics to wandb
+  wandb_group:               # set to group eval runs (e.g. "eval-sweep-2026")
+  tqdm_silent: false
+
+  geometry_viz:
+    enabled: true            # values: true|false; master switch for all geometry plots
+    num_samples: 12          # recommended interval: [4, 16]; sampled videos for trajectory panels
+    tsne_method: umap        # values: umap|tsne; umap preferred, tsne as fallback
+    activation_layer: null   # values: null|"<dot.path>"; null auto-detects final spatial encoder layer
+    stage_label: encoder_rollout  # values: any string; displayed in plot titles
+    wandb_log_geometry: false     # values: true|false; log geometry figures to wandb (requires log_wandb: true)
+    temporal_self_similarity_num_samples: 2  # recommended interval: [1, 4]; number of videos in Vis 2
+    include_epoch_in_title: true             # values: true|false; append epoch to figure titles
+    include_epoch_in_filename: true          # values: true|false; write *_epoch_XXXX.png filenames
+    spatial_tsne_max_points: 10000           # recommended interval: [5000, 30000]; cap for UMAP/t-SNE speed
+    covariance_max_samples: 2048             # recommended interval: [512, 8192]; samples for scree plot
+    evolution_fps: 2                         # recommended interval: [1, 8]; fps for timelapse mp4
+    long_sequence:
+      enabled: true                          # values: true|false; activate long-sequence controls
+      time_subsample_mode: uniform           # values: uniform|windowed
+      window_size: 96                        # recommended interval: [48, 192]; used when mode=windowed
+      window_stride: 48                      # recommended interval: [16, 96]; used when mode=windowed
+      max_frames_for_plots: 96              # recommended interval: [64, 192]; cap for trajectory/self-sim/phase
+      max_frames_for_embedding: 96          # recommended interval: [32, 128]; cap for occupancy embedding
+      max_frames_activation_overlay: 24     # recommended interval: [12, 48]; cap for storyboard
+    plots:
+      latent_trajectories_avgpool: true      # values: true|false; Vis 1.1
+      latent_trajectories_spatialflat: true  # values: true|false; Vis 1.2
+      temporal_self_similarity: true         # values: true|false; Vis 2
+      occupancy_spatial_embedding: true      # values: true|false; Vis 3 (GT-dependent)
+      cov_eig_spectrum: true                 # values: true|false; Vis 4
+      activation_overlays: true             # values: true|false; Vis 5
+      phase_space_portrait: true            # values: true|false; Vis 6

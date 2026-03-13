@@ -9,7 +9,6 @@ from pathlib import Path
 
 import fire
 import torch
-import torch.nn as nn
 from torch.amp import GradScaler, autocast
 try:
     import psutil
@@ -20,18 +19,8 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from eb_jepa.architectures import (
-    DetHead,
-    Projector,
-    ResNet5,
-    ResUNet,
-    StateOnlyPredictor,
-)
 from eb_jepa.datasets.moving_mnist import MovingMNISTDet
-from eb_jepa.image_decoder import ImageDecoder
-from eb_jepa.jepa import JEPA, JEPAProbe
 from eb_jepa.logging import get_logger
-from eb_jepa.losses import SquareLossSeq, VCLoss, VideoJEPA_BCS, VideoJEPA_BCS_Euler_Scaleinvariant
 from eb_jepa.training_utils import (
     get_default_dev_name,
     get_exp_name,
@@ -55,6 +44,7 @@ from eb_jepa.training_utils import (
     _log_tensor_shapes,
 )
 from examples.video_jepa.eval import validation_loop
+from examples.video_jepa.model_builder import build_video_jepa_and_probes
 from examples.video_jepa.vis import assemble_geometry_viz_videos
 
 logger = get_logger(__name__)
@@ -258,54 +248,18 @@ def run(
         val_samples=len(val_set),
     )
 
-    # Initialize Video JEPA model
+    # Initialize Video JEPA model and probes
     logger.info("Initializing model...")
-    encoder = ResNet5(cfg.model.dobs, cfg.model.henc, cfg.model.dstc)
-    predictor_model = ResUNet(2 * cfg.model.dstc, cfg.model.hpre, cfg.model.dstc)
-    predictor = StateOnlyPredictor(predictor_model, context_length=2)
-
     loss_type = cfg.loss.get("type", "vcreg")
     logger.info(f"Using regularizer: {loss_type}")
-    # Determine default multipliers per loss type
-    _BCS_TYPES = ("bcs", "bcs-euler-scalefree")
-    if loss_type in _BCS_TYPES:
-        # Smaller output dim for BCS/SIGReg (analogous to image_jepa: hidden=2048, output=128)
-        default_h_mult = 4
-        default_o_mult = 1
-    else:
-        default_h_mult = 4
-        default_o_mult = 4
-
-    # Read multipliers from config under loss (defaults applied above)
-    h_mult = cfg.loss.get("proj_hidden_mult", default_h_mult)
-    o_mult = cfg.loss.get("proj_out_mult", default_o_mult)
-
-    proj_hidden = cfg.model.dstc * h_mult
-    proj_out = cfg.model.dstc * o_mult
-    projector = Projector(f"{cfg.model.dstc}-{proj_hidden}-{proj_out}")
-
-    if loss_type == "bcs":        
-        regularizer = VideoJEPA_BCS(
-            num_slices=cfg.loss.get("num_slices"),
-            lmbd=cfg.loss.get("lmbd"),
-            proj=projector,
-        )
-    elif loss_type == "bcs-euler-scalefree":
-        regularizer = VideoJEPA_BCS_Euler_Scaleinvariant(
-            num_slices=cfg.loss.get("num_slices"),
-            lmbd=cfg.loss.get("lmbd"),
-            proj=projector,
-        )
-    else:  # default: vcreg
-        regularizer = VCLoss(cfg.loss.std_coeff, cfg.loss.cov_coeff, proj=projector)
-    ploss = SquareLossSeq(projector)
-    jepa = JEPA(encoder, encoder, predictor, regularizer, ploss).to(device)
-
-    # Initialize decoder and detection head (for evaluation only)
-    decoder = ImageDecoder(cfg.model.dstc, cfg.model.dobs)
-    dethead = DetHead(cfg.model.dstc, cfg.model.hpre, cfg.model.dobs)
-    pixel_decoder = JEPAProbe(jepa, decoder, nn.MSELoss()).to(device)
-    detection_head = JEPAProbe(jepa, dethead, nn.BCEWithLogitsLoss()).to(device)
+    built = build_video_jepa_and_probes(cfg, device)
+    jepa = built["jepa"]
+    pixel_decoder = built["pixel_decoder"]
+    detection_head = built["detection_head"]
+    encoder = built["encoder"]
+    predictor = built["predictor"]
+    projector = built["projector"]
+    regularizer = built["regularizer"]
 
     # Log model structure and parameters
     encoder_params = sum(p.numel() for p in encoder.parameters())

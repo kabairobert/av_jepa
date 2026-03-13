@@ -60,6 +60,7 @@ logging:
     tsne_method: umap                        # values: umap|tsne; umap preferred, tsne fallback
     activation_layer: null                   # values: null|"<dot.path>"; null auto-detects final spatial encoder layer
     stage_label: encoder_rollout             # values: any string; displayed in plot titles
+    wandb_log_geometry: true                 # values: true|false; log geometry figures to wandb in addition to disk
     temporal_self_similarity_num_samples: 2  # recommended interval: [1, 4]; number of videos shown in Vis 2
     include_epoch_in_title: true             # values: true|false; append epoch to figure titles
     include_epoch_in_filename: true          # values: true|false; write *_epoch_XXXX.png filenames
