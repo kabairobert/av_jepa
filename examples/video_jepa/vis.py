@@ -282,7 +282,8 @@ def plot_temporal_self_similarity(
         f"Temporal Self-Similarity [{stage_label}]" + _epoch_suffix(epoch, include_epoch_in_title),
         fontsize=12,
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    # tight_layout can warn with a figure-level colorbar; adjust spacing manually.
+    fig.subplots_adjust(left=0.07, right=0.90, bottom=0.07, top=0.90, wspace=0.28, hspace=0.32)
     return fig
 
 
@@ -307,9 +308,12 @@ def plot_occupancy_spatial_embedding(
     b, d, t, h, w = gt_latent.shape
     x = gt_latent.permute(0, 2, 3, 4, 1).reshape(-1, d).detach().cpu().numpy()
 
-    # Align GT occupancy with latent spatial size.
-    occ = digit_location[:, :t].float().unsqueeze(1)
-    occ = F.interpolate(occ, size=(h, w), mode="nearest").squeeze(1)
+    # Align GT occupancy with latent spatial size: [B, T, Hm, Wm] -> [B, T, h, w]
+    occ = digit_location[:, :t].float()
+    b_occ, t_occ, hm, wm = occ.shape
+    occ = occ.reshape(b_occ * t_occ, 1, hm, wm)
+    occ = F.interpolate(occ, size=(h, w), mode="nearest")
+    occ = occ.reshape(b_occ, t_occ, h, w)
     y = occ.reshape(-1).detach().cpu().numpy().astype(np.int32)
 
     n = x.shape[0]
@@ -535,7 +539,8 @@ def plot_phase_space_portrait(
     fig.suptitle(
         f"Phase Space Portrait (static 3D) [{stage_label}]" + _epoch_suffix(epoch, include_epoch_in_title)
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    # tight_layout is unreliable with 3D axes; adjust spacing manually.
+    fig.subplots_adjust(left=0.03, right=0.98, bottom=0.04, top=0.90, wspace=0.22, hspace=0.26)
     return fig
 
 
