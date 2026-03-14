@@ -26,10 +26,11 @@ cd ~/github/eb_jepa_private
 
 export PATH="$HOME/.cargo/bin:$PATH"
 
-RUN_FOLDER=~/JEPA/checkpoints/video_jepa/REPLACE_ME
+RUN_FOLDER="/gpfs/home3/rkabai/github/eb_jepa_private/checkpoints/video_jepa/dev_2026-03-09_09-33/resnet_bs84_bcs-euler-scalefree_proj64x64_ns32_lmbd10_lr1e-03_seed2025/"
 
 echo "Starting standalone eval on run folder: $RUN_FOLDER"
 uv run python -m examples.video_jepa.eval \
-    --folder "$RUN_FOLDER"
+    --folder "$RUN_FOLDER" \
+    --eval_cfg "/gpfs/home3/rkabai/github/eb_jepa_private/examples/video_jepa/cfgs/eval_overrides_template.yaml"
 
 echo "Eval complete."
