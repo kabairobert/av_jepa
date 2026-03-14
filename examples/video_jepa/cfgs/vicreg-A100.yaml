@@ -55,6 +55,12 @@ logging:
     stage_label: encoder_rollout  # values: any string; displayed in plot titles
     wandb_log_geometry: true   # values: true|false; log geometry figures to wandb in addition to disk
     temporal_self_similarity_num_samples: 2  # recommended interval: [1, 4]; number of videos shown in Vis 2
+    temporal_self_similarity_feature_mode: spatialflat  # values: spatialflat|avgpool; spatialflat is more motion-sensitive
+    temporal_self_similarity_distance: euclidean  # values: euclidean|cosine; euclidean avoids cosine saturation on near-static directions
+    temporal_self_similarity_pca_fixed_k: 3  # recommended interval: [2, 16]; Vis 2.1 fixed PCA components
+    temporal_self_similarity_pca_var_ratio: 0.95  # recommended interval: [0.85, 0.99]; Vis 2.2 target explained variance
+    temporal_self_similarity_pca_max_k: 64  # recommended interval: [16, 128]; cap for PCA dimensionality/perf
+    temporal_self_similarity_center_time: true  # values: true|false; subtract temporal mean before PCA/distances
     include_epoch_in_title: true   # values: true|false; append epoch to figure titles
     include_epoch_in_filename: true  # values: true|false; write *_epoch_XXXX.png filenames
     spatial_tsne_max_points: 10000  # recommended interval: [5000, 30000]; cap points for UMAP/t-SNE speed

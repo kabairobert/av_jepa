@@ -127,6 +127,46 @@ def _spatial_flat_bt(latent):
     return latent.permute(0, 2, 1, 3, 4).reshape(b, t, d * h * w).contiguous()
 
 
+def _tss_feature_bt(latent, feature_mode):
+    mode = str(feature_mode).lower()
+    if mode == "avgpool":
+        return _avgpool_bt(latent)
+    return _spatial_flat_bt(latent)
+
+
+def _fit_tss_pca_features(x, fixed_k, var_ratio, pca_max_k):
+    # x: [T, F]
+    t, f = x.shape
+    max_k = max(1, min(int(pca_max_k), int(t), int(f)))
+    fixed_k = max(1, min(int(fixed_k), max_k))
+
+    pca = PCA(n_components=max_k)
+    z_all = pca.fit_transform(x)
+
+    z_fixed = z_all[:, :fixed_k]
+
+    evr = pca.explained_variance_ratio_
+    target = float(var_ratio)
+    target = min(max(target, 1e-6), 1.0)
+    if evr.size == 0:
+        var_k = 1
+    else:
+        var_k = int(np.searchsorted(np.cumsum(evr), target) + 1)
+    var_k = max(1, min(var_k, max_k))
+    z_var = z_all[:, :var_k]
+
+    return z_fixed, z_var, fixed_k, var_k
+
+
+def _pairwise_time_matrix(x, distance):
+    mode = str(distance).lower()
+    xt = torch.from_numpy(x).float()
+    if mode == "cosine":
+        xt = F.normalize(xt, dim=-1)
+        return (xt @ xt.transpose(0, 1)).cpu().numpy()
+    return torch.cdist(xt, xt, p=2).cpu().numpy()
+
+
 def _pick_indices(batch_size, max_count):
     return list(range(min(batch_size, max_count)))
 
@@ -258,39 +298,78 @@ def plot_temporal_self_similarity(
     epoch=None,
     include_epoch_in_title=False,
     aligned=False,
+    feature_mode="spatialflat",
+    distance="euclidean",
+    pca_fixed_k=3,
+    pca_var_ratio=0.95,
+    pca_max_k=64,
+    center_time=True,
 ):
     gt_src = gt_latent if aligned else gt_latent[:, :, 1:]
-    bt = _avgpool_bt(gt_src)
+    bt = _tss_feature_bt(gt_src, feature_mode)
     idxs = _pick_indices(bt.shape[0], num_samples)
     if not idxs:
         return None
 
-    n = len(idxs)
-    ncols = min(2, n)
-    nrows = int(np.ceil(n / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(5.2 * ncols, 4.4 * nrows), squeeze=False)
-    axes_flat = axes.flatten()
+    rows = []
+    stats = []
+    for idx in idxs:
+        x = bt[idx].detach().float()
+        if center_time:
+            x = x - x.mean(dim=0, keepdim=True)
+        x_np = x.cpu().numpy()
 
-    for i, ax in enumerate(axes_flat):
-        if i >= n:
-            ax.axis("off")
-            continue
-        x = bt[idxs[i]]
-        x = F.normalize(x, dim=-1)
-        sim = x @ x.transpose(0, 1)
-        im = ax.imshow(sim.cpu().numpy(), vmin=-1, vmax=1, cmap="viridis")
-        ax.set_title(f"sample_idx={idxs[i]}")
-        ax.set_xlabel("t")
-        ax.set_ylabel("t")
+        z_fixed, z_var, used_fixed_k, used_var_k = _fit_tss_pca_features(
+            x_np,
+            fixed_k=pca_fixed_k,
+            var_ratio=pca_var_ratio,
+            pca_max_k=pca_max_k,
+        )
+        m_fixed = _pairwise_time_matrix(z_fixed, distance=distance)
+        m_var = _pairwise_time_matrix(z_var, distance=distance)
+        rows.append((m_fixed, m_var))
+        stats.append((used_fixed_k, used_var_k))
 
-    cax = fig.add_axes([0.90, 0.15, 0.02, 0.70])
-    fig.colorbar(im, cax=cax)
+    n = len(rows)
+    fig, axes = plt.subplots(n, 2, figsize=(11.0, 4.2 * n), squeeze=False)
+
+    mode = str(distance).lower()
+    if mode == "cosine":
+        vmin, vmax = -1.0, 1.0
+    else:
+        vmax = max(float(np.max(m)) for mf, mv in rows for m in (mf, mv))
+        if vmax <= 0:
+            vmax = 1.0
+        vmin = 0.0
+
+    im = None
+    for i, ((m_fixed, m_var), (used_fixed_k, used_var_k)) in enumerate(zip(rows, stats)):
+        ax_l = axes[i, 0]
+        ax_r = axes[i, 1]
+
+        im = ax_l.imshow(m_fixed, vmin=vmin, vmax=vmax, cmap="viridis")
+        ax_l.set_title(f"sample_idx={idxs[i]} | Vis 2.1 fixed-k={used_fixed_k}")
+        ax_l.set_xlabel("t")
+        ax_l.set_ylabel("t")
+
+        im = ax_r.imshow(m_var, vmin=vmin, vmax=vmax, cmap="viridis")
+        ax_r.set_title(
+            f"sample_idx={idxs[i]} | Vis 2.2 var{int(round(float(pca_var_ratio) * 100))}% k={used_var_k}"
+        )
+        ax_r.set_xlabel("t")
+        ax_r.set_ylabel("t")
+
+    cax = fig.add_axes([0.91, 0.12, 0.02, 0.76])
+    cbar = fig.colorbar(im, cax=cax)
+    cbar.set_label("cosine similarity" if mode == "cosine" else "euclidean distance")
     fig.suptitle(
-        f"Temporal Self-Similarity [{stage_label}] | sample_indices={idxs}"
+        "Temporal Time-Delay Matrices (Vis 2.1 fixed-k, Vis 2.2 var-ratio) "
+        f"[{stage_label}] | feature_mode={str(feature_mode).lower()}"
+        f" | metric={mode} | sample_indices={idxs}"
         + _epoch_suffix(epoch, include_epoch_in_title),
         fontsize=12,
     )
-    fig.subplots_adjust(left=0.07, right=0.88, bottom=0.07, top=0.90, wspace=0.24, hspace=0.28)
+    fig.subplots_adjust(left=0.06, right=0.89, bottom=0.06, top=0.90, wspace=0.22, hspace=0.30)
     return fig
 
 
@@ -595,6 +674,12 @@ def geometry_visualization_loop(
     tsne_max_points = int(_cfg_get(geometry_cfg, "spatial_tsne_max_points", 10000))
     cov_max_samples = int(_cfg_get(geometry_cfg, "covariance_max_samples", 2048))
     tss_num_samples = int(_cfg_get(geometry_cfg, "temporal_self_similarity_num_samples", 2))
+    tss_feature_mode = str(_cfg_get(geometry_cfg, "temporal_self_similarity_feature_mode", "spatialflat"))
+    tss_distance = str(_cfg_get(geometry_cfg, "temporal_self_similarity_distance", "euclidean"))
+    tss_pca_fixed_k = int(_cfg_get(geometry_cfg, "temporal_self_similarity_pca_fixed_k", 3))
+    tss_pca_var_ratio = float(_cfg_get(geometry_cfg, "temporal_self_similarity_pca_var_ratio", 0.95))
+    tss_pca_max_k = int(_cfg_get(geometry_cfg, "temporal_self_similarity_pca_max_k", 64))
+    tss_center_time = bool(_cfg_get(geometry_cfg, "temporal_self_similarity_center_time", True))
 
     long_cfg = _cfg_get(geometry_cfg, "long_sequence", {})
     long_enabled = bool(_cfg_get(long_cfg, "enabled", True))
@@ -660,6 +745,12 @@ def geometry_visualization_loop(
             epoch=epoch,
             include_epoch_in_title=include_epoch_in_title,
             aligned=True,
+            feature_mode=tss_feature_mode,
+            distance=tss_distance,
+            pca_fixed_k=tss_pca_fixed_k,
+            pca_var_ratio=tss_pca_var_ratio,
+            pca_max_k=tss_pca_max_k,
+            center_time=tss_center_time,
         )
 
     if _plot_enabled(geometry_cfg, "occupancy_spatial_embedding"):
