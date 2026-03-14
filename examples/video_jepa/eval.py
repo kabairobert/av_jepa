@@ -353,7 +353,7 @@ def run(
         cfg_obj = OmegaConf.merge(cfg_obj, OmegaConf.create(_override_dict))
         logger.info(f"Applied {len(overrides)} CLI override(s)")
 
-    device = setup_device("cpu")
+    device = setup_device("auto")
     setup_seed(cfg_obj.meta.seed)
 
     if folder_path is None:
