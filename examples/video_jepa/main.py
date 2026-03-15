@@ -9,7 +9,8 @@ from pathlib import Path
 
 import fire
 import torch
-from torch.amp import GradScaler, autocast
+from torch.amp.autocast_mode import autocast
+from torch.amp.grad_scaler import GradScaler
 try:
     import psutil
 except Exception:
@@ -214,9 +215,13 @@ def run(
     # Save config next to checkpoints (skipped if already exists, e.g. on resume)
     save_config(cfg, exp_dir)
 
+    wandb_cfg = OmegaConf.to_container(cfg, resolve=True)
+    if not isinstance(wandb_cfg, dict):
+        wandb_cfg = {}
+
     wandb_run = setup_wandb(
         project="eb_jepa",
-        config={"example": "video_jepa", **OmegaConf.to_container(cfg, resolve=True)},
+        config={"example": "video_jepa", **wandb_cfg},
         run_dir=exp_dir,
         run_name=exp_name,
         tags=["video_jepa", f"seed_{cfg.meta.seed}"],
@@ -247,6 +252,7 @@ def run(
         train_samples=len(train_set),
         val_samples=len(val_set),
     )
+    steps_per_epoch = len(train_loader)
 
     # Initialize Video JEPA model and probes
     logger.info("Initializing model...")
@@ -402,6 +408,8 @@ def run(
                 geometry_cfg=geometry_cfg,
                 epoch=epoch,
                 exp_dir=exp_dir,
+                log_step=global_step,
+                steps_per_epoch=steps_per_epoch,
             )
 
             # One-time post-first-validation memory probe (simplified)
@@ -470,6 +478,7 @@ def run(
             optimizer=optimizer,
             epoch=epoch,
             step=global_step,
+            steps_per_epoch=steps_per_epoch,
             pixel_decoder_state_dict=pixel_decoder.state_dict(),
             detection_head_state_dict=detection_head.state_dict(),
         )
@@ -480,6 +489,7 @@ def run(
                 optimizer=optimizer,
                 epoch=epoch,
                 step=global_step,
+                steps_per_epoch=steps_per_epoch,
                 pixel_decoder_state_dict=pixel_decoder.state_dict(),
                 detection_head_state_dict=detection_head.state_dict(),
             )

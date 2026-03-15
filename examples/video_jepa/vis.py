@@ -6,6 +6,7 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import wandb
 from matplotlib import cm
@@ -359,7 +360,8 @@ def plot_temporal_self_similarity(
         ax_r.set_xlabel("t")
         ax_r.set_ylabel("t")
 
-    cax = fig.add_axes([0.91, 0.12, 0.02, 0.76])
+    cax = fig.add_axes((0.91, 0.12, 0.02, 0.76))
+    assert im is not None
     cbar = fig.colorbar(im, cax=cax)
     cbar.set_label("cosine similarity" if mode == "cosine" else "euclidean distance")
     fig.suptitle(
@@ -445,28 +447,163 @@ def _get_projector_module(jepa):
     return proj
 
 
-def plot_cov_eig_spectrum(
-    gt_latent,
-    jepa,
-    max_samples=2048,
-    stage_label="projector",
+class StreamingCovarianceStats:
+    def __init__(self):
+        self.count = 0
+        self.sum_vec = None
+        self.sum_outer = None
+
+    def update(self, x):
+        if x is None:
+            return
+        x = x.detach().reshape(-1, x.shape[-1]).float()
+        if x.numel() == 0:
+            return
+        x_cpu = x.cpu().to(torch.float64)
+        batch_count = int(x_cpu.shape[0])
+        batch_sum = x_cpu.sum(dim=0)
+        batch_outer = x_cpu.transpose(0, 1) @ x_cpu
+        if self.sum_vec is None:
+            self.sum_vec = batch_sum
+            self.sum_outer = batch_outer
+        else:
+            self.sum_vec += batch_sum
+            self.sum_outer += batch_outer
+        self.count += batch_count
+
+    def covariance(self):
+        if self.count < 2 or self.sum_vec is None or self.sum_outer is None:
+            return None
+        mean = self.sum_vec / float(self.count)
+        cov = (self.sum_outer - float(self.count) * torch.outer(mean, mean)) / float(max(1, self.count - 1))
+        return cov
+
+    def eigvals(self):
+        cov = self.covariance()
+        if cov is None:
+            return None
+        eigvals = torch.linalg.eigvalsh(cov).clamp_min(1e-12)
+        return torch.sort(eigvals, descending=True).values.cpu().numpy()
+
+
+def _flatten_encoder_tokens(gt_latent):
+    return gt_latent.permute(0, 2, 3, 4, 1).reshape(-1, gt_latent.shape[1]).contiguous()
+
+
+def _projector_linear_outputs(projector, x):
+    outputs = {}
+    if projector is None:
+        return outputs
+
+    if hasattr(projector, "net") and isinstance(projector.net, nn.Sequential):
+        current = x
+        linear_idx = 0
+        for module in projector.net:
+            current = module(current)
+            if isinstance(module, nn.Linear):
+                outputs[f"projector_layer_{linear_idx}"] = current
+                linear_idx += 1
+        if linear_idx > 0:
+            outputs["projector_output"] = current
+        return outputs
+
+    outputs["projector_output"] = projector(x)
+    return outputs
+
+
+def _covariance_source_mode(geometry_cfg):
+    return str(_cfg_get(geometry_cfg, "covariance_source_mode", "encoder")).lower()
+
+
+def iter_covariance_sources(gt_latent, jepa, source_mode="encoder"):
+    mode = str(source_mode).lower()
+    encoder_tokens = _flatten_encoder_tokens(gt_latent)
+
+    if mode in ("encoder", "encoder+projector_output", "encoder+projector_all_linear_layers"):
+        yield "encoder", encoder_tokens
+
+    if mode == "encoder":
+        return
+
+    projector = _get_projector_module(jepa)
+    if projector is None:
+        return
+
+    projector_outputs = _projector_linear_outputs(projector, encoder_tokens)
+    if mode in ("projector_output", "encoder+projector_output"):
+        if "projector_output" in projector_outputs:
+            yield "projector_output", projector_outputs["projector_output"]
+        return
+
+    if mode in ("projector_all_linear_layers", "encoder+projector_all_linear_layers"):
+        for key, value in projector_outputs.items():
+            if key == "projector_output":
+                continue
+            yield key, value
+
+
+def update_covariance_trackers(trackers, gt_latent, jepa, source_mode="encoder"):
+    for key, values in iter_covariance_sources(gt_latent, jepa, source_mode=source_mode):
+        tracker = trackers.setdefault(key, StreamingCovarianceStats())
+        tracker.update(values)
+
+
+def _covariance_scalar_metrics(eigvals, metric_prefix, sample_count):
+    eigvals = np.asarray(eigvals, dtype=np.float64)
+    total = float(np.sum(eigvals))
+    if total <= 0:
+        total = 1e-12
+    probs = eigvals / total
+    entropy = -float(np.sum(probs * np.log(probs + 1e-12)))
+    eff_rank = float(np.exp(entropy))
+    pr = float((total ** 2) / max(np.sum(eigvals ** 2), 1e-12))
+    top1 = float(np.sum(eigvals[:1]) / total)
+    top5 = float(np.sum(eigvals[: min(5, eigvals.shape[0])]) / total)
+    return {
+        f"{metric_prefix}/effective_rank": eff_rank,
+        f"{metric_prefix}/participation_ratio": pr,
+        f"{metric_prefix}/top1_frac": top1,
+        f"{metric_prefix}/top5_frac": top5,
+        f"{metric_prefix}/trace": float(np.sum(eigvals)),
+        f"{metric_prefix}/sample_count": float(sample_count),
+        f"{metric_prefix}/feature_dim": float(eigvals.shape[0]),
+    }
+
+
+def finalize_covariance_diagnostics(trackers):
+    diagnostics = {}
+    for key, tracker in trackers.items():
+        eigvals = tracker.eigvals()
+        if eigvals is None:
+            continue
+        metric_prefix = f"val/diag/cov/{key}"
+        diagnostics[key] = {
+            "eigvals": eigvals,
+            "sample_count": tracker.count,
+            "metrics": _covariance_scalar_metrics(eigvals, metric_prefix, tracker.count),
+        }
+    return diagnostics
+
+
+def _covariance_plot_title(key):
+    if key == "encoder":
+        return "encoder"
+    if key == "projector_output":
+        return "projector output"
+    if key.startswith("projector_layer_"):
+        idx = key.rsplit("_", 1)[-1]
+        return f"projector linear layer {idx}"
+    return key.replace("_", " ")
+
+
+def plot_cov_eig_spectrum_from_eigvals(
+    eigvals,
+    plot_label,
+    stage_label="encoder",
     epoch=None,
     include_epoch_in_title=False,
 ):
-    proj = _get_projector_module(jepa)
-    x = gt_latent.permute(0, 2, 3, 4, 1).reshape(-1, gt_latent.shape[1])
-    if x.shape[0] > max_samples:
-        x = x[:max_samples]
-
-    if proj is not None:
-        with torch.no_grad():
-            x = proj(x)
-
-    x = x.float()
-    x = x - x.mean(dim=0, keepdim=True)
-    cov = (x.t() @ x) / max(1, x.shape[0] - 1)
-    eigvals = torch.linalg.eigvalsh(cov).clamp_min(1e-12)
-    eigvals = torch.sort(eigvals, descending=True).values.cpu().numpy()
+    eigvals = np.asarray(eigvals, dtype=np.float64)
 
     k = np.arange(1, eigvals.shape[0] + 1)
     uniform = np.full_like(eigvals, eigvals.mean())
@@ -475,7 +612,10 @@ def plot_cov_eig_spectrum(
     ax.plot(k, eigvals, linewidth=2, label="spectrum")
     ax.plot(k, uniform, linestyle="--", linewidth=1.5, label="uniform ref")
     ax.set_yscale("log")
-    ax.set_title(f"Covariance Eigenvalue Spectrum [{stage_label}]" + _epoch_suffix(epoch, include_epoch_in_title))
+    ax.set_title(
+        f"Covariance Eigenvalue Spectrum ({plot_label}) [{stage_label}]"
+        + _epoch_suffix(epoch, include_epoch_in_title)
+    )
     ax.set_xlabel("eigenvalue rank")
     ax.set_ylabel("eigenvalue (log)")
     ax.grid(alpha=0.25)
@@ -660,6 +800,7 @@ def geometry_visualization_loop(
     geometry_cfg=None,
     detection_targets=None,
     epoch=None,
+    covariance_diagnostics=None,
 ):
     _ = device
     bundle = _build_rollout_latents(batch, jepa)
@@ -672,7 +813,7 @@ def geometry_visualization_loop(
     stage_label = str(_cfg_get(geometry_cfg, "stage_label", "encoder_rollout"))
     include_epoch_in_title = bool(_cfg_get(geometry_cfg, "include_epoch_in_title", True))
     tsne_max_points = int(_cfg_get(geometry_cfg, "spatial_tsne_max_points", 10000))
-    cov_max_samples = int(_cfg_get(geometry_cfg, "covariance_max_samples", 2048))
+    cov_source_mode = _covariance_source_mode(geometry_cfg)
     tss_num_samples = int(_cfg_get(geometry_cfg, "temporal_self_similarity_num_samples", 2))
     tss_feature_mode = str(_cfg_get(geometry_cfg, "temporal_self_similarity_feature_mode", "spatialflat"))
     tss_distance = str(_cfg_get(geometry_cfg, "temporal_self_similarity_distance", "euclidean"))
@@ -775,14 +916,19 @@ def geometry_visualization_loop(
             )
 
     if _plot_enabled(geometry_cfg, "cov_eig_spectrum"):
-        figs["cov_eig_spectrum"] = plot_cov_eig_spectrum(
-            gt_latent,
-            jepa,
-            max_samples=cov_max_samples,
-            stage_label="projector_or_encoder",
-            epoch=epoch,
-            include_epoch_in_title=include_epoch_in_title,
-        )
+        cov_results = covariance_diagnostics
+        if cov_results is None:
+            trackers = {}
+            update_covariance_trackers(trackers, gt_latent, jepa, source_mode=cov_source_mode)
+            cov_results = finalize_covariance_diagnostics(trackers)
+        for key, info in cov_results.items():
+            figs[f"cov_eig_spectrum_{key}"] = plot_cov_eig_spectrum_from_eigvals(
+                info["eigvals"],
+                plot_label=_covariance_plot_title(key),
+                stage_label=stage_label,
+                epoch=epoch,
+                include_epoch_in_title=include_epoch_in_title,
+            )
 
     if _plot_enabled(geometry_cfg, "activation_overlays"):
         figs["activation_overlays"] = plot_activation_overlays(

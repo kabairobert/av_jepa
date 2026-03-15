@@ -1,11 +1,12 @@
 import collections
 from pathlib import Path
 import re
+from typing import Any
 
 import fire
 import numpy as np
 import torch
-from torch.amp import autocast
+from torch.amp.autocast_mode import autocast
 import torch.nn.functional as F
 import wandb
 from einops import rearrange, repeat
@@ -21,8 +22,10 @@ from eb_jepa.training_utils import load_config, setup_device, setup_seed, setup_
 from examples.video_jepa.model_builder import build_video_jepa_and_probes
 from examples.video_jepa.vis import (
     assemble_geometry_viz_videos,
+    finalize_covariance_diagnostics,
     geometry_visualization_loop,
     log_and_save_geometry_viz,
+    update_covariance_trackers,
 )
 
 logger = get_logger(__name__)
@@ -151,6 +154,8 @@ def validation_loop(
     epoch=None,
     exp_dir=None,
     max_batches=None,
+    log_step=None,
+    steps_per_epoch=None,
 ):
 
     # Set modules to eval mode
@@ -159,6 +164,11 @@ def validation_loop(
     pixel_decoder.eval()
 
     metrics = collections.defaultdict(list)
+    covariance_trackers = {}
+    geometry_vis_enabled = bool((geometry_cfg or {}).get("enabled", False)) if isinstance(geometry_cfg, dict) else bool(getattr(geometry_cfg, "enabled", False) if geometry_cfg is not None else False)
+    covariance_log_scalars = bool((geometry_cfg or {}).get("covariance_log_scalars", True)) if isinstance(geometry_cfg, dict) else bool(getattr(geometry_cfg, "covariance_log_scalars", True) if geometry_cfg is not None else True)
+    covariance_source_mode = str((geometry_cfg or {}).get("covariance_source_mode", "encoder")) if isinstance(geometry_cfg, dict) else str(getattr(geometry_cfg, "covariance_source_mode", "encoder") if geometry_cfg is not None else "encoder")
+
     for bi, batch in enumerate(tqdm(val_loader)):
         batch = {k: v.to(device) for k, v in batch.items()}
         x = batch["video"]
@@ -185,6 +195,15 @@ def validation_loop(
                 return_all_steps=True,
             )
             scores = detection_head.head.score(preds, loc_map[:, 2:])
+
+        if geometry_vis_enabled or covariance_log_scalars:
+            gt_latent = jepa.encoder(x)
+            update_covariance_trackers(
+                covariance_trackers,
+                gt_latent,
+                jepa,
+                source_mode=covariance_source_mode,
+            )
             
         for s, score in enumerate(scores):
             metrics[f"AP_{s}"].append(float(score))
@@ -202,7 +221,18 @@ def validation_loop(
         "viz": [wandb.Video(video, fps=4, format="mp4") for video in videos],
     }
 
-    geometry_vis_enabled = bool((geometry_cfg or {}).get("enabled", False)) if isinstance(geometry_cfg, dict) else bool(getattr(geometry_cfg, "enabled", False) if geometry_cfg is not None else False)
+    covariance_diagnostics = finalize_covariance_diagnostics(covariance_trackers)
+    if covariance_log_scalars:
+        for info in covariance_diagnostics.values():
+            logs.update(info["metrics"])
+
+    if log_step is not None:
+        logs["progress/step"] = int(log_step)
+        if steps_per_epoch is not None and float(steps_per_epoch) > 0:
+            logs["progress/epoch_float"] = float(log_step) / float(steps_per_epoch)
+        if epoch is not None:
+            logs["progress/epoch_int"] = int(epoch) + 1
+
     if geometry_vis_enabled and exp_dir is not None and epoch is not None:
         try:
             figures, meta = geometry_visualization_loop(
@@ -212,6 +242,7 @@ def validation_loop(
                 geometry_cfg=geometry_cfg,
                 detection_targets=batch.get("digit_location"),
                 epoch=epoch,
+                covariance_diagnostics=covariance_diagnostics,
             )
             global _LONG_SEQUENCE_NOTICE_LOGGED
             if not _LONG_SEQUENCE_NOTICE_LOGGED:
@@ -262,11 +293,23 @@ def _discover_checkpoints(run_dir):
     return ckpts
 
 
+def _infer_steps_per_epoch(step, epoch):
+    if step is None or epoch is None:
+        return None
+    epoch = int(epoch)
+    step = int(step)
+    if epoch < 0 or step <= 0:
+        return None
+    return max(1, int(round(step / float(epoch + 1))))
+
+
 def _load_jepa_weights(jepa, checkpoint_path, device, pixel_decoder=None, detection_head=None):
     ckpt = torch.load(checkpoint_path, map_location=device)
-    epoch = None
+    metadata: dict[str, Any] = {"epoch": None, "step": None, "steps_per_epoch": None}
     if isinstance(ckpt, dict):
-        epoch = ckpt.get("epoch", None)
+        metadata["epoch"] = ckpt.get("epoch", None)
+        metadata["step"] = ckpt.get("step", None)
+        metadata["steps_per_epoch"] = ckpt.get("steps_per_epoch", None)
         if "model_state_dict" in ckpt:
             jepa.load_state_dict(ckpt["model_state_dict"], strict=False)
         elif "state_dict" in ckpt:
@@ -285,7 +328,9 @@ def _load_jepa_weights(jepa, checkpoint_path, device, pixel_decoder=None, detect
             logger.warning("detection_head_state_dict not found in checkpoint — probe will use random weights.")
     else:
         jepa.load_state_dict(ckpt, strict=False)
-    return epoch
+    if metadata["steps_per_epoch"] is None:
+        metadata["steps_per_epoch"] = _infer_steps_per_epoch(metadata["step"], metadata["epoch"])
+    return metadata
 
 
 def _to_bool_or_none(val):
@@ -395,6 +440,9 @@ def run(
 
     log_wandb_override = _to_bool_or_none(log_wandb)
     enabled_wandb = bool(cfg_obj.logging.log_wandb) if log_wandb_override is None else bool(log_wandb_override)
+    wandb_cfg = OmegaConf.to_container(cfg_obj, resolve=True)
+    if not isinstance(wandb_cfg, dict):
+        wandb_cfg = {}
 
     run_name = f"{folder_path.name}_eval"
     wandb_run = setup_wandb(
@@ -403,7 +451,7 @@ def run(
             "example": "video_jepa_eval",
             "eval_mode": "standalone",
             "eval_source_folder": str(folder_path),
-            **OmegaConf.to_container(cfg_obj, resolve=True),
+            **wandb_cfg,
         },
         run_dir=folder_path / "eval_wandb",
         run_name=run_name,
@@ -422,10 +470,21 @@ def run(
         raise ValueError(f"No checkpoints found in {folder_path}")
 
     for ckpt in ckpts:
-        loaded_epoch = _load_jepa_weights(jepa, ckpt, device, pixel_decoder=pixel_decoder, detection_head=detection_head)
-        epoch_step = int(loaded_epoch) if loaded_epoch is not None else _checkpoint_epoch(ckpt)
-        if epoch_step < 0:
-            epoch_step = 0
+        checkpoint_meta = _load_jepa_weights(jepa, ckpt, device, pixel_decoder=pixel_decoder, detection_head=detection_head)
+        checkpoint_epoch = checkpoint_meta.get("epoch", None)
+        checkpoint_step = checkpoint_meta.get("step", None)
+        steps_per_epoch = checkpoint_meta.get("steps_per_epoch", None)
+
+        if checkpoint_epoch is None:
+            checkpoint_epoch = _checkpoint_epoch(ckpt)
+        checkpoint_epoch = int(checkpoint_epoch) if checkpoint_epoch is not None else 0
+        if checkpoint_epoch < 0:
+            checkpoint_epoch = 0
+
+        if checkpoint_step is None:
+            logger.warning("Checkpoint %s is missing training step metadata; falling back to epoch index for W&B step.", ckpt.name)
+            checkpoint_step = checkpoint_epoch
+        checkpoint_step = int(checkpoint_step)
 
         logs = validation_loop(
             val_loader=val_loader,
@@ -437,19 +496,22 @@ def run(
             use_amp=False,
             dtype=torch.float32,
             geometry_cfg=geometry_cfg,
-            epoch=epoch_step,
+            epoch=checkpoint_epoch,
             exp_dir=folder_path,
             max_batches=max_batches,
+            log_step=checkpoint_step,
+            steps_per_epoch=steps_per_epoch,
         )
 
         logs["eval/checkpoint_name"] = ckpt.name
         logs["eval/checkpoint_path"] = str(ckpt)
-        logs["eval/epoch_step"] = int(epoch_step)
+        logs["eval/checkpoint_epoch"] = int(checkpoint_epoch) + 1
+        logs["eval/checkpoint_step"] = int(checkpoint_step)
 
         if wandb_run:
-            wandb.log(logs, step=epoch_step)
+            wandb.log(logs, step=checkpoint_step)
 
-        logger.info("Evaluated checkpoint %s at step=%d", ckpt.name, epoch_step)
+        logger.info("Evaluated checkpoint %s at step=%d", ckpt.name, checkpoint_step)
 
     geometry_enabled = bool((geometry_cfg or {}).get("enabled", False)) if isinstance(geometry_cfg, dict) else bool(getattr(geometry_cfg, "enabled", False) if geometry_cfg is not None else False)
     if geometry_enabled and wandb_run:

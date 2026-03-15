@@ -63,7 +63,8 @@ logging:
     include_epoch_in_title: true   # values: true|false; append epoch to figure titles
     include_epoch_in_filename: true  # values: true|false; write *_epoch_XXXX.png filenames
     spatial_tsne_max_points: 10000  # recommended interval: [5000, 30000]; cap points for UMAP/t-SNE speed
-    covariance_max_samples: 2048    # recommended interval: [512, 8192]; samples used in scree/covariance plot
+    covariance_source_mode: encoder+projector_all_linear_layers  # values: encoder|projector_output|projector_all_linear_layers|encoder+projector_output|encoder+projector_all_linear_layers
+    covariance_log_scalars: true    # values: true|false; log covariance diagnostics as wandb scalar curves
     evolution_fps: 2          # recommended interval: [1, 8]; fps for end-of-training timelapse mp4
     long_sequence:
       enabled: true           # values: true|false; activate long-sequence controls
