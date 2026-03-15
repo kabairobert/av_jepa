@@ -111,6 +111,11 @@ def visualize_videos(
         tensor = F.interpolate(tensor, (100, 100), mode="bilinear")
         if tensor.shape[0] == 1:
             tensor = tensor.repeat(3, 1, 1, 1)
+        # Normalize to [0, 1] if values are outside that range (e.g. untrained probes
+        # or checkpoints saved before probe weights were included).
+        t_min, t_max = tensor.min(), tensor.max()
+        if t_min < 0.0 or t_max > 1.0:
+            tensor = (tensor - t_min) / (t_max - t_min + 1e-8)
         tensor = torch.clamp(tensor * 255, 0, 255).to(torch.uint8)
         tensor = rearrange(tensor, "c t h w -> t h w c").cpu().numpy()
         return tensor
@@ -257,7 +262,7 @@ def _discover_checkpoints(run_dir):
     return ckpts
 
 
-def _load_jepa_weights(jepa, checkpoint_path, device):
+def _load_jepa_weights(jepa, checkpoint_path, device, pixel_decoder=None, detection_head=None):
     ckpt = torch.load(checkpoint_path, map_location=device)
     epoch = None
     if isinstance(ckpt, dict):
@@ -268,6 +273,16 @@ def _load_jepa_weights(jepa, checkpoint_path, device):
             jepa.load_state_dict(ckpt["state_dict"], strict=False)
         else:
             jepa.load_state_dict(ckpt, strict=False)
+        if pixel_decoder is not None and "pixel_decoder_state_dict" in ckpt:
+            pixel_decoder.load_state_dict(ckpt["pixel_decoder_state_dict"], strict=False)
+            logger.info("Loaded pixel_decoder weights from checkpoint.")
+        elif pixel_decoder is not None:
+            logger.warning("pixel_decoder_state_dict not found in checkpoint — probe will use random weights (videos may be black).")
+        if detection_head is not None and "detection_head_state_dict" in ckpt:
+            detection_head.load_state_dict(ckpt["detection_head_state_dict"], strict=False)
+            logger.info("Loaded detection_head weights from checkpoint.")
+        elif detection_head is not None:
+            logger.warning("detection_head_state_dict not found in checkpoint — probe will use random weights.")
     else:
         jepa.load_state_dict(ckpt, strict=False)
     return epoch
@@ -407,7 +422,7 @@ def run(
         raise ValueError(f"No checkpoints found in {folder_path}")
 
     for ckpt in ckpts:
-        loaded_epoch = _load_jepa_weights(jepa, ckpt, device)
+        loaded_epoch = _load_jepa_weights(jepa, ckpt, device, pixel_decoder=pixel_decoder, detection_head=detection_head)
         epoch_step = int(loaded_epoch) if loaded_epoch is not None else _checkpoint_epoch(ckpt)
         if epoch_step < 0:
             epoch_step = 0

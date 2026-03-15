@@ -470,6 +470,8 @@ def run(
             optimizer=optimizer,
             epoch=epoch,
             step=global_step,
+            pixel_decoder_state_dict=pixel_decoder.state_dict(),
+            detection_head_state_dict=detection_head.state_dict(),
         )
         if epoch % cfg.logging.save_every == 0 and epoch > 0:
             save_checkpoint(
@@ -478,6 +480,8 @@ def run(
                 optimizer=optimizer,
                 epoch=epoch,
                 step=global_step,
+                pixel_decoder_state_dict=pixel_decoder.state_dict(),
+                detection_head_state_dict=detection_head.state_dict(),
             )
 
     geometry_enabled = bool(geometry_cfg.get("enabled", False))
