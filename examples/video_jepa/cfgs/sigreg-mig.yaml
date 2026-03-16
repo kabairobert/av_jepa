@@ -12,7 +12,7 @@ meta:
 data:
   dataset: moving_mnist
   batch_size: 46
-  num_workers: 8
+  num_workers: 4
 
 model:
   # Encoder (ResNet5)
