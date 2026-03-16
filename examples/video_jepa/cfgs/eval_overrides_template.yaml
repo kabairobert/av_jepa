@@ -23,6 +23,11 @@ logging:
   wandb_group:               # set to group eval runs (e.g. "eval-sweep-2026")
   tqdm_silent: false
 
+  diagnostics:
+    enabled: true                           # values: true|false; persist machine-readable diagnostics for eval
+    upload_artifacts: true                  # values: true|false; upload eval diagnostics artifacts to wandb
+    artifact_flush_interval_sec: 3.0        # recommended interval: [1.0, 10.0]; uploader queue polling period
+
   geometry_viz:
     enabled: true                 # values: true|false; master switch for all geometry plots
     wandb_log_geometry: true      # values: true|false; log geometry figures to wandb (requires log_wandb: true)   

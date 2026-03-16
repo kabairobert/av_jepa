@@ -44,12 +44,43 @@ from eb_jepa.training_utils import (
     _log_memory_snapshot,
     _log_tensor_shapes,
 )
+from examples.video_jepa.diagnostics import DiagnosticsManager
 from examples.video_jepa.eval import validation_loop
 from examples.video_jepa.model_builder import build_video_jepa_and_probes
 from examples.video_jepa.vis import assemble_geometry_viz_videos
 
 logger = get_logger(__name__)
 # Memory/dtype probe helpers have been centralized in `eb_jepa.training_utils`.
+
+
+def _int_or_none(value):
+    if value in (None, "", 0):
+        return None
+    return int(value)
+
+
+def _resolve_epoch_interval(configured_value, fallback):
+    if configured_value in (None, ""):
+        return max(1, int(fallback))
+    return max(1, int(configured_value))
+
+
+def _probe_loader_and_batches(mode, val_loader, train_probe_loader, diagnostics_cfg):
+    mode = str(mode).lower()
+    if mode == "train_subset":
+        return train_probe_loader, int(diagnostics_cfg.get("train_subset_num_batches", 2)), "train"
+    if mode == "val_subset":
+        return val_loader, int(diagnostics_cfg.get("val_subset_num_batches", 4)), "val"
+    return val_loader, None, "val"
+
+
+def _geometry_cfg_for_event(geometry_cfg, enable_geometry):
+    cfg_dict = OmegaConf.to_container(geometry_cfg, resolve=True) if not isinstance(geometry_cfg, dict) else dict(geometry_cfg)
+    if not isinstance(cfg_dict, dict):
+        cfg_dict = {}
+    if not enable_geometry:
+        cfg_dict = {**cfg_dict, "enabled": False}
+    return cfg_dict
 
 
 def _capture_shapes(sample_x, encoder, projector, device, force_runtime_shapes: bool = False):
@@ -166,6 +197,25 @@ def _capture_shapes(sample_x, encoder, projector, device, force_runtime_shapes: 
         return {"raw_input": str(list(sample_x.shape))}
 
 
+def _collect_memory_snapshot_metrics(step, modules, prefix="train", dtype=None):
+    rss = _get_process_rss_mb()
+    cuda = _get_cuda_mem_mb()
+    params = _get_param_mem_breakdown(modules)
+    dtype_counts = _get_param_dtype_counts(modules)
+    metrics = {f"{prefix}/mem/rss_mb": rss if rss is not None else -1}
+    metrics.update({f"{prefix}/{k}": v for k, v in cuda.items()})
+    metrics.update(params)
+    for key, value in dtype_counts.items():
+        if isinstance(value, dict):
+            for dtype_name, count in value.items():
+                metrics[f"{key}/{dtype_name}"] = count
+        else:
+            metrics[key] = -1
+    metrics[f"{prefix}/dtype"] = str(dtype) if dtype is not None else "unknown"
+    metrics[f"{prefix}/probe_step"] = int(step)
+    return metrics
+
+
 def run(
     fname: str = "examples/video_jepa/cfgs/default.yaml",
     cfg=None,
@@ -245,6 +295,12 @@ def run(
         shuffle=False,
         num_workers=cfg.data.num_workers,
     )
+    train_probe_loader = DataLoader(
+        train_set,
+        batch_size=cfg.data.batch_size,
+        shuffle=False,
+        num_workers=cfg.data.num_workers,
+    )
     log_data_info(
         "MovingMNIST",
         len(train_loader),
@@ -294,6 +350,7 @@ def run(
     # Mixed precision setup
     train_cfg = cfg.get("training", {})
     geometry_cfg = cfg.logging.get("geometry_viz", {})
+    diagnostics_cfg = cfg.logging.get("diagnostics", {})
     use_amp = train_cfg.get("use_amp", False)
     dtype_str = train_cfg.get("dtype", "float32").lower()
     dtype_map = {
@@ -309,6 +366,68 @@ def run(
 
     scaler = GradScaler(enabled=use_amp)
     logger.info(f"Using AMP: {use_amp} with dtype: {dtype}")
+
+    diagnostics_enabled = bool(diagnostics_cfg.get("enabled", True))
+    diagnostics_manager = DiagnosticsManager(
+        run_dir=exp_dir,
+        wandb_run=wandb_run,
+        enabled=diagnostics_enabled,
+        upload_artifacts=bool(diagnostics_cfg.get("upload_artifacts", True)),
+        flush_interval_sec=float(diagnostics_cfg.get("artifact_flush_interval_sec", 3.0)),
+        run_kind="train",
+    )
+    canonical_every_epochs = _resolve_epoch_interval(
+        diagnostics_cfg.get("diagnostics_every_epochs", None),
+        cfg.logging.save_every,
+    )
+    fast_every_epochs = _int_or_none(diagnostics_cfg.get("fast_diagnostics_every_epochs", None))
+    fast_every_steps = _int_or_none(diagnostics_cfg.get("fast_diagnostics_every_steps", None))
+    canonical_mode = str(diagnostics_cfg.get("mode", "full_val")).lower()
+    fast_mode = str(diagnostics_cfg.get("fast_mode", "val_subset")).lower()
+
+    def _run_diagnostics_event(
+        *,
+        event_type,
+        probe_mode,
+        step,
+        epoch_value,
+        metrics_prefix="",
+        enable_geometry=False,
+        persist=False,
+        event_metadata=None,
+    ):
+        probe_loader, max_batches, diagnostics_phase = _probe_loader_and_batches(
+            probe_mode,
+            val_loader=val_loader,
+            train_probe_loader=train_probe_loader,
+            diagnostics_cfg=diagnostics_cfg,
+        )
+        return validation_loop(
+            val_loader=probe_loader,
+            jepa=jepa,
+            detection_head=detection_head,
+            pixel_decoder=pixel_decoder,
+            steps=cfg.model.steps,
+            device=device,
+            use_amp=use_amp,
+            dtype=dtype,
+            geometry_cfg=_geometry_cfg_for_event(geometry_cfg, enable_geometry),
+            epoch=epoch_value,
+            exp_dir=exp_dir,
+            max_batches=max_batches,
+            log_step=step,
+            steps_per_epoch=steps_per_epoch,
+            diagnostics_manager=diagnostics_manager,
+            diagnostics_event_type=event_type,
+            diagnostics_phase=diagnostics_phase,
+            diagnostics_metadata={
+                "probe_mode": probe_mode,
+                **(event_metadata or {}),
+            },
+            metrics_prefix=metrics_prefix,
+            emit_media=enable_geometry,
+            persist_diagnostics=persist,
+        )
 
     # Set learning rates for different components
     # Lower learning rate for pixel decoder to prevent overfitting
@@ -368,6 +487,7 @@ def run(
             # One-time post-first-step memory probe (simplified)
             if not first_train_probe_done:
                 try:
+                    shapes = {}
                     _log_memory_snapshot(global_step, probe_modules, wandb_run=wandb_run, prefix="train")
                     if cfg.logging.get("log_tensor_shapes", True):
                         shapes = _capture_shapes(
@@ -378,6 +498,18 @@ def run(
                             cfg.logging.get("projector_force_runtime_shapes", False),
                         )
                         _log_tensor_shapes(global_step, shapes, wandb_run=wandb_run, prefix="train")
+                    diagnostics_manager.record_event(
+                        event_type="train_health_probe",
+                        phase="train",
+                        step=global_step,
+                        epoch=epoch,
+                        metrics={
+                            **_collect_memory_snapshot_metrics(global_step, probe_modules, prefix="train", dtype=dtype),
+                            **({f"train/shape/{k}": v for k, v in shapes.items()} if cfg.logging.get("log_tensor_shapes", True) else {}),
+                        },
+                        raw_payloads={"train_health_probe": {"shapes": shapes if cfg.logging.get("log_tensor_shapes", True) else {}}},
+                        metadata={"trigger": "first_train_probe"},
+                    )
                 except Exception:
                     logger.exception("Failed running post-first-step memory probe")
                 finally:
@@ -394,27 +526,54 @@ def run(
 
             global_step += 1
 
-        # Validation and logging
-        if epoch % cfg.logging.log_every == 0:
-            val_logs = validation_loop(
-                val_loader,
-                jepa,
-                detection_head,
-                pixel_decoder,
-                cfg.model.steps,
-                device,
-                use_amp=use_amp,
-                dtype=dtype,
-                geometry_cfg=geometry_cfg,
-                epoch=epoch,
-                exp_dir=exp_dir,
-                log_step=global_step,
-                steps_per_epoch=steps_per_epoch,
+            if diagnostics_enabled and fast_every_steps is not None and global_step > 0 and global_step % fast_every_steps == 0:
+                fast_logs = _run_diagnostics_event(
+                    event_type="fast_diagnostics",
+                    probe_mode=fast_mode,
+                    step=global_step,
+                    epoch_value=epoch,
+                    metrics_prefix="fast/",
+                    enable_geometry=False,
+                    persist=True,
+                    event_metadata={"trigger": "step"},
+                )
+                if wandb_run:
+                    import wandb
+
+                    wandb.log(fast_logs, step=global_step)
+
+        # Validation and diagnostics
+        should_log_epoch = epoch % cfg.logging.log_every == 0
+        should_run_canonical = diagnostics_enabled and epoch > 0 and epoch % canonical_every_epochs == 0
+        val_logs = {}
+        if should_run_canonical:
+            val_logs = _run_diagnostics_event(
+                event_type="canonical_diagnostics",
+                probe_mode=canonical_mode,
+                step=global_step,
+                epoch_value=epoch,
+                metrics_prefix="",
+                enable_geometry=True,
+                persist=True,
+                event_metadata={"trigger": "checkpoint_save"},
+            )
+        elif should_log_epoch:
+            val_logs = _run_diagnostics_event(
+                event_type="log_every_validation",
+                probe_mode="full_val",
+                step=global_step,
+                epoch_value=epoch,
+                metrics_prefix="",
+                enable_geometry=False,
+                persist=False,
+                event_metadata={"trigger": "log_every"},
             )
 
+        if should_log_epoch or should_run_canonical:
             # One-time post-first-validation memory probe (simplified)
             if not first_val_probe_done:
                 try:
+                    shapes = {}
                     _log_memory_snapshot(global_step, probe_modules, wandb_run=wandb_run, prefix="val")
                     if cfg.logging.get("log_tensor_shapes", True):
                         # Safely attempt to fetch a single validation sample without nested try/excepts
@@ -437,6 +596,18 @@ def run(
                             shapes = {"raw_input": None, "encoder_output": None, "projector_output": None}
 
                         _log_tensor_shapes(global_step, shapes, wandb_run=wandb_run, prefix="val")
+                    diagnostics_manager.record_event(
+                        event_type="val_health_probe",
+                        phase="val",
+                        step=global_step,
+                        epoch=epoch,
+                        metrics={
+                            **_collect_memory_snapshot_metrics(global_step, probe_modules, prefix="val", dtype=dtype),
+                            **({f"val/shape/{k}": v for k, v in shapes.items()} if cfg.logging.get("log_tensor_shapes", True) else {}),
+                        },
+                        raw_payloads={"val_health_probe": {"shapes": shapes if cfg.logging.get("log_tensor_shapes", True) else {}}},
+                        metadata={"trigger": "first_val_probe"},
+                    )
                 except Exception:
                     logger.exception("Failed running post-first-validation memory probe")
                 finally:
@@ -470,6 +641,22 @@ def run(
                 },
                 total_epochs=cfg.optim.epochs,
             )
+
+        if diagnostics_enabled and fast_every_epochs is not None and epoch > 0 and epoch % fast_every_epochs == 0 and not should_run_canonical:
+            fast_logs = _run_diagnostics_event(
+                event_type="fast_diagnostics",
+                probe_mode=fast_mode,
+                step=global_step,
+                epoch_value=epoch,
+                metrics_prefix="fast/",
+                enable_geometry=False,
+                persist=True,
+                event_metadata={"trigger": "epoch"},
+            )
+            if wandb_run:
+                import wandb
+
+                wandb.log(fast_logs, step=global_step)
 
         # Save checkpoint
         save_checkpoint(
@@ -510,6 +697,7 @@ def run(
             logger.exception("Failed assembling/logging geometry evolution videos")
 
     if wandb_run:
+        diagnostics_manager.close()
         import wandb
 
         wandb.finish()

@@ -19,6 +19,7 @@ from eb_jepa.datasets.moving_mnist import MovingMNISTDet
 from eb_jepa.logging import get_logger
 from eb_jepa.training_utils import load_config, setup_device, setup_seed, setup_wandb
 
+from examples.video_jepa.diagnostics import DiagnosticsManager
 from examples.video_jepa.model_builder import build_video_jepa_and_probes
 from examples.video_jepa.vis import (
     assemble_geometry_viz_videos,
@@ -30,6 +31,40 @@ from examples.video_jepa.vis import (
 
 logger = get_logger(__name__)
 _LONG_SEQUENCE_NOTICE_LOGGED = False
+
+
+def _prefix_metrics(metrics, prefix, preserve_prefixes=None):
+    preserve_prefixes = tuple(preserve_prefixes or ())
+    if not prefix:
+        return dict(metrics)
+    prefixed = {}
+    for key, value in metrics.items():
+        if any(key.startswith(p) for p in preserve_prefixes):
+            prefixed[key] = value
+        else:
+            prefixed[f"{prefix}{key}"] = value
+    return prefixed
+
+
+def _covariance_comparison_metrics(covariance_diagnostics, prefix="val/diag/cov_compare"):
+    metrics = {}
+    encoder = covariance_diagnostics.get("encoder")
+    projector = covariance_diagnostics.get("projector_output") or covariance_diagnostics.get("projector_layer_0")
+    if encoder is None or projector is None:
+        return metrics
+
+    enc_eig = np.asarray(encoder.get("eigvals", []), dtype=np.float64)
+    proj_eig = np.asarray(projector.get("eigvals", []), dtype=np.float64)
+    if enc_eig.size == 0 or proj_eig.size == 0:
+        return metrics
+
+    enc_trace = float(enc_eig.sum())
+    proj_trace = float(proj_eig.sum())
+    enc_top1 = float(enc_eig[0] / max(enc_trace, 1e-12))
+    proj_top1 = float(proj_eig[0] / max(proj_trace, 1e-12))
+    metrics[f"{prefix}/trace_ratio_encoder_to_projector"] = enc_trace / max(proj_trace, 1e-12)
+    metrics[f"{prefix}/top1_frac_gap_encoder_minus_projector"] = enc_top1 - proj_top1
+    return metrics
 
 
 def add_label_to_video(video, label):
@@ -156,6 +191,13 @@ def validation_loop(
     max_batches=None,
     log_step=None,
     steps_per_epoch=None,
+    diagnostics_manager=None,
+    diagnostics_event_type=None,
+    diagnostics_phase="val",
+    diagnostics_metadata=None,
+    metrics_prefix="",
+    emit_media=True,
+    persist_diagnostics=False,
 ):
 
     # Set modules to eval mode
@@ -213,18 +255,26 @@ def validation_loop(
 
     # Aggregate val results and visualize last batch
     metrics = {k: float(np.mean(v)) for k, v in metrics.items()}
-    videos = visualize_videos(
-        batch, jepa, pixel_decoder, detection_head, num_samples=min(16, batch["video"].shape[0])
-    )
-    logs = {
-        **metrics,
-        "viz": [wandb.Video(video, fps=4, format="mp4") for video in videos],
-    }
+    logs = {**metrics}
+    media_refs = {}
+    raw_payloads = {}
+    if emit_media:
+        videos = visualize_videos(
+            batch, jepa, pixel_decoder, detection_head, num_samples=min(16, batch["video"].shape[0])
+        )
+        logs["viz"] = [wandb.Video(video, fps=4, format="mp4") for video in videos]
+        media_refs["viz"] = {
+            "wandb_key": "viz",
+            "kind": "video_batch",
+            "num_samples": int(len(videos)),
+        }
 
     covariance_diagnostics = finalize_covariance_diagnostics(covariance_trackers)
     if covariance_log_scalars:
         for info in covariance_diagnostics.values():
             logs.update(info["metrics"])
+    logs.update(_covariance_comparison_metrics(covariance_diagnostics))
+    raw_payloads["covariance"] = covariance_diagnostics
 
     if log_step is not None:
         logs["progress/step"] = int(log_step)
@@ -235,7 +285,7 @@ def validation_loop(
 
     if geometry_vis_enabled and exp_dir is not None and epoch is not None:
         try:
-            figures, meta = geometry_visualization_loop(
+            figures, meta, geometry_raw_payloads, geometry_scalar_metrics = geometry_visualization_loop(
                 batch=batch,
                 jepa=jepa,
                 device=device,
@@ -254,18 +304,53 @@ def validation_loop(
                     str(meta.get("long_sequence_details", "none")),
                 )
                 _LONG_SEQUENCE_NOTICE_LOGGED = True
-            logs.update(
-                log_and_save_geometry_viz(
-                    figures=figures,
-                    exp_dir=exp_dir,
-                    epoch=epoch,
-                    wandb_prefix="geometry_viz",
-                    include_epoch_in_filename=bool((geometry_cfg or {}).get("include_epoch_in_filename", True)) if isinstance(geometry_cfg, dict) else bool(getattr(geometry_cfg, "include_epoch_in_filename", True) if geometry_cfg is not None else True),
-                    log_to_wandb=bool((geometry_cfg or {}).get("wandb_log_geometry", True)) if isinstance(geometry_cfg, dict) else bool(getattr(geometry_cfg, "wandb_log_geometry", True) if geometry_cfg is not None else True),
-                )
+            logs.update(geometry_scalar_metrics)
+            raw_payloads["geometry"] = geometry_raw_payloads
+            geometry_logs, geometry_media_refs = log_and_save_geometry_viz(
+                figures=figures,
+                exp_dir=exp_dir,
+                epoch=epoch,
+                wandb_prefix="geometry_viz",
+                include_epoch_in_filename=bool((geometry_cfg or {}).get("include_epoch_in_filename", True)) if isinstance(geometry_cfg, dict) else bool(getattr(geometry_cfg, "include_epoch_in_filename", True) if geometry_cfg is not None else True),
+                log_to_wandb=emit_media and (bool((geometry_cfg or {}).get("wandb_log_geometry", True)) if isinstance(geometry_cfg, dict) else bool(getattr(geometry_cfg, "wandb_log_geometry", True) if geometry_cfg is not None else True)),
             )
+            logs.update(geometry_logs)
+            media_refs.update(geometry_media_refs)
         except Exception as exc:
             print(f"[geometry_viz] Skipping geometry plots due to error: {exc}")
+
+    numeric_logs = {
+        key: value
+        for key, value in logs.items()
+        if isinstance(value, (int, float, np.integer, np.floating))
+    }
+    numeric_logs = _prefix_metrics(
+        numeric_logs,
+        metrics_prefix,
+        preserve_prefixes=("progress/", "eval/"),
+    )
+    logs.update(numeric_logs)
+    if metrics_prefix:
+        for key in list(logs.keys()):
+            if key in numeric_logs:
+                continue
+            if isinstance(logs[key], (int, float, np.integer, np.floating)):
+                del logs[key]
+
+    if persist_diagnostics and diagnostics_manager is not None and log_step is not None:
+        diagnostics_manager.record_event(
+            event_type=diagnostics_event_type or "canonical_diagnostics",
+            phase=diagnostics_phase,
+            step=int(log_step),
+            epoch=int(epoch) if epoch is not None else None,
+            metrics=numeric_logs,
+            raw_payloads=raw_payloads,
+            media_refs=media_refs,
+            metadata={
+                "steps_per_epoch": int(steps_per_epoch) if steps_per_epoch is not None else None,
+                **(diagnostics_metadata or {}),
+            },
+        )
 
     print(metrics)
 
@@ -460,6 +545,15 @@ def run(
         enabled=enabled_wandb,
         resume=False,
     )
+    diagnostics_cfg = cfg_obj.logging.get("diagnostics", {})
+    diagnostics_manager = DiagnosticsManager(
+        run_dir=folder_path,
+        wandb_run=wandb_run,
+        enabled=bool(diagnostics_cfg.get("enabled", True)),
+        upload_artifacts=bool(diagnostics_cfg.get("upload_artifacts", True)),
+        flush_interval_sec=float(diagnostics_cfg.get("artifact_flush_interval_sec", 3.0)),
+        run_kind="eval",
+    )
 
     if checkpoint_path is not None:
         ckpts = [checkpoint_path]
@@ -501,6 +595,15 @@ def run(
             max_batches=max_batches,
             log_step=checkpoint_step,
             steps_per_epoch=steps_per_epoch,
+            diagnostics_manager=diagnostics_manager,
+            diagnostics_event_type="eval_checkpoint",
+            diagnostics_phase="eval",
+            diagnostics_metadata={
+                "checkpoint_name": ckpt.name,
+                "checkpoint_path": str(ckpt),
+                "probe_mode": "full_val",
+            },
+            persist_diagnostics=True,
         )
 
         logs["eval/checkpoint_name"] = ckpt.name
@@ -527,6 +630,7 @@ def run(
             logger.exception("Failed assembling/logging geometry evolution videos")
 
     if wandb_run:
+        diagnostics_manager.close()
         wandb.finish()
 
 

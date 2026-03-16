@@ -54,6 +54,17 @@ logging:
   projector_force_runtime_shapes: false
   save_every: 10      # Save checkpoint every N epochs
   tqdm_silent: false  # Disable tqdm progress bars
+  diagnostics:
+    enabled: true                            # values: true|false; master switch for diagnostics persistence
+    upload_artifacts: true                   # values: true|false; upload machine-readable diagnostics artifacts to wandb
+    artifact_flush_interval_sec: 3.0         # recommended interval: [1.0, 10.0]; uploader queue polling period
+    diagnostics_every_epochs:                # values: null|positive int; null inherits save_every for canonical diagnostics
+    mode: full_val                           # values: full_val|val_subset|train_subset; canonical diagnostics probe mode
+    fast_diagnostics_every_epochs:           # values: null|positive int; optional fast diagnostics epoch cadence
+    fast_diagnostics_every_steps:            # values: null|positive int; optional fast diagnostics step cadence
+    fast_mode: val_subset                    # values: val_subset|train_subset|full_val; fast diagnostics probe mode
+    val_subset_num_batches: 4                # recommended interval: [1, 16]; batches for val_subset diagnostics
+    train_subset_num_batches: 2              # recommended interval: [1, 8]; batches for train_subset diagnostics
   geometry_viz:
     enabled: true                           # values: true|false; turns all geometry plots on/off
     num_samples: 12                          # recommended interval: [4, 16]; sampled videos for multi-trajectory panels
@@ -90,7 +101,6 @@ logging:
       cov_eig_spectrum: true                 # values: true|false; Vis 4
       activation_overlays: true              # values: true|false; Vis 5
       phase_space_portrait: true             # values: true|false; Vis 6
-
 training:
   use_amp: true       # Use automatic mixed precision
   dtype: bfloat16     # float16, bfloat16, or float32

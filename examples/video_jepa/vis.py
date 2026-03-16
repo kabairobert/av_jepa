@@ -176,6 +176,105 @@ def _progressive_groups(idxs):
     return [idxs[:1], idxs[:2], idxs[:4]]
 
 
+def _offdiag_values(matrix):
+    if matrix.ndim != 2 or matrix.shape[0] < 2:
+        return np.asarray([], dtype=np.float64)
+    mask = ~np.eye(matrix.shape[0], dtype=bool)
+    return matrix[mask].astype(np.float64, copy=False)
+
+
+def _neighbor_values(matrix):
+    if matrix.ndim != 2 or matrix.shape[0] < 2:
+        return np.asarray([], dtype=np.float64)
+    idx = np.arange(matrix.shape[0] - 1)
+    vals = np.concatenate([matrix[idx, idx + 1], matrix[idx + 1, idx]])
+    return vals.astype(np.float64, copy=False)
+
+
+def _far_values(matrix):
+    if matrix.ndim != 2 or matrix.shape[0] < 4:
+        return _offdiag_values(matrix)
+    t = matrix.shape[0]
+    band = max(2, t // 4)
+    rows, cols = np.indices(matrix.shape)
+    mask = np.abs(rows - cols) >= band
+    return matrix[mask].astype(np.float64, copy=False)
+
+
+def _matrix_summary_metrics(matrix, prefix, distance_mode):
+    offdiag = _offdiag_values(matrix)
+    near = _neighbor_values(matrix)
+    far = _far_values(matrix)
+    if offdiag.size == 0:
+        return {
+            f"{prefix}/sample_count": 0.0,
+        }
+    metrics = {
+        f"{prefix}/sample_count": float(offdiag.size),
+        f"{prefix}/offdiag_mean": float(offdiag.mean()),
+        f"{prefix}/offdiag_std": float(offdiag.std()),
+        f"{prefix}/neighbor_mean": float(near.mean()) if near.size else float("nan"),
+        f"{prefix}/far_mean": float(far.mean()) if far.size else float("nan"),
+    }
+    if near.size and far.size:
+        if str(distance_mode).lower() == "cosine":
+            metrics[f"{prefix}/temporal_contrast"] = float(near.mean() - far.mean())
+        else:
+            metrics[f"{prefix}/temporal_contrast"] = float(far.mean() - near.mean())
+    return metrics
+
+
+def _trajectory_summary_metrics(gt_coords, pred_coords, prefix):
+    if gt_coords.size == 0 or pred_coords.size == 0:
+        return {f"{prefix}/sample_count": 0.0}
+    diffs = np.linalg.norm(gt_coords - pred_coords, axis=-1)
+    return {
+        f"{prefix}/sample_count": float(diffs.size),
+        f"{prefix}/mean_divergence": float(diffs.mean()),
+        f"{prefix}/final_divergence": float(diffs[:, -1].mean()),
+        f"{prefix}/max_divergence": float(diffs.max()),
+    }
+
+
+def _embedding_summary_metrics(embed, labels, prefix):
+    if embed.size == 0 or labels.size == 0:
+        return {f"{prefix}/sample_count": 0.0}
+    bg = embed[labels == 0]
+    fg = embed[labels == 1]
+    if bg.size == 0 or fg.size == 0:
+        return {f"{prefix}/sample_count": float(embed.shape[0])}
+    bg_centroid = bg.mean(axis=0)
+    fg_centroid = fg.mean(axis=0)
+    centroid_distance = float(np.linalg.norm(bg_centroid - fg_centroid))
+    bg_spread = float(np.linalg.norm(bg - bg_centroid, axis=1).mean()) if bg.shape[0] else 0.0
+    fg_spread = float(np.linalg.norm(fg - fg_centroid, axis=1).mean()) if fg.shape[0] else 0.0
+    pooled = max(1e-12, 0.5 * (bg_spread + fg_spread))
+    return {
+        f"{prefix}/sample_count": float(embed.shape[0]),
+        f"{prefix}/centroid_distance": centroid_distance,
+        f"{prefix}/pooled_spread": pooled,
+        f"{prefix}/separation_ratio": centroid_distance / pooled,
+        f"{prefix}/foreground_fraction": float((labels == 1).mean()),
+    }
+
+
+def _activation_summary_metrics(saliency, prefix):
+    if saliency.numel() == 0:
+        return {f"{prefix}/sample_count": 0.0}
+    flat = saliency.flatten(2)
+    probs = flat / flat.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+    entropy = -(probs * probs.clamp_min(1e-8).log()).sum(dim=-1)
+    topk = max(1, int(flat.shape[-1] * 0.1))
+    top_mass = flat.topk(topk, dim=-1).values.sum(dim=-1) / flat.sum(dim=-1).clamp_min(1e-8)
+    drift = torch.linalg.vector_norm(saliency[:, 1:] - saliency[:, :-1], dim=(-2, -1)) if saliency.shape[1] > 1 else torch.zeros_like(entropy[:, :1])
+    return {
+        f"{prefix}/sample_count": float(saliency.shape[0] * saliency.shape[1]),
+        f"{prefix}/entropy_mean": float(entropy.mean().item()),
+        f"{prefix}/top10_mass_mean": float(top_mass.mean().item()),
+        f"{prefix}/temporal_drift_mean": float(drift.mean().item()),
+    }
+
+
 def _trajectory_panel(
     gt_bt,
     pred_bt,
@@ -189,7 +288,7 @@ def _trajectory_panel(
     bsz = gt_bt.shape[0]
     idxs = _pick_indices(bsz, n_show)
     if not idxs:
-        return None
+        return None, {}
 
     fit = np.concatenate([gt_bt[i].cpu().numpy() for i in idxs], axis=0)
     pca = PCA(n_components=2)
@@ -243,7 +342,16 @@ def _trajectory_panel(
         fontsize=12,
     )
     fig.tight_layout(rect=(0, 0, 1, 0.97))
-    return fig
+    gt_coords = np.stack([pca.transform(gt_bt[vid_idx].cpu().numpy()) for vid_idx in idxs], axis=0)
+    pred_coords = np.stack([pca.transform(pred_bt[vid_idx].cpu().numpy()) for vid_idx in idxs], axis=0)
+    payload = {
+        "sample_indices": np.asarray(idxs, dtype=np.int64),
+        "gt_coords": gt_coords,
+        "pred_coords": pred_coords,
+        "explained_variance_ratio": pca.explained_variance_ratio_,
+        "summary_metrics": _trajectory_summary_metrics(gt_coords, pred_coords, f"val/diag/trajectory/{stage_label}/{title.lower().replace(' ', '_').replace('(', '').replace(')', '')}"),
+    }
+    return fig, payload
 
 
 def plot_latent_trajectories_avgpool(
@@ -310,7 +418,7 @@ def plot_temporal_self_similarity(
     bt = _tss_feature_bt(gt_src, feature_mode)
     idxs = _pick_indices(bt.shape[0], num_samples)
     if not idxs:
-        return None
+        return None, {}
 
     rows = []
     stats = []
@@ -372,7 +480,23 @@ def plot_temporal_self_similarity(
         fontsize=12,
     )
     fig.subplots_adjust(left=0.06, right=0.89, bottom=0.06, top=0.90, wspace=0.22, hspace=0.30)
-    return fig
+    payload = {
+        "sample_indices": np.asarray(idxs, dtype=np.int64),
+        "fixed_matrices": np.stack([mf for mf, _ in rows], axis=0),
+        "var_matrices": np.stack([mv for _, mv in rows], axis=0),
+        "used_fixed_ks": np.asarray([s[0] for s in stats], dtype=np.int64),
+        "used_var_ks": np.asarray([s[1] for s in stats], dtype=np.int64),
+        "distance": mode,
+        "feature_mode": str(feature_mode).lower(),
+        "summary_metrics": {},
+    }
+    summary_metrics = {}
+    for idx_value, (m_fixed, m_var) in zip(idxs, rows):
+        summary_metrics.update(_matrix_summary_metrics(m_fixed, f"val/diag/temporal/fixed/sample_{idx_value}", mode))
+        summary_metrics.update(_matrix_summary_metrics(m_var, f"val/diag/temporal/var/sample_{idx_value}", mode))
+    if rows:
+        payload["summary_metrics"] = summary_metrics
+    return fig, payload
 
 
 def plot_occupancy_spatial_embedding(
@@ -386,7 +510,7 @@ def plot_occupancy_spatial_embedding(
     include_epoch_in_title=False,
 ):
     if digit_location is None:
-        return None
+        return None, {}
 
     idx = _time_indices(gt_latent.shape[2], max_frames, gt_latent.device)
     gt_latent = _index_time(gt_latent, idx)
@@ -434,7 +558,14 @@ def plot_occupancy_spatial_embedding(
     ax.legend(loc="best")
     ax.grid(alpha=0.2)
     fig.tight_layout()
-    return fig
+    payload = {
+        "embedding": embed,
+        "labels": y,
+        "method": method_label,
+        "sample_count": int(embed.shape[0]),
+        "summary_metrics": _embedding_summary_metrics(embed, y, f"val/diag/embedding/{stage_label}"),
+    }
+    return fig, payload
 
 
 def _get_projector_module(jepa):
@@ -621,7 +752,12 @@ def plot_cov_eig_spectrum_from_eigvals(
     ax.grid(alpha=0.25)
     ax.legend(loc="best")
     fig.tight_layout()
-    return fig
+    payload = {
+        "eigvals": eigvals,
+        "rank": k,
+        "uniform_reference": uniform,
+    }
+    return fig, payload
 
 
 def _autodetect_activation_layer(model, sample_x):
@@ -678,7 +814,7 @@ def plot_activation_overlays(
 
     chosen = layer_name or _autodetect_activation_layer(model, x)
     if chosen is None:
-        return None
+        return None, {}
 
     activations = {}
 
@@ -692,7 +828,7 @@ def plot_activation_overlays(
     handle.remove()
 
     if "feat" not in activations:
-        return None
+        return None, {}
 
     feat = activations["feat"]
     sal = feat.mean(dim=1)
@@ -725,7 +861,12 @@ def plot_activation_overlays(
         fontsize=10,
     )
     fig.tight_layout(rect=(0, 0, 1, 0.97))
-    return fig
+    payload = {
+        "layer_name": chosen,
+        "saliency": sal.detach().cpu().numpy(),
+        "summary_metrics": _activation_summary_metrics(sal, f"val/diag/activation/{chosen}"),
+    }
+    return fig, payload
 
 
 def plot_phase_space_portrait(
@@ -742,7 +883,7 @@ def plot_phase_space_portrait(
     pred_bt = _spatial_flat_bt(pred_rollout)
     idxs = _pick_indices(gt_bt.shape[0], num_samples)
     if not idxs:
-        return None
+        return None, {}
 
     fig = plt.figure(figsize=(12, 9))
     groups = _progressive_groups(idxs)
@@ -790,7 +931,31 @@ def plot_phase_space_portrait(
     )
     # tight_layout is unreliable with 3D axes; adjust spacing manually.
     fig.subplots_adjust(left=0.03, right=0.98, bottom=0.04, top=0.90, wspace=0.22, hspace=0.26)
-    return fig
+    payload = {
+        "sample_indices": np.asarray(idxs, dtype=np.int64),
+        "summary_metrics": {},
+    }
+    summary_metrics = {}
+    for i, group in enumerate(groups[:4]):
+        if not group:
+            continue
+        fit = np.concatenate(
+            [
+                np.concatenate([gt_bt[vid_idx].cpu().numpy(), pred_bt[vid_idx].cpu().numpy()], axis=0)
+                for vid_idx in group
+            ],
+            axis=0,
+        )
+        pca = PCA(n_components=3)
+        pca.fit(fit)
+        gt_coords = np.stack([pca.transform(gt_bt[vid_idx].cpu().numpy()) for vid_idx in group], axis=0)
+        pred_coords = np.stack([pca.transform(pred_bt[vid_idx].cpu().numpy()) for vid_idx in group], axis=0)
+        payload[f"group_{i}_gt_coords"] = gt_coords
+        payload[f"group_{i}_pred_coords"] = pred_coords
+        payload[f"group_{i}_explained_variance_ratio"] = pca.explained_variance_ratio_
+        summary_metrics.update(_trajectory_summary_metrics(gt_coords, pred_coords, f"val/diag/trajectory/phase_space/group_{i}"))
+    payload["summary_metrics"] = summary_metrics
+    return fig, payload
 
 
 def geometry_visualization_loop(
@@ -855,9 +1020,11 @@ def geometry_visualization_loop(
             long_msgs.append(f"seq[{mode_used}]:{seq_detail}")
 
     figs = {}
+    raw_payloads = {}
+    scalar_metrics = {}
 
     if _plot_enabled(geometry_cfg, "latent_trajectories_avgpool"):
-        figs["latent_trajectories_avgpool"] = plot_latent_trajectories_avgpool(
+        fig, payload = plot_latent_trajectories_avgpool(
             gt_seq,
             pred_seq,
             num_samples=num_samples,
@@ -866,9 +1033,12 @@ def geometry_visualization_loop(
             include_epoch_in_title=include_epoch_in_title,
             aligned=True,
         )
+        figs["latent_trajectories_avgpool"] = fig
+        raw_payloads["latent_trajectories_avgpool"] = payload
+        scalar_metrics.update(payload.get("summary_metrics", {}))
 
     if _plot_enabled(geometry_cfg, "latent_trajectories_spatialflat"):
-        figs["latent_trajectories_spatialflat"] = plot_latent_trajectories_spatialflat(
+        fig, payload = plot_latent_trajectories_spatialflat(
             gt_seq,
             pred_seq,
             num_samples=num_samples,
@@ -877,9 +1047,12 @@ def geometry_visualization_loop(
             include_epoch_in_title=include_epoch_in_title,
             aligned=True,
         )
+        figs["latent_trajectories_spatialflat"] = fig
+        raw_payloads["latent_trajectories_spatialflat"] = payload
+        scalar_metrics.update(payload.get("summary_metrics", {}))
 
     if _plot_enabled(geometry_cfg, "temporal_self_similarity"):
-        figs["temporal_self_similarity"] = plot_temporal_self_similarity(
+        fig, payload = plot_temporal_self_similarity(
             gt_seq,
             num_samples=tss_num_samples,
             stage_label=stage_label,
@@ -893,9 +1066,12 @@ def geometry_visualization_loop(
             pca_max_k=tss_pca_max_k,
             center_time=tss_center_time,
         )
+        figs["temporal_self_similarity"] = fig
+        raw_payloads["temporal_self_similarity"] = payload
+        scalar_metrics.update(payload.get("summary_metrics", {}))
 
     if _plot_enabled(geometry_cfg, "occupancy_spatial_embedding"):
-        figs["occupancy_spatial_embedding"] = plot_occupancy_spatial_embedding(
+        fig, payload = plot_occupancy_spatial_embedding(
             gt_latent,
             detection_targets,
             method=tsne_method,
@@ -909,6 +1085,9 @@ def geometry_visualization_loop(
             epoch=epoch,
             include_epoch_in_title=include_epoch_in_title,
         )
+        figs["occupancy_spatial_embedding"] = fig
+        raw_payloads["occupancy_spatial_embedding"] = payload
+        scalar_metrics.update(payload.get("summary_metrics", {}))
         if long_enabled and gt_latent.shape[2] > max_frames_for_embedding:
             long_used = True
             long_msgs.append(
@@ -922,16 +1101,18 @@ def geometry_visualization_loop(
             update_covariance_trackers(trackers, gt_latent, jepa, source_mode=cov_source_mode)
             cov_results = finalize_covariance_diagnostics(trackers)
         for key, info in cov_results.items():
-            figs[f"cov_eig_spectrum_{key}"] = plot_cov_eig_spectrum_from_eigvals(
+            fig, payload = plot_cov_eig_spectrum_from_eigvals(
                 info["eigvals"],
                 plot_label=_covariance_plot_title(key),
                 stage_label=stage_label,
                 epoch=epoch,
                 include_epoch_in_title=include_epoch_in_title,
             )
+            figs[f"cov_eig_spectrum_{key}"] = fig
+            raw_payloads[f"cov_eig_spectrum_{key}"] = {**payload, "source_key": key, "sample_count": info.get("sample_count", 0)}
 
     if _plot_enabled(geometry_cfg, "activation_overlays"):
-        figs["activation_overlays"] = plot_activation_overlays(
+        fig, payload = plot_activation_overlays(
             batch,
             jepa,
             layer_name=act_layer,
@@ -945,6 +1126,9 @@ def geometry_visualization_loop(
             epoch=epoch,
             include_epoch_in_title=include_epoch_in_title,
         )
+        figs["activation_overlays"] = fig
+        raw_payloads["activation_overlays"] = payload
+        scalar_metrics.update(payload.get("summary_metrics", {}))
         if long_enabled and batch["video"].shape[2] > max_frames_activation_overlay:
             long_used = True
             long_msgs.append(
@@ -952,7 +1136,7 @@ def geometry_visualization_loop(
             )
 
     if _plot_enabled(geometry_cfg, "phase_space_portrait"):
-        figs["phase_space_portrait"] = plot_phase_space_portrait(
+        fig, payload = plot_phase_space_portrait(
             gt_seq,
             pred_seq,
             num_samples=min(4, batch["video"].shape[0]),
@@ -961,6 +1145,9 @@ def geometry_visualization_loop(
             include_epoch_in_title=include_epoch_in_title,
             aligned=True,
         )
+        figs["phase_space_portrait"] = fig
+        raw_payloads["phase_space_portrait"] = payload
+        scalar_metrics.update(payload.get("summary_metrics", {}))
 
     meta = {
         "long_sequence_enabled": long_enabled,
@@ -968,7 +1155,7 @@ def geometry_visualization_loop(
         "long_sequence_used": long_used,
         "long_sequence_details": ", ".join(long_msgs) if long_msgs else "",
     }
-    return {k: v for k, v in figs.items() if v is not None}, meta
+    return {k: v for k, v in figs.items() if v is not None}, meta, raw_payloads, scalar_metrics
 
 
 def log_and_save_geometry_viz(
@@ -980,10 +1167,11 @@ def log_and_save_geometry_viz(
     log_to_wandb=True,
 ):
     exp_dir = Path(exp_dir)
-    epoch_dir = exp_dir / "geometry_viz" / f"epoch_{int(epoch):04d}"
+    epoch_dir = exp_dir / "diagnostics" / "media" / "geometry_viz" / f"epoch_{int(epoch):04d}"
     epoch_dir.mkdir(parents=True, exist_ok=True)
 
     logs = {}
+    media_refs = {}
     for key, fig in figures.items():
         if include_epoch_in_filename:
             out_path = epoch_dir / f"{key}_epoch_{int(epoch):04d}.png"
@@ -991,9 +1179,14 @@ def log_and_save_geometry_viz(
             out_path = epoch_dir / f"{key}.png"
         fig.savefig(out_path, dpi=140, bbox_inches="tight")
         plt.close(fig)
+        media_refs[f"{wandb_prefix}/{key}"] = {
+            "local_path": str(out_path),
+            "wandb_key": f"{wandb_prefix}/{key}",
+            "kind": "image",
+        }
         if log_to_wandb:
             logs[f"{wandb_prefix}/{key}"] = wandb.Image(str(out_path), caption=f"epoch={int(epoch)}")
-    return logs
+    return logs, media_refs
 
 
 def assemble_geometry_viz_videos(exp_dir, fps=2, wandb_prefix="geometry_viz"):
@@ -1015,9 +1208,12 @@ def assemble_geometry_viz_videos(exp_dir, fps=2, wandb_prefix="geometry_viz"):
         return np.pad(frame, pad, mode="edge")
 
     exp_dir = Path(exp_dir)
-    base = exp_dir / "geometry_viz"
+    base = exp_dir / "diagnostics" / "media" / "geometry_viz"
     if not base.exists():
-        return {}
+        legacy_base = exp_dir / "geometry_viz"
+        if not legacy_base.exists():
+            return {}
+        base = legacy_base
 
     epoch_dirs = sorted([p for p in base.iterdir() if p.is_dir() and p.name.startswith("epoch_")])
     if not epoch_dirs:
