@@ -1066,6 +1066,6 @@ def assemble_geometry_viz_videos(exp_dir, fps=2, wandb_prefix="geometry_viz"):
                 fr = _pad_to_canvas(fr, max_h, max_w)
                 writer.append_data(_pad_frame_to_macroblock(fr))  # type: ignore[attr-defined]
 
-        logs[f"{wandb_prefix}/{key}_evolution"] = wandb.Video(str(video_path), fps=fps, format="mp4")
+        logs[f"{wandb_prefix}/{key}_evolution"] = wandb.Video(str(video_path), format="mp4")
 
     return logs
