@@ -1047,9 +1047,23 @@ def assemble_geometry_viz_videos(exp_dir, fps=2, wandb_prefix="geometry_viz"):
         if not frames:
             continue
 
+        # Unify all frames to the same canvas size before writing.
+        # Different checkpoints may produce plots with different heights/widths
+        # (e.g. when the number of covariance sources changes over training).
+        max_h = max(f.shape[0] for f in frames)
+        max_w = max(f.shape[1] for f in frames)
+
+        def _pad_to_canvas(frame, target_h, target_w):
+            h, w = frame.shape[:2]
+            if h == target_h and w == target_w:
+                return frame
+            pad = ((0, target_h - h), (0, target_w - w), (0, 0)) if frame.ndim == 3 else ((0, target_h - h), (0, target_w - w))
+            return np.pad(frame, pad, mode="edge")
+
         video_path = base / f"{key}_evolution.mp4"
         with imageio.get_writer(video_path, fps=fps) as writer:
             for fr in frames:
+                fr = _pad_to_canvas(fr, max_h, max_w)
                 writer.append_data(_pad_frame_to_macroblock(fr))  # type: ignore[attr-defined]
 
         logs[f"{wandb_prefix}/{key}_evolution"] = wandb.Video(str(video_path), fps=fps, format="mp4")
