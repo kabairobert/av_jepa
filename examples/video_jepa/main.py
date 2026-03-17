@@ -5,6 +5,8 @@ Train a self-supervised video prediction model on Moving MNIST using
 Joint Embedding Predictive Architecture (JEPA) with VC regularization.
 """
 
+import gc
+import os
 from pathlib import Path
 
 import fire
@@ -51,6 +53,12 @@ from examples.video_jepa.vis import assemble_geometry_viz_videos
 
 logger = get_logger(__name__)
 # Memory/dtype probe helpers have been centralized in `eb_jepa.training_utils`.
+
+
+def _post_diagnostics_cleanup():
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 def _int_or_none(value):
@@ -234,6 +242,9 @@ def run(
     # Load config
     if cfg is None:
         cfg = load_config(fname, overrides if overrides else None)
+
+    # Mitigate CUDA memory fragmentation under interleaved train/eval diagnostics.
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
     # Setup
     device = setup_device(cfg.meta.device)
@@ -541,6 +552,7 @@ def run(
                     persist=True,
                     event_metadata={"trigger": "step"},
                 )
+                _post_diagnostics_cleanup()
                 if wandb_run:
                     import wandb
 
@@ -564,6 +576,7 @@ def run(
                 persist=True,
                 event_metadata={"trigger": "checkpoint_save"},
             )
+            _post_diagnostics_cleanup()
         elif should_run_fast_epoch:
             val_logs = _run_diagnostics_event(
                 event_type="fast_diagnostics",
@@ -575,6 +588,7 @@ def run(
                 persist=False,
                 event_metadata={"trigger": "fast_diagnostics_every_epochs"},
             )
+            _post_diagnostics_cleanup()
         elif should_run_fast_step:
             val_logs = _run_diagnostics_event(
                 event_type="fast_diagnostics",
@@ -586,6 +600,7 @@ def run(
                 persist=False,
                 event_metadata={"trigger": "fast_diagnostics_every_steps"},
             )
+            _post_diagnostics_cleanup()
 
         if should_run_canonical or should_run_fast_epoch or should_run_fast_step:
             # One-time post-first-validation memory probe (simplified)
@@ -660,22 +675,6 @@ def run(
                 },
                 total_epochs=cfg.optim.epochs,
             )
-
-        if diagnostics_enabled and fast_every_epochs is not None and epoch > 0 and epoch % fast_every_epochs == 0 and not should_run_canonical:
-            fast_logs = _run_diagnostics_event(
-                event_type="fast_diagnostics",
-                probe_mode=fast_mode,
-                step=global_step,
-                epoch_value=epoch,
-                metrics_prefix="fast/",
-                enable_geometry=False,
-                persist=True,
-                event_metadata={"trigger": "epoch"},
-            )
-            if wandb_run:
-                import wandb
-
-                wandb.log(fast_logs, step=global_step)
 
         # Save checkpoint
         save_checkpoint(

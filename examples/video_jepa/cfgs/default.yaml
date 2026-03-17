@@ -62,7 +62,7 @@ logging:
     artifact_flush_interval_sec: 3.0         # recommended interval: [1.0, 10.0]; uploader queue polling period
     full_diagnostics_mode: full_val          # values: full_val|val_subset|train_subset; canonical diagnostics probe mode
     fast_diagnostics_mode: val_subset        # values: val_subset|train_subset|full_val; fast diagnostics probe mode
-    val_subset_num_batches: 4                # recommended interval: [1, 16]; batches for val_subset diagnostics
+    val_subset_num_batches: 1                # recommended interval: [1, 16]; batches for val_subset diagnostics
     train_subset_num_batches: 2              # recommended interval: [1, 8]; batches for train_subset diagnostics
   geometry_viz:
     enabled: true                           # values: true|false; turns all geometry plots on/off

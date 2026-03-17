@@ -6,6 +6,7 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from torch.amp.autocast_mode import autocast
 import torch.nn as nn
 import torch.nn.functional as F
 import wandb
@@ -91,23 +92,29 @@ def _index_time(tensor, idx):
     return tensor.index_select(2, idx)
 
 
-def _build_rollout_latents(batch, jepa):
-    x = batch["video"]
-    gt_latent = jepa.encoder(x)
-
-    tdim = x.shape[2]
-    preds, _ = jepa.unroll(
-        x,
-        actions=None,
-        nsteps=tdim - 2,
-        unroll_mode="parallel",
-        compute_loss=False,
-        return_all_steps=True,
-    )
-
+def _build_pred_rollout(gt_latent, preds, tdim):
     pred_rollout = gt_latent[:, :, 1:].clone()
     for t in range(1, tdim - 1):
         pred_rollout[:, :, t:] = preds[t - 1][:, :, t - 1 :]
+    return pred_rollout
+
+
+def _build_rollout_latents(batch, jepa, use_amp=False, dtype=torch.float32):
+    x = batch["video"]
+    with autocast(x.device.type, dtype=dtype, enabled=use_amp):
+        gt_latent = jepa.encoder(x)
+
+        tdim = x.shape[2]
+        preds, _ = jepa.unroll(
+            x,
+            actions=None,
+            nsteps=tdim - 2,
+            unroll_mode="parallel",
+            compute_loss=False,
+            return_all_steps=True,
+        )
+
+    pred_rollout = _build_pred_rollout(gt_latent, preds, tdim)
 
     return {
         "video": x,
@@ -966,9 +973,13 @@ def geometry_visualization_loop(
     detection_targets=None,
     epoch=None,
     covariance_diagnostics=None,
+    bundle=None,
+    use_amp=False,
+    dtype=torch.float32,
 ):
     _ = device
-    bundle = _build_rollout_latents(batch, jepa)
+    if bundle is None:
+        bundle = _build_rollout_latents(batch, jepa, use_amp=use_amp, dtype=dtype)
     gt_latent = bundle["gt_latent"]
     pred_rollout = bundle["pred_rollout"]
 

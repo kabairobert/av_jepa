@@ -12,6 +12,9 @@
 
 set -e  # Exit immediately on any error
 
+# Make CUDA allocator expandable to reduce fragmentation
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 # Load required modules
 module load 2023
 module load Python/3.11.3-GCCcore-12.3.0

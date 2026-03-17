@@ -22,6 +22,7 @@ from eb_jepa.training_utils import load_config, setup_device, setup_seed, setup_
 from examples.video_jepa.diagnostics import DiagnosticsManager
 from examples.video_jepa.model_builder import build_video_jepa_and_probes
 from examples.video_jepa.vis import (
+    _build_pred_rollout,
     assemble_geometry_viz_videos,
     finalize_covariance_diagnostics,
     geometry_visualization_loop,
@@ -90,12 +91,78 @@ def add_label_to_video(video, label):
     return np.stack(labeled_frames, axis=0)
 
 
+def _slice_batch(batch, num_samples):
+    sliced = {}
+    for key, value in batch.items():
+        if isinstance(value, torch.Tensor) and value.ndim > 0:
+            sliced[key] = value[:num_samples]
+        else:
+            sliced[key] = value
+    return sliced
+
+
+def _slice_rollout_bundle(bundle, num_samples):
+    sliced = {}
+    for key, value in bundle.items():
+        if isinstance(value, torch.Tensor) and value.ndim > 0:
+            if key == "pred_steps" and value.ndim > 1:
+                sliced[key] = value[:, :num_samples]
+            else:
+                sliced[key] = value[:num_samples]
+        elif isinstance(value, (list, tuple)):
+            container_type = type(value)
+            sliced[key] = container_type(
+                item[:num_samples] if isinstance(item, torch.Tensor) and item.ndim > 0 else item
+                for item in value
+            )
+        else:
+            sliced[key] = value
+    return sliced
+
+
+def _build_rollout_bundle(batch, gt_latent, preds):
+    return {
+        "video": batch["video"],
+        "gt_latent": gt_latent,
+        "pred_rollout": _build_pred_rollout(gt_latent, preds, batch["video"].shape[2]),
+        "pred_steps": preds,
+    }
+
+
+def _cfg_get_local(cfg, key, default=None):
+    if cfg is None:
+        return default
+    if isinstance(cfg, dict):
+        return cfg.get(key, default)
+    try:
+        return cfg.get(key, default)
+    except Exception:
+        return getattr(cfg, key, default)
+
+
+def _diagnostics_sample_count(batch_size, geometry_cfg, emit_media):
+    requested = 0
+    if emit_media:
+        requested = max(requested, 16)
+    if geometry_cfg is not None:
+        requested = max(
+            requested,
+            int(_cfg_get_local(geometry_cfg, "num_samples", 12)),
+            int(_cfg_get_local(geometry_cfg, "temporal_self_similarity_num_samples", 2)),
+            4,
+        )
+    return min(batch_size, requested if requested > 0 else batch_size)
+
+
 def visualize_videos(
     batch,
     jepa,
     pixel_decoder,
     detection_head,
     num_samples,
+    use_amp=False,
+    dtype=torch.float32,
+    precomputed_bundle=None,
 ):
     """Create visualization videos for wandb logging.
 
@@ -106,42 +173,40 @@ def visualize_videos(
     """
 
     x = batch["video"]
-    x_jepa = jepa.encoder(x)
+    with autocast(x.device.type, dtype=dtype, enabled=use_amp):
+        if precomputed_bundle is None:
+            x_jepa = jepa.encoder(x)
+            T = x.shape[2]
+            preds, _ = jepa.unroll(
+                x,
+                actions=None,
+                nsteps=T - 2,
+                unroll_mode="parallel",
+                compute_loss=False,
+                return_all_steps=True,
+            )
+            rollout = _build_pred_rollout(x_jepa, preds, T)
+        else:
+            x_jepa = precomputed_bundle["gt_latent"]
+            preds = precomputed_bundle["pred_steps"]
+            rollout = precomputed_bundle["pred_rollout"]
 
-    T = x.shape[2]
-    preds, _ = jepa.unroll(
-        x,
-        actions=None,
-        nsteps=T - 2,
-        unroll_mode="parallel",
-        compute_loss=False,
-        return_all_steps=True,
-    )
+        one_step_pred = x_jepa[:, :, 1:].clone()
+        one_step_pred[:, :, 1:] = preds[0]
+        one_step_reconstruction = pixel_decoder.head(one_step_pred)
 
-    # One step predictions                                             # my: [S1, S2', S3', ..., S{T-1}'],        Out Shape: [B, D, T-1, H', W'] (B=batch, D=latent dim, T-1 frames, spatial).
-    one_step_pred = x_jepa[:, :, 1:].clone()                           # my: [S1, S2, S3, ..., S{T-1}],           In  Shape: [B, D, T, H', W'] -> Out Shape: [B, D, T-1, H', W'] (start with the original context)(we skip t=0 to align predicted vs GT)
-    one_step_pred[:, :, 1:] = preds[0]                                 # my: [S1, S2', S3', ..., S{T-1}'],        Shape: [B, D, T-1, H', W'] (replace future frames with 1-step preds)
-    one_step_reconstruction = pixel_decoder.head(one_step_pred)        # my: latent [B, D, T-1, H', W'] -> decode to pixel [B, C, T-1, H, W] for visualization
+        rollout_reconstruction = pixel_decoder.head(rollout)
 
-    # Multi-step rollouts                                              # my: [S1, S2'(1), S3'(2), …, S{T-1}'(T-2)],  where S{t}'{t-1} is the t-th step prediction (shape [B, D, T-1, H', W'] or compatible). We iteratively overwrite future timesteps with each step's predictions to build a multi-step rollout in latent space.
-    rollout = x_jepa[:, :, 1:].clone()                                 # my: [S1, S2, S3, ..., S{T-1}],           Same context slice Shape: [B, D, T-1, H', W']
-    for t in range(1, T - 1):
-        rollout[:, :, t:] = preds[t - 1][:, :, t - 1 :]                # my: iteratively overwrite future timesteps: preds[t-1] is the t-th step prediction (shape [B, D, T-1, H', W'] or compatible). Slicing [:, :, t-1:] aligns the predicted frames so that as t increases more of the right-hand future is replaced -> builds a multi-step rollout in latent space using each step's predictions
-    rollout_reconstruction = pixel_decoder.head(rollout)               # my: decode the assembled multi-step latent rollout into pixels [B, C, T-1, H, W] for visualization and detection overlay
+        loc_prediction = detection_head.head(rollout)
+        loc_prediction = F.interpolate(
+            loc_prediction, (x.shape[-2], x.shape[-1]), mode="nearest"
+        )
+        loc_prediction = repeat(loc_prediction, "b t h w -> b c t h w", c=3).clone()
+        loc_prediction[:, :2].fill_(0)
 
-    # Location predictions overlaid over rollout as blue heatmap
-    loc_prediction = detection_head.head(rollout)
-    loc_prediction = F.interpolate(
-        loc_prediction, (x.shape[-2], x.shape[-1]), mode="nearest"
-    )
-    loc_prediction = repeat(loc_prediction, "b t h w -> b c t h w", c=3).clone()
-    loc_prediction[:, :2].fill_(0)
+        detection_overlay = 0.2 * rollout_reconstruction + 0.8 * loc_prediction
 
-    # Overlay rollout reconstruction and location predictions
-    detection_overlay = 0.2 * rollout_reconstruction + 0.8 * loc_prediction
-
-    # Ground truth (skip first frame to align with predictions)
-    gt = x[:, :, 1:]
+        gt = x[:, :, 1:]
 
     # Helper function to scale and convert pixel decoder outputs
     # to uint8 RGB and return as numpy array for video logging
@@ -207,6 +272,8 @@ def validation_loop(
 
     metrics = collections.defaultdict(list)
     covariance_trackers = {}
+    last_batch = None
+    last_bundle = None
     geometry_vis_enabled = bool((geometry_cfg or {}).get("enabled", False)) if isinstance(geometry_cfg, dict) else bool(getattr(geometry_cfg, "enabled", False) if geometry_cfg is not None else False)
     covariance_log_scalars = bool((geometry_cfg or {}).get("covariance_log_scalars", True)) if isinstance(geometry_cfg, dict) else bool(getattr(geometry_cfg, "covariance_log_scalars", True) if geometry_cfg is not None else True)
     covariance_source_mode = str((geometry_cfg or {}).get("covariance_source_mode", "encoder")) if isinstance(geometry_cfg, dict) else str(getattr(geometry_cfg, "covariance_source_mode", "encoder") if geometry_cfg is not None else "encoder")
@@ -237,15 +304,21 @@ def validation_loop(
                 return_all_steps=True,
             )
             scores = detection_head.head.score(preds, loc_map[:, 2:])
+            gt_latent = None
+            if geometry_vis_enabled or covariance_log_scalars:
+                gt_latent = jepa.encoder(x)
 
-        if geometry_vis_enabled or covariance_log_scalars:
-            gt_latent = jepa.encoder(x)
+        if gt_latent is not None:
             update_covariance_trackers(
                 covariance_trackers,
                 gt_latent,
                 jepa,
                 source_mode=covariance_source_mode,
             )
+
+        last_batch = batch
+        if gt_latent is not None:
+            last_bundle = _build_rollout_bundle(batch, gt_latent, preds)
             
         for s, score in enumerate(scores):
             metrics[f"AP_{s}"].append(float(score))
@@ -258,9 +331,26 @@ def validation_loop(
     logs = {**metrics}
     media_refs = {}
     raw_payloads = {}
+    sampled_batch = None
+    sampled_bundle = None
+    if last_batch is not None and (emit_media or geometry_vis_enabled):
+        sample_count = _diagnostics_sample_count(int(last_batch["video"].shape[0]), geometry_cfg, emit_media)
+        sampled_batch = _slice_batch(last_batch, sample_count)
+        if last_bundle is not None:
+            sampled_bundle = _slice_rollout_bundle(last_bundle, sample_count)
+        last_batch = None
+        last_bundle = None
+
     if emit_media:
         videos = visualize_videos(
-            batch, jepa, pixel_decoder, detection_head, num_samples=min(16, batch["video"].shape[0])
+            sampled_batch if sampled_batch is not None else batch,
+            jepa,
+            pixel_decoder,
+            detection_head,
+            num_samples=min(16, (sampled_batch if sampled_batch is not None else batch)["video"].shape[0]),
+            use_amp=use_amp,
+            dtype=dtype,
+            precomputed_bundle=sampled_bundle,
         )
         logs["viz"] = [wandb.Video(video, fps=4, format="mp4") for video in videos]
         media_refs["viz"] = {
@@ -286,13 +376,16 @@ def validation_loop(
     if geometry_vis_enabled and exp_dir is not None and epoch is not None:
         try:
             figures, meta, geometry_raw_payloads, geometry_scalar_metrics = geometry_visualization_loop(
-                batch=batch,
+                batch=sampled_batch if sampled_batch is not None else batch,
                 jepa=jepa,
                 device=device,
                 geometry_cfg=geometry_cfg,
-                detection_targets=batch.get("digit_location"),
+                detection_targets=(sampled_batch if sampled_batch is not None else batch).get("digit_location"),
                 epoch=epoch,
                 covariance_diagnostics=covariance_diagnostics,
+                bundle=sampled_bundle,
+                use_amp=use_amp,
+                dtype=dtype,
             )
             global _LONG_SEQUENCE_NOTICE_LOGGED
             if not _LONG_SEQUENCE_NOTICE_LOGGED:

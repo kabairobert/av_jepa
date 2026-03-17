@@ -10,6 +10,9 @@
 #SBATCH --output=%x_%j.out
 #SBATCH --error=%x_%j.err
 
+# Make CUDA allocator expandable to reduce fragmentation
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 set -e
 
 module load 2023
