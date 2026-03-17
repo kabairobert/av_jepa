@@ -469,6 +469,48 @@ def run(
     # Training loop
     logger.info(f"Starting training for {cfg.optim.epochs} epochs...")
 
+    # Preflight dry-run: run one small sample forward/diagnostics before starting the
+    # tqdm progress bar so startup logs (wandb/artifact prints, memory/tensor-shape probes)
+    # appear before the first progress bar line and do not interrupt it.
+    if not first_train_probe_done:
+        try:
+            sample_batch = next(iter(train_probe_loader), None)
+            if sample_batch is not None:
+                sample_batch = {k: v.to(device) for k, v in sample_batch.items()}
+                x_sample = sample_batch.get("video")
+            else:
+                x_sample = None
+
+            # Log lightweight memory/tensor-shape probes (no backward/optimizer).
+            _log_memory_snapshot(global_step, probe_modules, wandb_run=wandb_run, prefix="train")
+            shapes = {}
+            if x_sample is not None and cfg.logging.get("log_tensor_shapes", True):
+                shapes = _capture_shapes(
+                    x_sample,
+                    encoder,
+                    projector,
+                    device,
+                    cfg.logging.get("projector_force_runtime_shapes", False),
+                )
+                _log_tensor_shapes(global_step, shapes, wandb_run=wandb_run, prefix="train")
+
+            diagnostics_manager.record_event(
+                event_type="train_health_probe",
+                phase="train",
+                step=global_step,
+                epoch=0,
+                metrics={
+                    **_collect_memory_snapshot_metrics(global_step, probe_modules, prefix="train", dtype=dtype),
+                    **({f"train/shape/{k}": v for k, v in shapes.items()} if cfg.logging.get("log_tensor_shapes", True) else {}),
+                },
+                raw_payloads={"train_health_probe": {"shapes": shapes if cfg.logging.get("log_tensor_shapes", True) else {}}},
+                metadata={"trigger": "preflight"},
+            )
+        except Exception:
+            logger.exception("Preflight diagnostics failed")
+        finally:
+            first_train_probe_done = True
+            _post_diagnostics_cleanup()
     for epoch in range(start_epoch, cfg.optim.epochs):
         pbar = tqdm(
             train_loader,
