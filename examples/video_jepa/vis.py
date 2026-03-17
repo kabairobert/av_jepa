@@ -41,6 +41,20 @@ def _plot_enabled(geometry_cfg, key):
     return bool(val)
 
 
+def _tensor_to_numpy(tensor, dtype=np.float32):
+    if isinstance(tensor, torch.Tensor):
+        cpu_tensor = tensor.detach().cpu()
+        if dtype == np.float32:
+            cpu_tensor = cpu_tensor.to(torch.float32)
+        elif dtype == np.float64:
+            cpu_tensor = cpu_tensor.to(torch.float64)
+        return cpu_tensor.numpy()
+    array = np.asarray(tensor)
+    if dtype is None:
+        return array
+    return array.astype(dtype, copy=False)
+
+
 def _epoch_suffix(epoch, include_epoch_in_title):
     if include_epoch_in_title and epoch is not None:
         return f" | epoch={int(epoch)}"
@@ -297,7 +311,7 @@ def _trajectory_panel(
     if not idxs:
         return None, {}
 
-    fit = np.concatenate([gt_bt[i].cpu().numpy() for i in idxs], axis=0)
+    fit = np.concatenate([_tensor_to_numpy(gt_bt[i]) for i in idxs], axis=0)
     pca = PCA(n_components=2)
     pca.fit(fit)
 
@@ -315,8 +329,8 @@ def _trajectory_panel(
             continue
         for j, vid_idx in enumerate(group):
             color = colors[j % len(colors)]
-            gt2 = pca.transform(gt_bt[vid_idx].cpu().numpy())
-            pred2 = pca.transform(pred_bt[vid_idx].cpu().numpy())
+            gt2 = pca.transform(_tensor_to_numpy(gt_bt[vid_idx]))
+            pred2 = pca.transform(_tensor_to_numpy(pred_bt[vid_idx]))
             ax.plot(gt2[:, 0], gt2[:, 1], color=color, linewidth=2)
             ax.plot(pred2[:, 0], pred2[:, 1], color=color, linestyle="--", linewidth=2)
             ax.scatter(gt2[0, 0], gt2[0, 1], color=color, s=20)
@@ -328,8 +342,8 @@ def _trajectory_panel(
     ax = axes[3]
     for j, vid_idx in enumerate(idxs):
         color = colors[j % len(colors)]
-        gt2 = pca.transform(gt_bt[vid_idx].cpu().numpy())
-        pred2 = pca.transform(pred_bt[vid_idx].cpu().numpy())
+        gt2 = pca.transform(_tensor_to_numpy(gt_bt[vid_idx]))
+        pred2 = pca.transform(_tensor_to_numpy(pred_bt[vid_idx]))
         ax.plot(gt2[:, 0], gt2[:, 1], color=color, linewidth=1.5, alpha=0.85)
         ax.plot(pred2[:, 0], pred2[:, 1], color=color, linestyle="--", linewidth=1.2, alpha=0.85)
     ax.set_title(f"{title} - summary")
@@ -349,8 +363,8 @@ def _trajectory_panel(
         fontsize=12,
     )
     fig.tight_layout(rect=(0, 0, 1, 0.97))
-    gt_coords = np.stack([pca.transform(gt_bt[vid_idx].cpu().numpy()) for vid_idx in idxs], axis=0)
-    pred_coords = np.stack([pca.transform(pred_bt[vid_idx].cpu().numpy()) for vid_idx in idxs], axis=0)
+    gt_coords = np.stack([pca.transform(_tensor_to_numpy(gt_bt[vid_idx])) for vid_idx in idxs], axis=0)
+    pred_coords = np.stack([pca.transform(_tensor_to_numpy(pred_bt[vid_idx])) for vid_idx in idxs], axis=0)
     payload = {
         "sample_indices": np.asarray(idxs, dtype=np.int64),
         "gt_coords": gt_coords,
@@ -433,7 +447,7 @@ def plot_temporal_self_similarity(
         x = bt[idx].detach().float()
         if center_time:
             x = x - x.mean(dim=0, keepdim=True)
-        x_np = x.cpu().numpy()
+        x_np = _tensor_to_numpy(x)
 
         z_fixed, z_var, used_fixed_k, used_var_k = _fit_tss_pca_features(
             x_np,
@@ -525,7 +539,7 @@ def plot_occupancy_spatial_embedding(
         digit_location = digit_location.index_select(1, idx.to(digit_location.device))
 
     b, d, t, h, w = gt_latent.shape
-    x = gt_latent.permute(0, 2, 3, 4, 1).reshape(-1, d).detach().cpu().numpy()
+    x = _tensor_to_numpy(gt_latent.permute(0, 2, 3, 4, 1).reshape(-1, d))
 
     # Align GT occupancy with latent spatial size: [B, T, Hm, Wm] -> [B, T, h, w]
     occ = digit_location[:, :t].float()
@@ -533,7 +547,7 @@ def plot_occupancy_spatial_embedding(
     occ = occ.reshape(b_occ * t_occ, 1, hm, wm)
     occ = F.interpolate(occ, size=(h, w), mode="nearest")
     occ = occ.reshape(b_occ, t_occ, h, w)
-    y = occ.reshape(-1).detach().cpu().numpy().astype(np.int32)
+    y = _tensor_to_numpy(occ.reshape(-1)).astype(np.int32)
 
     n = x.shape[0]
     if n > max_points:
@@ -858,8 +872,8 @@ def plot_activation_overlays(
     for bi in range(b):
         for ti in range(t):
             ax = axes[bi, ti]
-            frame = x[bi, 0, ti].detach().cpu().numpy()
-            heat = sal[bi, ti].detach().cpu().numpy()
+            frame = _tensor_to_numpy(x[bi, 0, ti])
+            heat = _tensor_to_numpy(sal[bi, ti])
             heat = torch.from_numpy(heat)[None, None]
             heat = F.interpolate(heat, size=frame.shape, mode="bilinear", align_corners=False)
             heat = heat.squeeze().numpy()
@@ -878,7 +892,7 @@ def plot_activation_overlays(
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     payload = {
         "layer_name": chosen,
-        "saliency": sal.detach().cpu().numpy(),
+        "saliency": _tensor_to_numpy(sal),
         "summary_metrics": _activation_summary_metrics(sal, f"val/diag/activation/{chosen}"),
     }
     return fig, payload
@@ -912,7 +926,7 @@ def plot_phase_space_portrait(
 
         fit = np.concatenate(
             [
-                np.concatenate([gt_bt[vid_idx].cpu().numpy(), pred_bt[vid_idx].cpu().numpy()], axis=0)
+                np.concatenate([_tensor_to_numpy(gt_bt[vid_idx]), _tensor_to_numpy(pred_bt[vid_idx])], axis=0)
                 for vid_idx in group
             ],
             axis=0,
@@ -923,8 +937,8 @@ def plot_phase_space_portrait(
         colors = plt.get_cmap("tab10")(np.linspace(0, 1, 10))
         for j, vid_idx in enumerate(group):
             color = colors[j % len(colors)]
-            gt3 = pca.transform(gt_bt[vid_idx].cpu().numpy())
-            pr3 = pca.transform(pred_bt[vid_idx].cpu().numpy())
+            gt3 = pca.transform(_tensor_to_numpy(gt_bt[vid_idx]))
+            pr3 = pca.transform(_tensor_to_numpy(pred_bt[vid_idx]))
             ax.plot(gt3[:, 0], gt3[:, 1], gt3[:, 2], color=color, linewidth=2)
             ax.plot(pr3[:, 0], pr3[:, 1], pr3[:, 2], color=color, linestyle="--", linewidth=2)
 
@@ -956,15 +970,15 @@ def plot_phase_space_portrait(
             continue
         fit = np.concatenate(
             [
-                np.concatenate([gt_bt[vid_idx].cpu().numpy(), pred_bt[vid_idx].cpu().numpy()], axis=0)
+                np.concatenate([_tensor_to_numpy(gt_bt[vid_idx]), _tensor_to_numpy(pred_bt[vid_idx])], axis=0)
                 for vid_idx in group
             ],
             axis=0,
         )
         pca = PCA(n_components=3)
         pca.fit(fit)
-        gt_coords = np.stack([pca.transform(gt_bt[vid_idx].cpu().numpy()) for vid_idx in group], axis=0)
-        pred_coords = np.stack([pca.transform(pred_bt[vid_idx].cpu().numpy()) for vid_idx in group], axis=0)
+        gt_coords = np.stack([pca.transform(_tensor_to_numpy(gt_bt[vid_idx])) for vid_idx in group], axis=0)
+        pred_coords = np.stack([pca.transform(_tensor_to_numpy(pred_bt[vid_idx])) for vid_idx in group], axis=0)
         payload[f"group_{i}_gt_coords"] = gt_coords
         payload[f"group_{i}_pred_coords"] = pred_coords
         payload[f"group_{i}_explained_variance_ratio"] = pca.explained_variance_ratio_

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import atexit
+import contextlib
+import io
 import json
 import re
 import threading
@@ -12,6 +14,7 @@ from typing import Any, cast
 import numpy as np
 import torch
 from ruamel.yaml import YAML
+from tqdm import tqdm
 
 from eb_jepa.logging import get_logger
 
@@ -598,6 +601,32 @@ class DiagnosticsManager:
                 logger.exception("Diagnostics uploader loop failed")
             self._stop_event.wait(self.flush_interval_sec)
 
+    @staticmethod
+    def _emit_console_lines_safely(text: str) -> None:
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                tqdm.write(line)
+            except Exception:
+                logger.info(line)
+
+    def _run_with_tqdm_console(self, fn):
+        # WandB artifact APIs print to stdout/stderr, which can break active tqdm bars.
+        # Capture and replay with tqdm.write to preserve progress bar rendering.
+        out_buf = io.StringIO()
+        err_buf = io.StringIO()
+        with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(err_buf):
+            result = fn()
+        out_text = out_buf.getvalue()
+        err_text = err_buf.getvalue()
+        if out_text:
+            self._emit_console_lines_safely(out_text)
+        if err_text:
+            self._emit_console_lines_safely(err_text)
+        return result
+
     def _process_artifact_job(self, job_path: Path) -> bool:
         job = self._read_json(job_path, default={})
         if not job or job.get("status") == "done":
@@ -626,13 +655,16 @@ class DiagnosticsManager:
                     "run_dir": str(self.run_dir),
                 },
             )
-            artifact.add_dir(str(event_dir), name=event_dir.name)
-            artifact.add_file(str(self.manifest_path), name="manifest.json")
-            artifact.add_file(str(self.index_path), name="index.json")
-            artifact.add_file(str(self.catalog_path), name="metrics/catalog.yaml")
-            artifact.add_file(str(self.metrics_readme_path), name="metrics/README.md")
-            aliases = ["latest", _safe_name(str(job["event_id"]))]
-            self.wandb_run.log_artifact(artifact, aliases=aliases)
+            def _upload():
+                artifact.add_dir(str(event_dir), name=event_dir.name)
+                artifact.add_file(str(self.manifest_path), name="manifest.json")
+                artifact.add_file(str(self.index_path), name="index.json")
+                artifact.add_file(str(self.catalog_path), name="metrics/catalog.yaml")
+                artifact.add_file(str(self.metrics_readme_path), name="metrics/README.md")
+                aliases = ["latest", _safe_name(str(job["event_id"]))]
+                self.wandb_run.log_artifact(artifact, aliases=aliases)
+
+            self._run_with_tqdm_console(_upload)
             job["status"] = "done"
             job["uploaded_at"] = _utc_now_iso()
             job["attempts"] = int(job.get("attempts", 0)) + 1
