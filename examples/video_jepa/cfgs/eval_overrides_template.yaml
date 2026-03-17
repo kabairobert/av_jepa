@@ -21,22 +21,19 @@
 logging:
   log_wandb: true           # values: true|false; set true to log eval metrics to wandb
   wandb_group:               # set to group eval runs (e.g. "eval-sweep-2026")
-  tqdm_silent: false
 
   diagnostics:
     enabled: true                           # values: true|false; persist machine-readable diagnostics for eval
     upload_artifacts: true                  # values: true|false; upload eval diagnostics artifacts to wandb
     artifact_flush_interval_sec: 3.0        # recommended interval: [1.0, 10.0]; uploader queue polling period
-    full_diagnostics_mode: full_val         # values: full_val|val_subset; eval diagnostics probe mode
-    fast_diagnostics_mode: val_subset       # values: val_subset|train_subset|full_val; not used in eval currently
 
   geometry_viz:
     enabled: true                 # values: true|false; master switch for all geometry plots
-    wandb_log_geometry: true      # values: true|false; log geometry figures to wandb (requires log_wandb: true)   
     num_samples: 12               # recommended interval: [4, 16]; sampled videos for trajectory panels
     tsne_method: umap             # values: umap|tsne; umap preferred, tsne as fallback
     activation_layer: null        # values: null|"<dot.path>"; null auto-detects final spatial encoder layer
     stage_label: encoder_rollout  # values: any string; displayed in plot titles
+    wandb_log_geometry: true      # values: true|false; log geometry figures to wandb (requires log_wandb: true)
     temporal_self_similarity_num_samples: 2  # recommended interval: [1, 4]; number of videos in Vis 2
     temporal_self_similarity_feature_mode: spatialflat  # values: spatialflat|avgpool; spatialflat is more motion-sensitive
     temporal_self_similarity_distance: euclidean  # values: euclidean|cosine; euclidean avoids cosine saturation on near-static directions
