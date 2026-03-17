@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=6
 #SBATCH --gpus=1
 #SBATCH --mem=120G
-#SBATCH --time=00:50:00
+#SBATCH --time=01:20:00
 #SBATCH --output=%x_%j.out
 #SBATCH --error=%x_%j.err
 
@@ -36,4 +36,14 @@ uv run python -m examples.video_jepa.eval \
     --folder "$RUN_FOLDER" \
     --eval_cfg "/gpfs/home3/rkabai/github/eb_jepa_private/examples/video_jepa/cfgs/eval_overrides_template.yaml"
 
-echo "Eval complete."
+echo "Eval 1 complete."
+
+
+RUN_FOLDER="/gpfs/home3/rkabai/github/eb_jepa_private/checkpoints/video_jepa/dev_2026-03-02_06-35/resnet_bs64_lr0.001_std10.0_cov100.0_seed2025/"
+
+echo "Starting standalone eval on run folder: $RUN_FOLDER"
+uv run python -m examples.video_jepa.eval \
+    --folder "$RUN_FOLDER" \
+    --eval_cfg "/gpfs/home3/rkabai/github/eb_jepa_private/examples/video_jepa/cfgs/eval_overrides_template.yaml"
+
+echo "Eval 2 complete."
