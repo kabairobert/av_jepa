@@ -41,20 +41,19 @@ optim:
 logging:
   log_wandb: true
   wandb_group:        # Set to group runs (e.g., for seed averaging)
-  log_every: 1        # Log every N epochs
+  save_every: 10      # Save checkpoint every N epochs
+  diagnostics_every_epochs: 5               # canonical diagnostics cadence; null inherits save_every
+  fast_diagnostics_every_epochs: 1          # optional fast diagnostics epoch cadence
+  fast_diagnostics_every_steps:             # optional fast diagnostics step cadence
   log_tensor_shapes: true
   projector_force_runtime_shapes: false
-  save_every: 10      # Save checkpoint every N epochs
   tqdm_silent: false  # Disable tqdm progress bars
   diagnostics:
     enabled: true                            # values: true|false; master switch for diagnostics persistence
     upload_artifacts: true                   # values: true|false; upload machine-readable diagnostics artifacts to wandb
     artifact_flush_interval_sec: 3.0         # recommended interval: [1.0, 10.0]; uploader queue polling period
-    diagnostics_every_epochs:                # values: null|positive int; null inherits save_every for canonical diagnostics
-    mode: full_val                           # values: full_val|val_subset|train_subset; canonical diagnostics probe mode
-    fast_diagnostics_every_epochs:           # values: null|positive int; optional fast diagnostics epoch cadence
-    fast_diagnostics_every_steps:            # values: null|positive int; optional fast diagnostics step cadence
-    fast_mode: val_subset                    # values: val_subset|train_subset|full_val; fast diagnostics probe mode
+    full_diagnostics_mode: full_val          # values: full_val|val_subset|train_subset; canonical diagnostics probe mode
+    fast_diagnostics_mode: val_subset        # values: val_subset|train_subset|full_val; fast diagnostics probe mode
     val_subset_num_batches: 4                # recommended interval: [1, 16]; batches for val_subset diagnostics
     train_subset_num_batches: 2              # recommended interval: [1, 8]; batches for train_subset diagnostics
   geometry_viz:

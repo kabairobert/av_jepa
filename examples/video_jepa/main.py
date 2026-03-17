@@ -376,14 +376,18 @@ def run(
         flush_interval_sec=float(diagnostics_cfg.get("artifact_flush_interval_sec", 3.0)),
         run_kind="train",
     )
-    canonical_every_epochs = _resolve_epoch_interval(
-        diagnostics_cfg.get("diagnostics_every_epochs", None),
-        cfg.logging.save_every,
-    )
-    fast_every_epochs = _int_or_none(diagnostics_cfg.get("fast_diagnostics_every_epochs", None))
-    fast_every_steps = _int_or_none(diagnostics_cfg.get("fast_diagnostics_every_steps", None))
-    canonical_mode = str(diagnostics_cfg.get("mode", "full_val")).lower()
-    fast_mode = str(diagnostics_cfg.get("fast_mode", "val_subset")).lower()
+    # Read cadences from top-level logging (new structure)
+    # diagnostics_every_epochs can be inherited from save_every if unset
+    diag_every_epochs_cfg = cfg.logging.get("diagnostics_every_epochs", None)
+    canonical_every_epochs = _resolve_epoch_interval(diag_every_epochs_cfg, cfg.logging.save_every)
+    
+    # Fast diagnostics cadences (independent, both optional)
+    fast_every_epochs = _int_or_none(cfg.logging.get("fast_diagnostics_every_epochs", None))
+    fast_every_steps = _int_or_none(cfg.logging.get("fast_diagnostics_every_steps", None))
+    
+    # Read modes from logging.diagnostics (renamed fields)
+    canonical_mode = str(diagnostics_cfg.get("full_diagnostics_mode", "full_val")).lower()
+    fast_mode = str(diagnostics_cfg.get("fast_diagnostics_mode", "val_subset")).lower()
 
     def _run_diagnostics_event(
         *,
@@ -543,8 +547,11 @@ def run(
                     wandb.log(fast_logs, step=global_step)
 
         # Validation and diagnostics
-        should_log_epoch = epoch % cfg.logging.log_every == 0
+        # Validation and diagnostics
         should_run_canonical = diagnostics_enabled and epoch > 0 and epoch % canonical_every_epochs == 0
+        should_run_fast_epoch = diagnostics_enabled and fast_every_epochs is not None and epoch > 0 and epoch % fast_every_epochs == 0 and not should_run_canonical
+        should_run_fast_step = diagnostics_enabled and fast_every_steps is not None and global_step > 0 and global_step % fast_every_steps == 0 and not should_run_canonical
+        
         val_logs = {}
         if should_run_canonical:
             val_logs = _run_diagnostics_event(
@@ -557,19 +564,30 @@ def run(
                 persist=True,
                 event_metadata={"trigger": "checkpoint_save"},
             )
-        elif should_log_epoch:
+        elif should_run_fast_epoch:
             val_logs = _run_diagnostics_event(
-                event_type="log_every_validation",
-                probe_mode="full_val",
+                event_type="fast_diagnostics",
+                probe_mode=fast_mode,
                 step=global_step,
                 epoch_value=epoch,
                 metrics_prefix="",
                 enable_geometry=False,
                 persist=False,
-                event_metadata={"trigger": "log_every"},
+                event_metadata={"trigger": "fast_diagnostics_every_epochs"},
+            )
+        elif should_run_fast_step:
+            val_logs = _run_diagnostics_event(
+                event_type="fast_diagnostics",
+                probe_mode=fast_mode,
+                step=global_step,
+                epoch_value=epoch,
+                metrics_prefix="",
+                enable_geometry=False,
+                persist=False,
+                event_metadata={"trigger": "fast_diagnostics_every_steps"},
             )
 
-        if should_log_epoch or should_run_canonical:
+        if should_run_canonical or should_run_fast_epoch or should_run_fast_step:
             # One-time post-first-validation memory probe (simplified)
             if not first_val_probe_done:
                 try:
@@ -595,18 +613,19 @@ def run(
                         else:
                             shapes = {"raw_input": None, "encoder_output": None, "projector_output": None}
 
-                        _log_tensor_shapes(global_step, shapes, wandb_run=wandb_run, prefix="val")
+                        _log_tensor_shapes(global_step, shapes, wandb_run=wandb_run, prefix="train")
+                    shapes_metrics = {f"train/shape/{k}": v for k, v in shapes.items()} if cfg.logging.get("log_tensor_shapes", True) else {}
                     diagnostics_manager.record_event(
-                        event_type="val_health_probe",
-                        phase="val",
+                        event_type="train_health_probe",
+                        phase="train",
                         step=global_step,
                         epoch=epoch,
                         metrics={
-                            **_collect_memory_snapshot_metrics(global_step, probe_modules, prefix="val", dtype=dtype),
-                            **({f"val/shape/{k}": v for k, v in shapes.items()} if cfg.logging.get("log_tensor_shapes", True) else {}),
+                            **_collect_memory_snapshot_metrics(global_step, probe_modules, prefix="train", dtype=dtype),
+                            **shapes_metrics,
                         },
-                        raw_payloads={"val_health_probe": {"shapes": shapes if cfg.logging.get("log_tensor_shapes", True) else {}}},
-                        metadata={"trigger": "first_val_probe"},
+                        raw_payloads={"train_health_probe": {"shapes": shapes if cfg.logging.get("log_tensor_shapes", True) else {}}},
+                        metadata={"trigger": "first_train_probe"},
                     )
                 except Exception:
                     logger.exception("Failed running post-first-validation memory probe")

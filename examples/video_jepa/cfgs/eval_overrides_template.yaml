@@ -27,6 +27,8 @@ logging:
     enabled: true                           # values: true|false; persist machine-readable diagnostics for eval
     upload_artifacts: true                  # values: true|false; upload eval diagnostics artifacts to wandb
     artifact_flush_interval_sec: 3.0        # recommended interval: [1.0, 10.0]; uploader queue polling period
+    full_diagnostics_mode: full_val         # values: full_val|val_subset; eval diagnostics probe mode
+    fast_diagnostics_mode: val_subset       # values: val_subset|train_subset|full_val; not used in eval currently
 
   geometry_viz:
     enabled: true                 # values: true|false; master switch for all geometry plots
