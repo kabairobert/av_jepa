@@ -637,6 +637,8 @@ def _projector_linear_outputs(projector, x):
         current = x
         linear_idx = 0
         for module in projector.net:
+            if isinstance(module, nn.Linear) and current.dtype != module.weight.dtype:
+                current = current.to(module.weight.dtype)
             current = module(current)
             if isinstance(module, nn.Linear):
                 outputs[f"projector_layer_{linear_idx}"] = current
@@ -645,6 +647,12 @@ def _projector_linear_outputs(projector, x):
             outputs["projector_output"] = current
         return outputs
 
+    try:
+        first_param = next(projector.parameters(), None)
+    except Exception:
+        first_param = None
+    if first_param is not None and x.dtype != first_param.dtype:
+        x = x.to(first_param.dtype)
     outputs["projector_output"] = projector(x)
     return outputs
 

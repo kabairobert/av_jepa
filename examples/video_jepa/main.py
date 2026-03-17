@@ -375,7 +375,8 @@ def run(
         logger.warning("AMP requested but CUDA not available — disabling AMP for safety on CPU")
         use_amp = False
 
-    scaler = GradScaler(enabled=use_amp)
+    # Grad scaling is useful for fp16 AMP; keep it disabled for bf16/float32.
+    scaler = GradScaler(enabled=use_amp and dtype == torch.float16)
     logger.info(f"Using AMP: {use_amp} with dtype: {dtype}")
 
     diagnostics_enabled = bool(diagnostics_cfg.get("enabled", True))

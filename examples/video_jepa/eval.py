@@ -309,12 +309,15 @@ def validation_loop(
                 gt_latent = jepa.encoder(x)
 
         if gt_latent is not None:
-            update_covariance_trackers(
-                covariance_trackers,
-                gt_latent,
-                jepa,
-                source_mode=covariance_source_mode,
-            )
+            # Keep projector-forward covariance sources under autocast to avoid
+            # bf16 input vs fp32 weight dtype mismatches when AMP is enabled.
+            with autocast(device.type, dtype=dtype, enabled=use_amp):
+                update_covariance_trackers(
+                    covariance_trackers,
+                    gt_latent,
+                    jepa,
+                    source_mode=covariance_source_mode,
+                )
 
         last_batch = batch
         if gt_latent is not None:
