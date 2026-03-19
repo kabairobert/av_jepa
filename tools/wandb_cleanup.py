@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
-"""Safe WandB run cleanup utility.
+"""
+W&B run cleanup utility with safe dry-run defaults.
+
+Delete W&B runs and optionally their artifact files directly from the W&B API.
+Designed with safety defaults: all operations dry-run by default and require --yes confirmation.
+
+Input: W&B run path (entity/project/run_id) via --run flag
+Output: Summary of deleted/skipped runs and files
 
 Usage examples:
-  # Dry-run (default): show what would be deleted
-  python tools/wandb_cleanup.py --run robertkabai-um/eb_jepa/o17io1li
+  # Dry-run (default): show what would be deleted, no changes
+  python wandb_cleanup.py --run robertkabai-um/eb_jepa/o17io1li
 
-  # Actually delete the run and its uploaded files (irreversible)
-  python tools/wandb_cleanup.py --run robertkabai-um/eb_jepa/o17io1li --no-dry-run --delete-files --yes
+  # Actually delete the run and its artifact files (irreversible, requires --yes)
+  python wandb_cleanup.py --run robertkabai-um/eb_jepa/o17io1li --no-dry-run --delete-files --yes
 
-Requires: wandb Python package and appropriate permissions to delete runs/files.
-Authenticate with `wandb login` or set `WANDB_API_KEY` in your environment.
+Requirements: wandb Python package, W&B authentication (wandb login or WANDB_API_KEY env var).
 """
 from __future__ import annotations
 
