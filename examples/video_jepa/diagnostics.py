@@ -121,7 +121,7 @@ METRIC_FAMILIES: list[dict[str, Any]] = [
     },
     {
         "id": "progress_family",
-        "pattern": r"^progress/(step|epoch_float|epoch_int)$",
+        "pattern": r"^progress/(step|epoch_float|epoch_int|epoch_idx)$",
         "display_name": "Progress Coordinate",
         "description": "Helper coordinate for aligning curves across train and eval.",
         "why_it_matters": "Makes logs interpretable on a common step or epoch axis.",

@@ -512,10 +512,11 @@ def run(
         finally:
             first_train_probe_done = True
             _post_diagnostics_cleanup()
-    for epoch in range(start_epoch, cfg.optim.epochs):
+    for epoch_idx in range(start_epoch, cfg.optim.epochs):
+        epoch_display = int(epoch_idx) + 1
         pbar = tqdm(
             train_loader,
-            desc=f"Epoch {epoch}",
+            desc=f"Epoch {epoch_display}",
             disable=cfg.logging.get("tqdm_silent", False),
         )
 
@@ -560,7 +561,7 @@ def run(
                         event_type="train_health_probe",
                         phase="train",
                         step=global_step,
-                        epoch=epoch,
+                        epoch=epoch_idx,
                         metrics={
                             **_collect_memory_snapshot_metrics(global_step, probe_modules, prefix="train", dtype=dtype),
                             **({f"train/shape/{k}": v for k, v in shapes.items()} if cfg.logging.get("log_tensor_shapes", True) else {}),
@@ -589,7 +590,7 @@ def run(
                     event_type="fast_diagnostics",
                     probe_mode=fast_mode,
                     step=global_step,
-                    epoch_value=epoch,
+                    epoch_value=epoch_idx,
                     metrics_prefix="fast/",
                     enable_geometry=False,
                     persist=True,
@@ -603,8 +604,8 @@ def run(
 
         # Validation and diagnostics
         # Validation and diagnostics
-        should_run_canonical = diagnostics_enabled and epoch > 0 and epoch % canonical_every_epochs == 0
-        should_run_fast_epoch = diagnostics_enabled and fast_every_epochs is not None and epoch > 0 and epoch % fast_every_epochs == 0 and not should_run_canonical
+        should_run_canonical = diagnostics_enabled and epoch_display % canonical_every_epochs == 0
+        should_run_fast_epoch = diagnostics_enabled and fast_every_epochs is not None and epoch_display % fast_every_epochs == 0 and not should_run_canonical
         should_run_fast_step = diagnostics_enabled and fast_every_steps is not None and global_step > 0 and global_step % fast_every_steps == 0 and not should_run_canonical
         
         val_logs = {}
@@ -613,7 +614,7 @@ def run(
                 event_type="canonical_diagnostics",
                 probe_mode=canonical_mode,
                 step=global_step,
-                epoch_value=epoch,
+                epoch_value=epoch_idx,
                 metrics_prefix="",
                 enable_geometry=True,
                 persist=True,
@@ -625,7 +626,7 @@ def run(
                 event_type="fast_diagnostics",
                 probe_mode=fast_mode,
                 step=global_step,
-                epoch_value=epoch,
+                epoch_value=epoch_idx,
                 metrics_prefix="",
                 enable_geometry=False,
                 persist=False,
@@ -637,7 +638,7 @@ def run(
                 event_type="fast_diagnostics",
                 probe_mode=fast_mode,
                 step=global_step,
-                epoch_value=epoch,
+                epoch_value=epoch_idx,
                 metrics_prefix="",
                 enable_geometry=False,
                 persist=False,
@@ -677,7 +678,7 @@ def run(
                         event_type="train_health_probe",
                         phase="train",
                         step=global_step,
-                        epoch=epoch,
+                        epoch=epoch_idx,
                         metrics={
                             **_collect_memory_snapshot_metrics(global_step, probe_modules, prefix="train", dtype=dtype),
                             **shapes_metrics,
@@ -691,7 +692,8 @@ def run(
                     first_val_probe_done = True
 
             train_metrics = {
-                "epoch": epoch,
+                "epoch": epoch_display,
+                "epoch_idx": epoch_idx,
                 "train/loss": jepa_loss.item(),
                 "train/vc_loss": regl.item(),
                 "train/pred_loss": pl.item(),
@@ -709,7 +711,7 @@ def run(
                 wandb.log(all_metrics, step=global_step)
 
             log_epoch(
-                epoch,
+                epoch_display,
                 {
                     "loss": jepa_loss.item(),
                     "vc": regl.item(),
@@ -724,20 +726,24 @@ def run(
             exp_dir / "latest.pth.tar",
             model=jepa,
             optimizer=optimizer,
-            epoch=epoch,
+            epoch=epoch_idx,
             step=global_step,
             steps_per_epoch=steps_per_epoch,
+            epoch_idx=epoch_idx,
+            epoch_completed=epoch_display,
             pixel_decoder_state_dict=pixel_decoder.state_dict(),
             detection_head_state_dict=detection_head.state_dict(),
         )
-        if epoch % cfg.logging.save_every == 0 and epoch > 0:
+        if epoch_display % cfg.logging.save_every == 0:
             save_checkpoint(
-                exp_dir / f"epoch_{epoch}.pth.tar",
+                exp_dir / f"epoch_{epoch_display}.pth.tar",
                 model=jepa,
                 optimizer=optimizer,
-                epoch=epoch,
+                epoch=epoch_idx,
                 step=global_step,
                 steps_per_epoch=steps_per_epoch,
+                epoch_idx=epoch_idx,
+                epoch_completed=epoch_display,
                 pixel_decoder_state_dict=pixel_decoder.state_dict(),
                 detection_head_state_dict=detection_head.state_dict(),
             )

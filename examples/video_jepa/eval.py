@@ -374,6 +374,7 @@ def validation_loop(
         if steps_per_epoch is not None and float(steps_per_epoch) > 0:
             logs["progress/epoch_float"] = float(log_step) / float(steps_per_epoch)
         if epoch is not None:
+            logs["progress/epoch_idx"] = int(epoch)
             logs["progress/epoch_int"] = int(epoch) + 1
 
     if geometry_vis_enabled and exp_dir is not None and epoch is not None:
@@ -461,6 +462,7 @@ def validation_loop(
 def _checkpoint_epoch(path):
     m = re.search(r"epoch_(\d+)\.pth\.tar$", path.name)
     if m:
+        # Checkpoint filenames use completed epoch count (1-based).
         return int(m.group(1))
     return -1
 
@@ -486,9 +488,17 @@ def _infer_steps_per_epoch(step, epoch):
 
 def _load_jepa_weights(jepa, checkpoint_path, device, pixel_decoder=None, detection_head=None):
     ckpt = torch.load(checkpoint_path, map_location=device)
-    metadata: dict[str, Any] = {"epoch": None, "step": None, "steps_per_epoch": None}
+    metadata: dict[str, Any] = {
+        "epoch": None,
+        "epoch_idx": None,
+        "epoch_completed": None,
+        "step": None,
+        "steps_per_epoch": None,
+    }
     if isinstance(ckpt, dict):
-        metadata["epoch"] = ckpt.get("epoch", None)
+        metadata["epoch_idx"] = ckpt.get("epoch_idx", ckpt.get("epoch", None))
+        metadata["epoch_completed"] = ckpt.get("epoch_completed", None)
+        metadata["epoch"] = metadata["epoch_idx"]
         metadata["step"] = ckpt.get("step", None)
         metadata["steps_per_epoch"] = ckpt.get("steps_per_epoch", None)
         if "model_state_dict" in ckpt:
@@ -509,8 +519,10 @@ def _load_jepa_weights(jepa, checkpoint_path, device, pixel_decoder=None, detect
             logger.warning("detection_head_state_dict not found in checkpoint — probe will use random weights.")
     else:
         jepa.load_state_dict(ckpt, strict=False)
+    if metadata["epoch_completed"] is None and metadata["epoch_idx"] is not None:
+        metadata["epoch_completed"] = int(metadata["epoch_idx"]) + 1
     if metadata["steps_per_epoch"] is None:
-        metadata["steps_per_epoch"] = _infer_steps_per_epoch(metadata["step"], metadata["epoch"])
+        metadata["steps_per_epoch"] = _infer_steps_per_epoch(metadata["step"], metadata["epoch_idx"])
     return metadata
 
 
@@ -661,19 +673,26 @@ def run(
 
     for ckpt in ckpts:
         checkpoint_meta = _load_jepa_weights(jepa, ckpt, device, pixel_decoder=pixel_decoder, detection_head=detection_head)
-        checkpoint_epoch = checkpoint_meta.get("epoch", None)
+        checkpoint_epoch_idx = checkpoint_meta.get("epoch_idx", checkpoint_meta.get("epoch", None))
+        checkpoint_epoch_completed = checkpoint_meta.get("epoch_completed", None)
         checkpoint_step = checkpoint_meta.get("step", None)
         steps_per_epoch = checkpoint_meta.get("steps_per_epoch", None)
 
-        if checkpoint_epoch is None:
-            checkpoint_epoch = _checkpoint_epoch(ckpt)
-        checkpoint_epoch = int(checkpoint_epoch) if checkpoint_epoch is not None else 0
-        if checkpoint_epoch < 0:
-            checkpoint_epoch = 0
+        if checkpoint_epoch_idx is None:
+            discovered_completed_epoch = _checkpoint_epoch(ckpt)
+            if discovered_completed_epoch > 0:
+                checkpoint_epoch_idx = discovered_completed_epoch - 1
+                checkpoint_epoch_completed = discovered_completed_epoch
+        checkpoint_epoch_idx = int(checkpoint_epoch_idx) if checkpoint_epoch_idx is not None else 0
+        if checkpoint_epoch_idx < 0:
+            checkpoint_epoch_idx = 0
+        if checkpoint_epoch_completed is None:
+            checkpoint_epoch_completed = checkpoint_epoch_idx + 1
+        checkpoint_epoch_completed = int(checkpoint_epoch_completed)
 
         if checkpoint_step is None:
             logger.warning("Checkpoint %s is missing training step metadata; falling back to epoch index for W&B step.", ckpt.name)
-            checkpoint_step = checkpoint_epoch
+            checkpoint_step = checkpoint_epoch_idx
         checkpoint_step = int(checkpoint_step)
 
         logs = validation_loop(
@@ -686,7 +705,7 @@ def run(
             use_amp=False,
             dtype=torch.float32,
             geometry_cfg=geometry_cfg,
-            epoch=checkpoint_epoch,
+            epoch=checkpoint_epoch_idx,
             exp_dir=folder_path,
             max_batches=max_batches,
             log_step=checkpoint_step,
@@ -697,6 +716,8 @@ def run(
             diagnostics_metadata={
                 "checkpoint_name": ckpt.name,
                 "checkpoint_path": str(ckpt),
+                "checkpoint_epoch_idx": int(checkpoint_epoch_idx),
+                "checkpoint_epoch_completed": int(checkpoint_epoch_completed),
                 "probe_mode": "full_val",
             },
             persist_diagnostics=True,
@@ -704,7 +725,8 @@ def run(
 
         logs["eval/checkpoint_name"] = ckpt.name
         logs["eval/checkpoint_path"] = str(ckpt)
-        logs["eval/checkpoint_epoch"] = int(checkpoint_epoch) + 1
+        logs["eval/checkpoint_epoch"] = int(checkpoint_epoch_completed)
+        logs["eval/checkpoint_epoch_idx"] = int(checkpoint_epoch_idx)
         logs["eval/checkpoint_step"] = int(checkpoint_step)
 
         if wandb_run:
