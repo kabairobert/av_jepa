@@ -3,10 +3,10 @@
 #SBATCH --partition=gpu_mig
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=6
+#SBATCH --cpus-per-task=9
 #SBATCH --gpus=1
 #SBATCH --mem=60G
-#SBATCH --time=06:00:00
+#SBATCH --time=01:00:00
 #SBATCH --output=%x_%j.out
 #SBATCH --error=%x_%j.err
 
@@ -40,6 +40,6 @@ export PATH="$HOME/.cargo/bin:$PATH"
 # Run training
 echo "Starting training..."
 uv run python -m examples.video_jepa.main \
-    --fname examples/video_jepa/cfgs/sigreg-mig.yaml
+    --fname examples/video_jepa/cfgs/sigreg-mig-quicktest.yaml
 
 echo "Training complete."

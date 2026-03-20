@@ -1,0 +1,115 @@
+# Video JEPA Training Configuration
+# Train a self-supervised video prediction model on Moving MNIST
+
+meta:
+  seed: 2025
+  device: auto  # auto, cuda, or cpu
+  checkpoint_dir: checkpoints  # Directory to save checkpoints and logs
+  # load_model: false             # Set true to resume training from a checkpoint
+  # model_folder: null            # Absolute path to the run folder to resume from (e.g. checkpoints/video_jepa/dev_.../run_name_seed42)
+  # load_checkpoint: latest.pth.tar  # Which checkpoint file to load (latest.pth.tar or epoch_N.pth.tar)
+
+data:
+  dataset: moving_mnist
+  batch_size: 84
+  num_workers: 4
+
+model:
+  # Encoder (ResNet5)
+  dobs: 1           # Input channels (grayscale)
+  henc: 32          # Hidden dimension in encoder
+  dstc: 16          # Output representation dimension
+
+  # Predictor (ResUNet)
+  hpre: 32          # Hidden dimension in predictor
+
+  # Training
+  steps: 2          # Number of prediction steps during training
+
+loss:
+  type: bcs-euler-scalefree  # Regularizer type:
+                   #   vcreg          -- variance-covariance regularization
+                   #   bcs            -- BCS/SIGReg with original complex ECF
+                   #   bcs-euler-scalefree -- BCS/SIGReg with real-valued Euler ECF (scale-free Euler ECF)
+  # VCReg-specific (used when type: vcreg)
+  # cov_coeff: 100.0  # Covariance loss weight
+  # std_coeff: 10.0   # Standard deviation loss weight
+  # BCS/SIGReg-specific (used when type: bcs*)
+  num_slices: 32  # Number of random 1-D projections
+  lmbd: 10       # BCS loss weight
+  # Projector multipliers (multiplied with model.dstc)
+  proj_hidden_mult: 4
+  proj_out_mult: 4
+
+optim:
+  epochs: 6
+  lr: 1.0e-3
+
+logging:
+  log_wandb: true
+  wandb_group:        # Set to group runs (e.g., for seed averaging)
+  save_every: 2      # Save checkpoint every N epochs
+  diagnostics_every_epochs: 2               # canonical diagnostics cadence; null inherits save_every
+  fast_diagnostics_every_epochs: 1          # optional fast diagnostics epoch cadence
+  fast_diagnostics_every_steps:             # optional fast diagnostics step cadence
+  log_tensor_shapes: true
+  projector_force_runtime_shapes: false
+  tqdm_silent: false  # Disable tqdm progress bars
+  diagnostics:
+    enabled: true                            # values: true|false; master switch for diagnostics persistence
+    upload_artifacts: true                   # values: true|false; upload machine-readable diagnostics artifacts to wandb
+    artifact_flush_interval_sec: 3.0         # recommended interval: [1.0, 10.0]; uploader queue polling period
+    full_diagnostics_mode: full_val          # values: full_val|val_subset|train_subset; canonical diagnostics probe mode
+    fast_diagnostics_mode: val_subset        # values: val_subset|train_subset|full_val; fast diagnostics probe mode
+    val_subset_num_batches: 4                # recommended interval: [1, 16]; batches for val_subset diagnostics
+    train_subset_num_batches: 2              # recommended interval: [1, 8]; batches for train_subset diagnostics
+  geometry_viz:
+    enabled: true            # values: true|false; turns all geometry plots on/off
+    num_samples: 12           # recommended interval: [4, 16]; sampled videos for multi-trajectory panels
+    tsne_method: umap         # values: umap|tsne; umap preferred, tsne fallback
+    activation_layer: null    # values: null|"<dot.path>"; null auto-detects final spatial encoder layer
+    stage_label: encoder_rollout  # values: any string; displayed in plot titles
+    wandb_log_geometry: true   # values: true|false; log geometry figures to wandb in addition to disk
+    temporal_self_similarity_num_samples: 2  # recommended interval: [1, 4]; number of videos shown in Vis 2
+    temporal_self_similarity_feature_mode: spatialflat  # values: spatialflat|avgpool; spatialflat is more motion-sensitive
+    temporal_self_similarity_distance: euclidean  # values: euclidean|cosine; euclidean avoids cosine saturation on near-static directions
+    temporal_self_similarity_pca_fixed_k: 3  # recommended interval: [2, 16]; Vis 2.1 fixed PCA components
+    temporal_self_similarity_pca_var_ratio: 0.95  # recommended interval: [0.85, 0.99]; Vis 2.2 target explained variance
+    temporal_self_similarity_pca_max_k: 64  # recommended interval: [16, 128]; cap for PCA dimensionality/perf
+    temporal_self_similarity_center_time: true  # values: true|false; subtract temporal mean before PCA/distances
+    include_epoch_in_title: true   # values: true|false; append epoch to figure titles
+    include_epoch_in_filename: true  # values: true|false; write *_epoch_XXXX.png filenames
+    spatial_tsne_max_points: 10000  # recommended interval: [5000, 30000]; cap points for UMAP/t-SNE speed
+    covariance_source_mode: encoder+projector_all_linear_layers  # values: encoder|projector_output|projector_all_linear_layers|encoder+projector_output|encoder+projector_all_linear_layers
+    covariance_log_scalars: true    # values: true|false; log covariance diagnostics as wandb scalar curves
+    evolution_fps: 2          # recommended interval: [1, 8]; fps for end-of-training timelapse mp4
+    long_sequence:
+      enabled: true           # values: true|false; activate long-sequence controls
+      time_subsample_mode: uniform  # values: uniform|windowed; default keeps global coverage
+      window_size: 96         # recommended interval: [48, 192]; used when mode=windowed
+      window_stride: 48       # recommended interval: [16, 96]; used when mode=windowed
+      max_frames_for_plots: 96  # recommended interval: [64, 192]; cap for trajectory/self-sim/phase plots
+      max_frames_for_embedding: 96  # recommended interval: [32, 128]; cap temporal frames for occupancy embedding
+      max_frames_activation_overlay: 24  # recommended interval: [12, 48]; cap storyboard frames
+    plots:
+      latent_trajectories_avgpool: true      # values: true|false; Vis 1.1
+      latent_trajectories_spatialflat: true  # values: true|false; Vis 1.2
+      temporal_self_similarity: true         # values: true|false; Vis 2
+      occupancy_spatial_embedding: true      # values: true|false; Vis 3 (GT-dependent)
+      cov_eig_spectrum: true                 # values: true|false; Vis 4
+      activation_overlays: true              # values: true|false; Vis 5
+      phase_space_portrait: true             # values: true|false; Vis 6
+training:
+  use_amp: true       # Use automatic mixed precision
+  dtype: bfloat16     # float16, bfloat16, or float32
+
+# --- Parameters used when running with --full-sweep
+# By default, only the parameters specified above are used
+sweep:
+  # Sweep grid for video JEPA hyperparameter search
+  param_grid:
+    data.batch_size: [32, 64]
+    optim.lr: [0.001, 0.0001, 0.0005]
+    loss.std_coeff: [1, 10, 100, 200]
+    loss.cov_coeff: [1, 10, 100, 200]
+    meta.seed: [1, 1000, 10000]

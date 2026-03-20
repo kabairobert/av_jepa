@@ -3,7 +3,7 @@
 #SBATCH --partition=gpu_mig
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=6
+#SBATCH --cpus-per-task=9
 #SBATCH --gpus=1
 #SBATCH --mem=60G
 #SBATCH --time=01:20:00
