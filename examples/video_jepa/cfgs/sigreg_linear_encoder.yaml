@@ -44,7 +44,7 @@ loss:
   proj_out_mult: 4
 
 optim:
-  epochs: 50
+  epochs: 25
   lr: 1.0e-3
 
 logging:

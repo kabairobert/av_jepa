@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=18
 #SBATCH --gpus=1
 #SBATCH --mem=120G
-#SBATCH --time=00:50:00
+#SBATCH --time=08:00:00
 #SBATCH --output=%x_%j.out
 #SBATCH --error=%x_%j.err
 
@@ -16,8 +16,11 @@ set -e  # Exit immediately on any error
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # Load required modules
-module load 2023
-module load Python/3.11.3-GCCcore-12.3.0
+# module load 2023
+# module load Python/3.11.3-GCCcore-12.3.0
+module purge
+module load 2024
+module load Python/3.12.3-GCCcore-13.3.0
 
 # Source secrets (API keys etc.)
 source ~/.secrets
@@ -38,8 +41,23 @@ cd ~/github/eb_jepa_private
 export PATH="$HOME/.cargo/bin:$PATH"
 
 # Run training
-echo "Starting training..."
+echo "Starting training 1..."
 uv run python -m examples.video_jepa.main \
-    --fname examples/video_jepa/cfgs/sigreg-mig-quicktest.yaml
+    --fname examples/video_jepa/cfgs/sigreg_linear_encoder.yaml
+
+# Run training
+echo "Starting training 2..."
+uv run python -m examples.video_jepa.main \
+    --fname examples/video_jepa/cfgs/sigreg_linear_projector.yaml
+
+# Run training
+echo "Starting training 3..."
+uv run python -m examples.video_jepa.main \
+    --fname examples/video_jepa/cfgs/sigreg_mlp_encoder.yaml
+
+# Run training
+echo "Starting training 4..."
+uv run python -m examples.video_jepa.main \
+    --fname examples/video_jepa/cfgs/sigreg_mlp_projector.yaml
 
 echo "Training complete."
