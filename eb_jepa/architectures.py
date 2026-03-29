@@ -204,6 +204,42 @@ class ResUNet(TemporalBatchMixin, nn.Module):
         return out
 
 
+class MLPNet(nn.Module):
+    """Per-location MLP predictor over [B, C, T, H, W] tensors."""
+
+    def __init__(self, in_d: int, h_d: int, out_d: int):
+        super().__init__()
+        self.is_rnn = False
+        self.net = nn.Sequential(
+            nn.Linear(in_d, h_d),
+            nn.ReLU(inplace=True),
+            nn.Linear(h_d, out_d),
+        )
+
+    def forward(self, x):
+        b, c, t, h, w = x.shape
+        x_flat = x.permute(0, 2, 3, 4, 1).reshape(-1, c)
+        out_flat = self.net(x_flat)
+        out = out_flat.view(b, t, h, w, -1).permute(0, 4, 1, 2, 3)
+        return out
+
+
+class LinearNet(nn.Module):
+    """Per-location linear predictor over [B, C, T, H, W] tensors."""
+
+    def __init__(self, in_d: int, out_d: int):
+        super().__init__()
+        self.is_rnn = False
+        self.linear = nn.Linear(in_d, out_d)
+
+    def forward(self, x):
+        b, c, t, h, w = x.shape
+        x_flat = x.permute(0, 2, 3, 4, 1).reshape(-1, c)
+        out_flat = self.linear(x_flat)
+        out = out_flat.view(b, t, h, w, -1).permute(0, 4, 1, 2, 3)
+        return out
+
+
 class Projector(nn.Module):
     """MLP projector built from a spec string like '256-512-128'."""
 

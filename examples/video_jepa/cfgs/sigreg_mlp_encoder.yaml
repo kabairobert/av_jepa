@@ -20,11 +20,11 @@ model:
   henc: 32          # Hidden dimension in encoder
   dstc: 16          # Output representation dimension
 
-  # Predictor
+  # Predictor (ResUNet)
   hpre: 32          # Hidden dimension in predictor
-  predictor_type: resunet      # values: resunet|mlpnet|linearnet
+  predictor_type: mlpnet       # values: resunet|mlpnet|linearnet
   predictor_space: encoder     # values: encoder|projector
-  mlp_hidden_dim: 32           # hidden width for MLPNet (ignored otherwise)
+  mlp_hidden_dim: 32           # hidden width for MLPNet
 
   # Training
   steps: 2          # Number of prediction steps during training

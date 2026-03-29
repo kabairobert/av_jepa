@@ -3,6 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+# Centralized loss-family labels used across model building and diagnostics.
+BCS_LOSS_TYPES = ("bcs", "bcs-euler-scalefree")
+
+
 def sq_loss(x, y, reduction="mean"):
     """Simple square loss (MSE)."""
     return nn.functional.mse_loss(x, y, reduction=reduction)

@@ -16,7 +16,7 @@ from eb_jepa.architectures import Projector, ResNet5, ResUNet, StateOnlyPredicto
 from eb_jepa.datasets.moving_mnist import MovingMNISTDet
 from eb_jepa.jepa import JEPA
 from eb_jepa.losses import SquareLossSeq, VCLoss, VideoJEPA_BCS, VideoJEPA_BCS_Euler_Scaleinvariant
-from eb_jepa.training_utils import load_config, setup_seed
+from eb_jepa.training_utils import load_config, resolve_projector_dims_from_cfg, setup_seed
 from examples.video_jepa.vis import assemble_geometry_viz_videos, geometry_visualization_loop
 
 
@@ -49,15 +49,7 @@ def _build_jepa_from_cfg(cfg, device):
     predictor = StateOnlyPredictor(predictor_model, context_length=2)
 
     loss_type = cfg.loss.get("type", "vcreg")
-    if loss_type in ("bcs", "bcs-euler-scalefree"):
-        default_h_mult, default_o_mult = 4, 1
-    else:
-        default_h_mult, default_o_mult = 4, 4
-
-    h_mult = cfg.loss.get("proj_hidden_mult", default_h_mult)
-    o_mult = cfg.loss.get("proj_out_mult", default_o_mult)
-    proj_hidden = cfg.model.dstc * h_mult
-    proj_out = cfg.model.dstc * o_mult
+    proj_hidden, proj_out = resolve_projector_dims_from_cfg(cfg, loss_type)
     projector = Projector(f"{cfg.model.dstc}-{proj_hidden}-{proj_out}")
 
     if loss_type == "bcs":

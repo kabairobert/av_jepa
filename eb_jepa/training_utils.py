@@ -15,6 +15,54 @@ from eb_jepa.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _cfg_get(container: Any, key: str, default: Any = None) -> Any:
+    """Read a key from DictConfig/dict/object-like containers with fallback."""
+    try:
+        return container.get(key, default)
+    except Exception:
+        return getattr(container, key, default)
+
+
+def get_projector_multiplier_defaults(loss_type: str) -> tuple[int, int]:
+    """Return default projector multipliers for the given loss family.
+
+    Current policy intentionally uses the same defaults for all loss types:
+    `proj_hidden_mult=4`, `proj_out_mult=4`.
+
+    The `loss_type` argument is kept for API stability and future policy
+    branching by loss family.
+    """
+    _ = loss_type
+    return 4, 4
+
+
+def resolve_projector_dims_from_cfg(cfg: Any, loss_type: str) -> tuple[int, int]:
+    """Resolve projector hidden/output dims from config with centralized defaults.
+
+    Priority order:
+    1. Explicit model dims (`model.proj_hidden_dim`, `model.proj_output_dim`)
+    2. `dstc * loss.proj_hidden_mult` and `dstc * loss.proj_out_mult`
+    3. Centralized multiplier defaults (via `get_projector_multiplier_defaults`)
+    """
+    model_cfg = cfg.model
+    loss_cfg = cfg.loss
+
+    dstc = _cfg_get(model_cfg, "dstc")
+    default_h_mult, default_o_mult = get_projector_multiplier_defaults(loss_type)
+
+    proj_hidden = _cfg_get(model_cfg, "proj_hidden_dim", None)
+    proj_out = _cfg_get(model_cfg, "proj_output_dim", None)
+
+    if proj_hidden is None:
+        h_mult = _cfg_get(loss_cfg, "proj_hidden_mult", default_h_mult)
+        proj_hidden = dstc * h_mult
+    if proj_out is None:
+        o_mult = _cfg_get(loss_cfg, "proj_out_mult", default_o_mult)
+        proj_out = dstc * o_mult
+
+    return int(proj_hidden), int(proj_out)
+
+
 def setup_device(device: str = "auto") -> torch.device:
     """Set up the compute device. Options: 'auto', 'cuda', or 'cpu'."""
     if device == "auto":
@@ -425,11 +473,7 @@ def get_exp_name(example_name: str, cfg) -> str:
                 loss = "vcreg"
         parts.append(loss)
 
-        # Projector dims: always include proj{HxO}; use 0x0 when absent
-        ph = getattr(cfg.model, "proj_hidden_dim", None)
-        po = getattr(cfg.model, "proj_output_dim", None)
-
-        # Determine loss type defaults for multipliers
+        # Projector dims: always include proj{HxO}; use shared centralized policy.
         try:
             loss_type = cfg.loss.get("type", "vcreg")
         except Exception:
@@ -438,25 +482,10 @@ def get_exp_name(example_name: str, cfg) -> str:
             except Exception:
                 loss_type = "vcreg"
 
-        _BCS_TYPES = ("bcs", "bcs-euler-scalefree")
-        if loss_type in _BCS_TYPES:
-            default_h_mult = 4
-            default_o_mult = 1
-        else:
-            default_h_mult = 4
-            default_o_mult = 4
-
-        # fallback to dstc-derived dims for older configs; allow multipliers under cfg.loss
-        if ph is None and hasattr(cfg.model, "dstc"):
-            h_mult = cfg.loss.get("proj_hidden_mult", default_h_mult)
-            ph = cfg.model.dstc * h_mult
-        if po is None and hasattr(cfg.model, "dstc"):
-            o_mult = cfg.loss.get("proj_out_mult", default_o_mult)
-            po = cfg.model.dstc * o_mult
-        if ph is None:
-            ph = 0
-        if po is None:
-            po = 0
+        try:
+            ph, po = resolve_projector_dims_from_cfg(cfg, loss_type)
+        except Exception:
+            ph, po = 0, 0
         parts.append(f"proj{_fmt_num(ph)}x{_fmt_num(po)}")
 
         # Loss-specific params

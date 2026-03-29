@@ -35,13 +35,32 @@ class JEPAbase(nn.Module):
 class JEPA(JEPAbase):
     """Trainable JEPA with prediction loss and anti-collapse regularizer."""
 
-    def __init__(self, encoder, aencoder, predictor, regularizer, predcost):
+    def __init__(
+        self,
+        encoder,
+        aencoder,
+        predictor,
+        regularizer,
+        predcost,
+        predictor_space="encoder",
+        predictor_proj=None,
+    ):
         """Initialize JEPA with regularizer and prediction cost in addition to base components."""
         super().__init__(encoder, aencoder, predictor)
         self.regularizer = regularizer
         self.predcost = predcost
+        self.predictor_space = predictor_space
+        self.predictor_proj = nn.Identity() if predictor_proj is None else predictor_proj
         self.ploss = 0
         self.rloss = 0
+
+    def _project_state_for_predictor(self, state):
+        """Project [B, C, T, H, W] state into predictor/projector feature space."""
+        b, c, t, h, w = state.shape
+        state_flat = state.permute(0, 2, 3, 4, 1).reshape(-1, c)
+        state_proj = self.predictor_proj(state_flat)
+        c_proj = state_proj.shape[-1]
+        return state_proj.view(b, t, h, w, c_proj).permute(0, 4, 1, 2, 3)
 
     @torch.no_grad()
     def infer(self, observations, actions):
@@ -120,6 +139,10 @@ class JEPA(JEPAbase):
               (total_loss, reg_loss, reg_loss_unweighted, reg_loss_dict, pred_loss)
         """
         state = self.encoder(observations)
+        if self.predictor_space == "projector":
+            state_for_predictor = self._project_state_for_predictor(state)
+        else:
+            state_for_predictor = state
         context_length = getattr(self.predictor, "context_length", 0)
 
         # Compute regularization loss if needed
@@ -140,7 +163,7 @@ class JEPA(JEPAbase):
 
         # Parallel mode: process all timesteps at once, refeed GT context
         if unroll_mode == "parallel":
-            predicted_states = state                                                            # my: dimensions [B, D, T, H', W']
+            predicted_states = state_for_predictor                                              # my: dimensions [B, D, T, H', W']
             for _ in range(nsteps):                                                             # my: loop over prediction steps. at each step, we predict all timesteps in parallel, but only keep up to T-1 since we predict t+1 from t. we refeed GT context on the left at each step.
                 # Predict all timesteps, discard last (no target for it)
                 predicted_states = self.predictor(predicted_states, actions_encoded)[           # my: new prediction for all timesteps, but we only keep up to T-1 since we predict t+1 from t
@@ -151,10 +174,10 @@ class JEPA(JEPAbase):
                     all_steps.append(predicted_states)                                          # my: all_steps[0] corresponds to step 1 predictions, all_steps[1] to step 2 predictions, etc.
                 # Refeed ground truth context on the left
                 predicted_states = torch.cat(                                                   # my: re-anchor: GT frames 0,1 on left, predictions on right → back to [B, D, T, H, W]
-                    (state[:, :, :context_length], predicted_states), dim=2                     # my: context_length frames from GT, then predictions for the rest
+                    (state_for_predictor[:, :, :context_length], predicted_states), dim=2       # my: context_length frames from GT, then predictions for the rest
                 )
                 if compute_loss:
-                    ploss += self.predcost(state, predicted_states) / nsteps
+                    ploss += self.predcost(state_for_predictor, predicted_states) / nsteps
 
         # Autoregressive mode: step-by-step with sliding window
         # Note: RNN predictors (is_rnn=True) are a special case with ctxt_window_time=1
@@ -166,7 +189,7 @@ class JEPA(JEPAbase):
             # For RNN predictors, force ctxt_window_time=1
             effective_ctxt_window = 1 if self.single_unroll else ctxt_window_time
 
-            predicted_states = state[:, :, :effective_ctxt_window]
+            predicted_states = state_for_predictor[:, :, :effective_ctxt_window]
             for i in range(nsteps):
                 # Take last ctxt_window_time states
                 context_states = predicted_states[:, :, -effective_ctxt_window:]
@@ -186,7 +209,8 @@ class JEPA(JEPAbase):
                     all_steps.append(predicted_states.clone())
                 if compute_loss:
                     ploss += (
-                        self.predcost(pred_step, state[:, :, i + 1 : i + 2]) / nsteps
+                        self.predcost(pred_step, state_for_predictor[:, :, i + 1 : i + 2])
+                        / nsteps
                     )
         else:
             raise ValueError(f"Unknown unroll_mode: {unroll_mode}")
