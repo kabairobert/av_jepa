@@ -231,4 +231,11 @@ arxiv_tmp/
 CLAUDE.md
 papers/JEPA_thesis_core/
 papers/JEPA_thesis_maybe/
-papers/literature.txt
+papers/bibliography.txt
+papers/literature-prompts.md
+papers/
+papers
+.github/instructions/gdrive-readonly.instructions.md
+eb_jepa_private_gdrive.code-workspace
+uv uninstalled.txt
+gdrive
