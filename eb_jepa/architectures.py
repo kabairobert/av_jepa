@@ -218,9 +218,9 @@ class MLPNet(nn.Module):
 
     def forward(self, x):
         b, c, t, h, w = x.shape
-        x_flat = x.permute(0, 2, 3, 4, 1).reshape(-1, c)
+        x_flat, (b, c, t, h, w) = flatten_spatio_temporal(x)
         out_flat = self.net(x_flat)
-        out = out_flat.view(b, t, h, w, -1).permute(0, 4, 1, 2, 3)
+        out = unflatten_spatio_temporal(out_flat, b, t, h, w)
         return out
 
 
@@ -234,9 +234,9 @@ class LinearNet(nn.Module):
 
     def forward(self, x):
         b, c, t, h, w = x.shape
-        x_flat = x.permute(0, 2, 3, 4, 1).reshape(-1, c)
+        x_flat, (b, c, t, h, w) = flatten_spatio_temporal(x)
         out_flat = self.linear(x_flat)
-        out = out_flat.view(b, t, h, w, -1).permute(0, 4, 1, 2, 3)
+        out = unflatten_spatio_temporal(out_flat, b, t, h, w)
         return out
 
 

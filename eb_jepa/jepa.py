@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 
 from eb_jepa.logging import get_logger
+from eb_jepa.utils import flatten_spatio_temporal, unflatten_spatio_temporal
 
 logging = get_logger(__name__)
 
@@ -56,11 +57,25 @@ class JEPA(JEPAbase):
 
     def _project_state_for_predictor(self, state):
         """Project [B, C, T, H, W] state into predictor/projector feature space."""
-        b, c, t, h, w = state.shape
-        state_flat = state.permute(0, 2, 3, 4, 1).reshape(-1, c)
-        state_proj = self.predictor_proj(state_flat)
-        c_proj = state_proj.shape[-1]
-        return state_proj.view(b, t, h, w, c_proj).permute(0, 4, 1, 2, 3)
+        x_flat, (b, c, t, h, w) = flatten_spatio_temporal(state)
+        state_proj = self.predictor_proj(x_flat)
+        return unflatten_spatio_temporal(state_proj, b, t, h, w)
+
+    def get_features(self, observations):
+        """Return a feature dictionary with encoder and projector-space states."""
+        encoder_state = self.encoder(observations)
+        return {
+            "encoder": encoder_state,
+            "projector": self._project_state_for_predictor(encoder_state),
+        }
+
+    def route_state(self, state, source):
+        """Route an encoder-space state tensor to the requested source space."""
+        if source == "encoder":
+            return state
+        if source == "projector":
+            return self._project_state_for_predictor(state)
+        raise ValueError(f"Unknown feature source '{source}'. Expected: encoder, projector.")
 
     @torch.no_grad()
     def infer(self, observations, actions):
@@ -139,10 +154,7 @@ class JEPA(JEPAbase):
               (total_loss, reg_loss, reg_loss_unweighted, reg_loss_dict, pred_loss)
         """
         state = self.encoder(observations)
-        if self.predictor_space == "projector":
-            state_for_predictor = self._project_state_for_predictor(state)
-        else:
-            state_for_predictor = state
+        state_for_predictor = self.route_state(state, self.predictor_space)
         context_length = getattr(self.predictor, "context_length", 0)
 
         # Compute regularization loss if needed
@@ -232,30 +244,119 @@ class JEPA(JEPAbase):
 class JEPAProbe(nn.Module):
     """JEPA with a trainable prediction head. The JEPA encoder is kept fixed."""
 
-    def __init__(self, jepa, head, hcost):
+    def __init__(self, jepa, head, hcost, feature_source="encoder"):
         """Initialize with a frozen JEPA, prediction head, and head loss function."""
         super().__init__()
         self.jepa = jepa
         self.head = head
         self.hcost = hcost
+        self.feature_source = feature_source
+
+    def head_parameters(self):
+        """Return parameters of the trainable probe head only."""
+        return self.head.parameters()
+
+    def _align_embeddings_to_probe_source(self, embeddings, embedding_source):
+        """Align externally provided embeddings to this probe's source space."""
+        source = embedding_source or self.feature_source
+        if source == self.feature_source:
+            return embeddings
+        if source == "encoder" and self.feature_source == "projector":
+            return self.jepa.route_state(embeddings, "projector")
+        raise ValueError(
+            f"Cannot map embeddings from source '{source}' to probe source "
+            f"'{self.feature_source}'."
+        )
 
     @torch.no_grad()
     def infer(self, observations):
         """Encode observations through JEPA and apply the prediction head."""
-        state = self.jepa.encode(observations)
+        state = self.jepa.get_features(observations)[self.feature_source]
         return self.head(state)
 
     @torch.no_grad()
-    def apply_head(self, embeddings):
+    def apply_head(self, embeddings, embedding_source=None):
         """
         Decode embeddings using the head.
         This is useful for generating predictions from an unrolling of the predictor, for example.
         """
-        return self.head(embeddings)
+        aligned = self._align_embeddings_to_probe_source(embeddings, embedding_source)
+        return self.head(aligned)
+
+    @torch.no_grad()
+    def score(self, preds, targets, pred_source=None):
+        """Score predicted latent trajectories against targets using the detection head."""
+        aligned_preds = [
+            self._align_embeddings_to_probe_source(pred, pred_source)
+            for pred in preds
+        ]
+        return self.head.score(aligned_preds, targets)
 
     def forward(self, observations, targets):
         """Forward pass for training the head (JEPA encoder gradients are detached)."""
         with torch.no_grad():
-            state = self.jepa.encode(observations)
+            state = self.jepa.get_features(observations)[self.feature_source]
         output = self.head(state.detach())
         return self.hcost(output, targets)
+
+
+class MultiSourceJEPAProbe(nn.Module):
+    """Container that trains multiple JEPAProbe sources and exposes one active source."""
+
+    def __init__(self, probes, active_source):
+        super().__init__()
+        if not probes:
+            raise ValueError("MultiSourceJEPAProbe requires at least one probe.")
+        self.probes = nn.ModuleDict(probes)
+        self.set_active_source(active_source)
+
+    def set_active_source(self, source):
+        if source not in self.probes:
+            raise ValueError(
+                f"Unknown active probe source '{source}'. Available: {list(self.probes.keys())}"
+            )
+        self.active_source = source
+
+    @property
+    def head(self):
+        return self.probes[self.active_source].head
+
+    def source_names(self):
+        return tuple(self.probes.keys())
+
+    def head_parameters(self):
+        for probe in self.probes.values():
+            yield from probe.head_parameters()
+
+    def infer(self, observations):
+        return self.probes[self.active_source].infer(observations)
+
+    def apply_head(self, embeddings, embedding_source=None):
+        return self.probes[self.active_source].apply_head(
+            embeddings, embedding_source=embedding_source
+        )
+
+    @torch.no_grad()
+    def score(self, preds, targets, pred_source=None):
+        return self.probes[self.active_source].score(
+            preds, targets, pred_source=pred_source
+        )
+
+    @torch.no_grad()
+    def score_by_source(self, preds, targets, pred_source=None):
+        return {
+            source: probe.score(preds, targets, pred_source=pred_source)
+            for source, probe in self.probes.items()
+        }
+
+    def forward_with_source_losses(self, observations, targets):
+        losses = {
+            source: probe(observations, targets)
+            for source, probe in self.probes.items()
+        }
+        mean_loss = sum(losses.values()) / len(losses)
+        return mean_loss, losses
+
+    def forward(self, observations, targets):
+        mean_loss, _ = self.forward_with_source_losses(observations, targets)
+        return mean_loss

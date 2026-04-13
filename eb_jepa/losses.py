@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from eb_jepa.utils import flatten_spatio_temporal, unflatten_spatio_temporal
 
 
 # Centralized loss-family labels used across model building and diagnostics.
@@ -243,13 +244,11 @@ class VC_IDM_Sim_Regularizer(torch.nn.Module):
         # divergent gradient paths for x_unprojected and x_projected
         x_unprojected = x.permute(2, 0, 1, 3, 4).reshape(t, b, -1)  # [T, B, C*H*W]
 
-        x_flat = x.permute(0, 2, 3, 4, 1).reshape(-1, c)  # [B*T*H*W, C]
+        x_flat, (b, c, t, h, w) = flatten_spatio_temporal(x)
         x_proj = self.projector(x_flat)  # [B*T*H*W, C_out]
         c_out = x_proj.shape[-1]
-        x_projected = x_proj.view(b, t, h, w, c_out)  # [B, T, H, W, C_out]
-        x_projected_reshaped = x_projected.permute(2, 0, 1, 3, 4).reshape(
-            t, b, -1
-        )  # [T, B, C_out*H*W]
+        x_projected = unflatten_spatio_temporal(x_proj, b, t, h, w)  # [B, C_out, T, H, W]
+        x_projected_reshaped = x_projected.permute(2, 0, 1, 3, 4).reshape(t, b, -1)
 
         # SIM_T LOSS
         if self.sim_t_after_proj:

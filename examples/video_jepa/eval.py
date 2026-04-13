@@ -176,6 +176,7 @@ def visualize_videos(
     with autocast(x.device.type, dtype=dtype, enabled=use_amp):
         if precomputed_bundle is None:
             x_jepa = jepa.encoder(x)
+            rollout_base = jepa.route_state(x_jepa, jepa.predictor_space)
             T = x.shape[2]
             preds, _ = jepa.unroll(
                 x,
@@ -185,19 +186,28 @@ def visualize_videos(
                 compute_loss=False,
                 return_all_steps=True,
             )
-            rollout = _build_pred_rollout(x_jepa, preds, T)
+            rollout = _build_pred_rollout(rollout_base, preds, T)
         else:
-            x_jepa = precomputed_bundle["gt_latent"]
+            rollout_base = precomputed_bundle["gt_latent"]
             preds = precomputed_bundle["pred_steps"]
             rollout = precomputed_bundle["pred_rollout"]
 
-        one_step_pred = x_jepa[:, :, 1:].clone()
+        one_step_pred = rollout_base[:, :, 1:].clone()
         one_step_pred[:, :, 1:] = preds[0]
-        one_step_reconstruction = pixel_decoder.head(one_step_pred)
+        one_step_reconstruction = pixel_decoder.apply_head(
+            one_step_pred,
+            embedding_source=jepa.predictor_space,
+        )
 
-        rollout_reconstruction = pixel_decoder.head(rollout)
+        rollout_reconstruction = pixel_decoder.apply_head(
+            rollout,
+            embedding_source=jepa.predictor_space,
+        )
 
-        loc_prediction = detection_head.head(rollout)
+        loc_prediction = detection_head.apply_head(
+            rollout,
+            embedding_source=jepa.predictor_space,
+        )
         loc_prediction = F.interpolate(
             loc_prediction, (x.shape[-2], x.shape[-1]), mode="nearest"
         )
@@ -263,6 +273,7 @@ def validation_loop(
     metrics_prefix="",
     emit_media=True,
     persist_diagnostics=False,
+    probe_source="encoder",
 ):
 
     # Set modules to eval mode
@@ -284,13 +295,31 @@ def validation_loop(
         loc_map = batch["digit_location"]
 
         with autocast(device.type, dtype=dtype, enabled=use_amp):
-            recon_loss = pixel_decoder(x, x)
-            det_loss = detection_head(x, loc_map)
+            logs = {}
+            if (
+                probe_source == "both"
+                and hasattr(pixel_decoder, "forward_with_source_losses")
+                and hasattr(detection_head, "forward_with_source_losses")
+            ):
+                recon_loss, recon_losses_by_source = pixel_decoder.forward_with_source_losses(
+                    x, x
+                )
+                det_loss, det_losses_by_source = detection_head.forward_with_source_losses(
+                    x, loc_map
+                )
+                for source in recon_losses_by_source:
+                    logs[f"val/recon_loss/{source}"] = float(
+                        recon_losses_by_source[source].item()
+                    )
+                    logs[f"val/det_loss/{source}"] = float(
+                        det_losses_by_source[source].item()
+                    )
+            else:
+                recon_loss = pixel_decoder(x, x)
+                det_loss = detection_head(x, loc_map)
 
-            logs = {
-                "val/recon_loss": float(recon_loss.item()),
-                "val/det_loss": float(det_loss.item()),
-            }
+            logs["val/recon_loss"] = float(recon_loss.item())
+            logs["val/det_loss"] = float(det_loss.item())
             for k, v in logs.items():
                 metrics[k].append(v)
 
@@ -303,9 +332,52 @@ def validation_loop(
                 compute_loss=False,
                 return_all_steps=True,
             )
-            scores = detection_head.head.score(preds, loc_map[:, 2:])
+            scores = []
+            if (
+                probe_source == "both"
+                and hasattr(detection_head, "score_by_source")
+            ):
+                score_by_source = {}
+                for source in detection_head.source_names():
+                    probe = detection_head.probes[source]
+                    try:
+                        score_by_source[source] = probe.score(
+                            preds,
+                            loc_map[:, 2:],
+                            pred_source=jepa.predictor_space,
+                        )
+                    except ValueError as exc:
+                        logger.warning(
+                            "Skipping AP metrics for source '%s' due to incompatible probe/predictor spaces: %s",
+                            source,
+                            exc,
+                        )
+                        score_by_source[source] = []
+
+                available_score_lists = [s for s in score_by_source.values() if len(s) > 0]
+                if available_score_lists:
+                    n_ap_steps = max(len(s) for s in available_score_lists)
+                    for s_idx in range(n_ap_steps):
+                        per_source_vals = []
+                        for source, source_scores in score_by_source.items():
+                            if s_idx < len(source_scores):
+                                val = float(source_scores[s_idx])
+                                per_source_vals.append(val)
+                                metrics[f"val/ap/{source}/{s_idx}"].append(val)
+                        if per_source_vals:
+                            metrics[f"AP_{s_idx}"].append(float(np.mean(per_source_vals)))
+            else:
+                try:
+                    scores = detection_head.score(
+                        preds,
+                        loc_map[:, 2:],
+                        pred_source=jepa.predictor_space,
+                    )
+                except ValueError as exc:
+                    logger.warning("Skipping AP metrics due to incompatible probe/predictor spaces: %s", exc)
+                    scores = []
             gt_latent = None
-            if geometry_vis_enabled or covariance_log_scalars:
+            if geometry_vis_enabled or covariance_log_scalars or emit_media:
                 gt_latent = jepa.encoder(x)
 
         if gt_latent is not None:
@@ -321,7 +393,8 @@ def validation_loop(
 
         last_batch = batch
         if gt_latent is not None:
-            last_bundle = _build_rollout_bundle(batch, gt_latent, preds)
+            rollout_base = jepa.route_state(gt_latent, jepa.predictor_space)
+            last_bundle = _build_rollout_bundle(batch, rollout_base, preds)
             
         for s, score in enumerate(scores):
             metrics[f"AP_{s}"].append(float(score))
@@ -345,22 +418,25 @@ def validation_loop(
         last_bundle = None
 
     if emit_media:
-        videos = visualize_videos(
-            sampled_batch if sampled_batch is not None else batch,
-            jepa,
-            pixel_decoder,
-            detection_head,
-            num_samples=min(16, (sampled_batch if sampled_batch is not None else batch)["video"].shape[0]),
-            use_amp=use_amp,
-            dtype=dtype,
-            precomputed_bundle=sampled_bundle,
-        )
-        logs["viz"] = [wandb.Video(video, fps=4, format="mp4") for video in videos]
-        media_refs["viz"] = {
-            "wandb_key": "viz",
-            "kind": "video_batch",
-            "num_samples": int(len(videos)),
-        }
+        try:
+            videos = visualize_videos(
+                sampled_batch if sampled_batch is not None else batch,
+                jepa,
+                pixel_decoder,
+                detection_head,
+                num_samples=min(16, (sampled_batch if sampled_batch is not None else batch)["video"].shape[0]),
+                use_amp=use_amp,
+                dtype=dtype,
+                precomputed_bundle=sampled_bundle,
+            )
+            logs["viz"] = [wandb.Video(video, fps=4, format="mp4") for video in videos]
+            media_refs["viz"] = {
+                "wandb_key": "viz",
+                "kind": "video_batch",
+                "num_samples": int(len(videos)),
+            }
+        except ValueError as exc:
+            logger.warning("Skipping rollout visualization due to incompatible probe/predictor spaces: %s", exc)
 
     covariance_diagnostics = finalize_covariance_diagnostics(covariance_trackers)
     if covariance_log_scalars:
@@ -628,6 +704,10 @@ def run(
     jepa = built["jepa"]
     pixel_decoder = built["pixel_decoder"]
     detection_head = built["detection_head"]
+    if hasattr(pixel_decoder, "set_active_source"):
+        pixel_decoder.set_active_source(built.get("active_probe_source", "encoder"))
+    if hasattr(detection_head, "set_active_source"):
+        detection_head.set_active_source(built.get("active_probe_source", "encoder"))
 
     geometry_cfg = cfg_obj.logging.get("geometry_viz", {})
 
@@ -721,6 +801,7 @@ def run(
                 "probe_mode": "full_val",
             },
             persist_diagnostics=True,
+            probe_source=built.get("probe_source", cfg_obj.model.get("probe_source", "encoder")),
         )
 
         logs["eval/checkpoint_name"] = ckpt.name

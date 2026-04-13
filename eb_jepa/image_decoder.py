@@ -27,7 +27,7 @@ class ImageDecoder(TemporalBatchMixin, nn.Module):
         self.shift_factor = shift_factor
 
         self.net = nn.Sequential(
-            nn.Conv2d(hidden_dim, hidden_dim, 3, 1, 1),
+            nn.Conv2d(in_dim, hidden_dim, 3, 1, 1),
             nn.ReLU(),
             nn.Conv2d(hidden_dim, out_dim, 3, 1, 1),
         )

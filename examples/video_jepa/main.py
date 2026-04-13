@@ -333,6 +333,21 @@ def run(
     predictor = built["predictor"]
     projector = built["projector"]
     regularizer = built["regularizer"]
+    predictor_space = built.get("predictor_space", cfg.model.get("predictor_space", "encoder"))
+    probe_source = built.get("probe_source", cfg.model.get("probe_source", "encoder"))
+    active_probe_source = built.get("active_probe_source", "encoder")
+
+    if hasattr(pixel_decoder, "set_active_source"):
+        pixel_decoder.set_active_source(active_probe_source)
+    if hasattr(detection_head, "set_active_source"):
+        detection_head.set_active_source(active_probe_source)
+
+    logger.info(
+        "Probe routing: model.probe_source=%s, active_probe_source=%s, predictor_space=%s",
+        probe_source,
+        active_probe_source,
+        predictor_space,
+    )
 
     # Log model structure and parameters
     encoder_params = sum(p.numel() for p in encoder.parameters())
@@ -443,6 +458,7 @@ def run(
             metrics_prefix=metrics_prefix,
             emit_media=enable_geometry,
             persist_diagnostics=persist,
+            probe_source=probe_source,
         )
 
     # Set learning rates for different components
@@ -450,8 +466,8 @@ def run(
     optimizer = Adam(
         [
             {"params": jepa.parameters(), "lr": cfg.optim.lr},
-            {"params": pixel_decoder.head.parameters(), "lr": cfg.optim.lr / 10},
-            {"params": detection_head.head.parameters(), "lr": cfg.optim.lr},
+            {"params": pixel_decoder.head_parameters(), "lr": cfg.optim.lr / 10},
+            {"params": detection_head.head_parameters(), "lr": cfg.optim.lr},
         ]
     )
 
@@ -535,8 +551,28 @@ def run(
                     compute_loss=True,
                     return_all_steps=False,
                 )
-                recon_loss = pixel_decoder(x, x)
-                det_loss = detection_head(x, loc_map)
+                train_probe_logs = {}
+                if (
+                    probe_source == "both"
+                    and hasattr(pixel_decoder, "forward_with_source_losses")
+                    and hasattr(detection_head, "forward_with_source_losses")
+                ):
+                    recon_loss, recon_losses_by_source = pixel_decoder.forward_with_source_losses(
+                        x, x
+                    )
+                    det_loss, det_losses_by_source = detection_head.forward_with_source_losses(
+                        x, loc_map
+                    )
+                    for source in recon_losses_by_source:
+                        train_probe_logs[f"train/recon_loss/{source}"] = float(
+                            recon_losses_by_source[source].item()
+                        )
+                        train_probe_logs[f"train/det_loss/{source}"] = float(
+                            det_losses_by_source[source].item()
+                        )
+                else:
+                    recon_loss = pixel_decoder(x, x)
+                    det_loss = detection_head(x, loc_map)
                 total_loss = jepa_loss + recon_loss + det_loss
 
             scaler.scale(total_loss).backward()
@@ -700,6 +736,7 @@ def run(
                 "train/recon_loss": recon_loss.item(),
                 "train/det_loss": det_loss.item(),
             }
+            train_metrics.update(train_probe_logs)
             for k, v in regldict.items():
                 train_metrics[f"train/{k}"] = float(v)
 
