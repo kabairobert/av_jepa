@@ -84,6 +84,7 @@ logging:
     covariance_source_mode: encoder+projector_all_linear_layers  # values: encoder|projector_output|projector_all_linear_layers|encoder+projector_output|encoder+projector_all_linear_layers
     covariance_log_scalars: true             # values: true|false; log covariance diagnostics as wandb scalar curves
     evolution_fps: 2                         # recommended interval: [1, 8]; fps for end-of-training timelapse mp4
+    evolution_videos_enabled: false          # values: true|false; log geometry_viz/*_evolution videos to wandb
     long_sequence:
       enabled: true                          # values: true|false; activate long-sequence controls
       time_subsample_mode: uniform           # values: uniform|windowed; default keeps global coverage

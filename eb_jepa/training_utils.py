@@ -463,6 +463,28 @@ def get_exp_name(example_name: str, cfg) -> str:
         parts = ["resnet"]
         parts.append(f"bs{cfg.data.batch_size}")
 
+        # Predictor architecture/location tags for 3x2 comparison matrix.
+        try:
+            predictor_type = str(cfg.model.get("predictor_type", "resunet")).lower()
+        except Exception:
+            predictor_type = str(getattr(cfg.model, "predictor_type", "resunet")).lower()
+        try:
+            predictor_space = str(cfg.model.get("predictor_space", "encoder")).lower()
+        except Exception:
+            predictor_space = str(getattr(cfg.model, "predictor_space", "encoder")).lower()
+
+        arch_tag_map = {
+            "resunet": "parch-res",
+            "mlpnet": "parch-mlp",
+            "linearnet": "parch-lin",
+        }
+        loc_tag_map = {
+            "encoder": "ploc-e",
+            "projector": "ploc-p",
+        }
+        parts.append(arch_tag_map.get(predictor_type, f"parch-{predictor_type[:3]}"))
+        parts.append(loc_tag_map.get(predictor_space, f"ploc-{predictor_space[:1]}"))
+
         # Determine loss type robustly; default to 'vcreg' when unspecified
         try:
             loss = cfg.loss.get("type", "vcreg")

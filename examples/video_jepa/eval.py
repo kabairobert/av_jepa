@@ -816,7 +816,8 @@ def run(
         logger.info("Evaluated checkpoint %s at step=%d", ckpt.name, checkpoint_step)
 
     geometry_enabled = bool((geometry_cfg or {}).get("enabled", False)) if isinstance(geometry_cfg, dict) else bool(getattr(geometry_cfg, "enabled", False) if geometry_cfg is not None else False)
-    if geometry_enabled and wandb_run:
+    evolution_videos_enabled = bool((geometry_cfg or {}).get("evolution_videos_enabled", False)) if isinstance(geometry_cfg, dict) else bool(getattr(geometry_cfg, "evolution_videos_enabled", False) if geometry_cfg is not None else False)
+    if geometry_enabled and evolution_videos_enabled and wandb_run:
         try:
             evo_logs = assemble_geometry_viz_videos(
                 exp_dir=folder_path,
@@ -827,6 +828,10 @@ def run(
                 wandb.log(evo_logs)
         except Exception:
             logger.exception("Failed assembling/logging geometry evolution videos")
+    elif geometry_enabled and wandb_run and not evolution_videos_enabled:
+        logger.info(
+            "Skipping geometry evolution videos (logging.geometry_viz.evolution_videos_enabled=false)."
+        )
 
     if wandb_run:
         diagnostics_manager.close()

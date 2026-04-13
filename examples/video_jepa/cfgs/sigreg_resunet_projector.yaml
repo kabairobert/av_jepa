@@ -1,0 +1,105 @@
+# Video JEPA Training Configuration
+# Train a self-supervised video prediction model on Moving MNIST
+
+meta:
+  seed: 2025
+  device: auto  # auto, cuda, or cpu
+  checkpoint_dir: checkpoints  # Directory to save checkpoints and logs
+
+data:
+  dataset: moving_mnist
+  batch_size: 84
+  num_workers: 4
+
+model:
+  # Encoder (ResNet5)
+  dobs: 1
+  henc: 32
+  dstc: 16
+
+  # Predictor
+  hpre: 32
+  predictor_type: resunet      # values: resunet|mlpnet|linearnet
+  predictor_space: projector   # values: encoder|projector
+  mlp_hidden_dim: 32           # hidden width for MLPNet (ignored otherwise)
+
+  # Training
+  steps: 2
+
+loss:
+  type: bcs-euler-scalefree
+  num_slices: 32
+  lmbd: 10
+  proj_hidden_mult: 4
+  proj_out_mult: 4
+
+optim:
+  epochs: 50
+  lr: 1.0e-3
+
+logging:
+  log_wandb: true
+  wandb_group:
+  save_every: 10
+  diagnostics_every_epochs: 5
+  fast_diagnostics_every_epochs: 1
+  fast_diagnostics_every_steps:
+  log_tensor_shapes: true
+  projector_force_runtime_shapes: false
+  tqdm_silent: false
+  diagnostics:
+    enabled: true
+    upload_artifacts: true
+    artifact_flush_interval_sec: 3.0
+    full_diagnostics_mode: full_val
+    fast_diagnostics_mode: val_subset
+    val_subset_num_batches: 1
+    train_subset_num_batches: 2
+  geometry_viz:
+    enabled: true
+    num_samples: 12
+    tsne_method: umap
+    activation_layer: null
+    stage_label: encoder_rollout
+    wandb_log_geometry: true
+    temporal_self_similarity_num_samples: 2
+    temporal_self_similarity_feature_mode: spatialflat
+    temporal_self_similarity_distance: euclidean
+    temporal_self_similarity_pca_fixed_k: 3
+    temporal_self_similarity_pca_var_ratio: 0.95
+    temporal_self_similarity_pca_max_k: 64
+    temporal_self_similarity_center_time: true
+    include_epoch_in_title: true
+    include_epoch_in_filename: true
+    spatial_tsne_max_points: 10000
+    covariance_source_mode: encoder+projector_all_linear_layers
+    covariance_log_scalars: true
+    evolution_fps: 2
+    evolution_videos_enabled: false
+    long_sequence:
+      enabled: true
+      time_subsample_mode: uniform
+      window_size: 96
+      window_stride: 48
+      max_frames_for_plots: 96
+      max_frames_for_embedding: 96
+      max_frames_activation_overlay: 24
+    plots:
+      latent_trajectories_avgpool: true
+      latent_trajectories_spatialflat: true
+      temporal_self_similarity: true
+      occupancy_spatial_embedding: true
+      cov_eig_spectrum: true
+      activation_overlays: true
+      phase_space_portrait: true
+training:
+  use_amp: true
+  dtype: bfloat16
+
+sweep:
+  param_grid:
+    data.batch_size: [32, 64]
+    optim.lr: [0.001, 0.0001, 0.0005]
+    loss.std_coeff: [1, 10, 100, 200]
+    loss.cov_coeff: [1, 10, 100, 200]
+    meta.seed: [1, 1000, 10000]
