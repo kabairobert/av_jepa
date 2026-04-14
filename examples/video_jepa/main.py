@@ -320,6 +320,7 @@ def run(
         val_samples=len(val_set),
     )
     steps_per_epoch = len(train_loader)
+    max_train_batches = _int_or_none(cfg.training.get("max_train_batches", None))
 
     # Initialize Video JEPA model and probes
     logger.info("Initializing model...")
@@ -536,7 +537,7 @@ def run(
             disable=cfg.logging.get("tqdm_silent", False),
         )
 
-        for batch in pbar:
+        for batch_idx, batch in enumerate(pbar, start=1):
             batch = {k: v.to(device) for k, v in batch.items()}
             x = batch["video"]
             loc_map = batch["digit_location"]
@@ -620,6 +621,15 @@ def run(
             )
 
             global_step += 1
+
+            if max_train_batches is not None and batch_idx >= max_train_batches:
+                logger.info(
+                    "Stopping epoch %s after %s train batches due to training.max_train_batches=%s",
+                    epoch_display,
+                    max_train_batches,
+                    max_train_batches,
+                )
+                break
 
             if diagnostics_enabled and fast_every_steps is not None and global_step > 0 and global_step % fast_every_steps == 0:
                 fast_logs = _run_diagnostics_event(

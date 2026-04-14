@@ -40,6 +40,9 @@ cd ~/github/eb_jepa_private
 # Add uv to PATH
 export PATH="$HOME/.cargo/bin:$PATH"
 
+# Example smoke-test override if you want a sub-epoch run:
+# uv run python -m examples.video_jepa.main --fname "examples/video_jepa/cfgs/sigreg_linear_encoder.yaml" --training.max_train_batches=3 --optim.epochs=10 --logging.log_wandb=false --logging.diagnostics.enabled=false
+
 # 6-way predictor comparison matrix (architecture x location):
 #   ResUNet/MLP/Linear x Encoder/Projector
 CFG_MATRIX=(
