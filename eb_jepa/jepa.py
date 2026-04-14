@@ -58,6 +58,16 @@ class JEPA(JEPAbase):
     def _project_state_for_predictor(self, state):
         """Project [B, C, T, H, W] state into predictor/projector feature space."""
         x_flat, (b, c, t, h, w) = flatten_spatio_temporal(state)
+        proj_dtype = None
+        for param in self.predictor_proj.parameters():
+            proj_dtype = param.dtype
+            break
+        if proj_dtype is None:
+            for buf in self.predictor_proj.buffers():
+                proj_dtype = buf.dtype
+                break
+        if proj_dtype is not None and x_flat.dtype != proj_dtype:
+            x_flat = x_flat.to(dtype=proj_dtype)
         state_proj = self.predictor_proj(x_flat)
         return unflatten_spatio_temporal(state_proj, b, t, h, w)
 

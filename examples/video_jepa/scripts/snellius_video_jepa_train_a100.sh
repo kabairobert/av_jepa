@@ -40,24 +40,22 @@ cd ~/github/eb_jepa_private
 # Add uv to PATH
 export PATH="$HOME/.cargo/bin:$PATH"
 
-# Run training
-echo "Starting training 1..."
-uv run python -m examples.video_jepa.main \
-    --fname examples/video_jepa/cfgs/sigreg_linear_encoder.yaml
+# 6-way predictor comparison matrix (architecture x location):
+#   ResUNet/MLP/Linear x Encoder/Projector
+CFG_MATRIX=(
+    "examples/video_jepa/cfgs/sigreg.yaml"
+    "examples/video_jepa/cfgs/sigreg_resunet_projector.yaml"
+    "examples/video_jepa/cfgs/sigreg_mlp_encoder.yaml"
+    "examples/video_jepa/cfgs/sigreg_mlp_projector.yaml"
+    "examples/video_jepa/cfgs/sigreg_linear_encoder.yaml"
+    "examples/video_jepa/cfgs/sigreg_linear_projector.yaml"
+)
 
-# Run training
-echo "Starting training 2..."
-uv run python -m examples.video_jepa.main \
-    --fname examples/video_jepa/cfgs/sigreg_linear_projector.yaml
-
-# Run training
-echo "Starting training 3..."
-uv run python -m examples.video_jepa.main \
-    --fname examples/video_jepa/cfgs/sigreg_mlp_encoder.yaml
-
-# Run training
-echo "Starting training 4..."
-uv run python -m examples.video_jepa.main \
-    --fname examples/video_jepa/cfgs/sigreg_mlp_projector.yaml
+idx=1
+for cfg in "${CFG_MATRIX[@]}"; do
+    echo "Starting training ${idx}/6: ${cfg}"
+    uv run python -m examples.video_jepa.main --fname "${cfg}"
+    idx=$((idx + 1))
+done
 
 echo "Training complete."
