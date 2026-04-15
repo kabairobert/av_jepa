@@ -24,6 +24,7 @@ model:
   hpre: 32          # Hidden dimension in predictor
   predictor_type: mlpnet       # values: resunet|mlpnet|linearnet
   predictor_space: projector   # values: encoder|projector
+  probe_source: both           # values: encoder|projector|both
   mlp_hidden_dim: 32           # hidden width for MLPNet
 
   # Training

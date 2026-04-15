@@ -24,6 +24,7 @@ model:
   hpre: 32          # Hidden dimension in predictor
   predictor_type: linearnet    # values: resunet|mlpnet|linearnet
   predictor_space: encoder     # values: encoder|projector
+  probe_source: both           # values: encoder|projector|both
 
   # Training
   steps: 2          # Number of prediction steps during training

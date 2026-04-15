@@ -39,7 +39,24 @@ def _build_predictor_model(cfg, predictor_type, in_d, out_d):
 def _resolve_model_routing(cfg, loss_type, proj_out):
     predictor_type = cfg.model.get("predictor_type", "resunet")
     predictor_space = cfg.model.get("predictor_space", "encoder")
-    probe_source = cfg.model.get("probe_source", "encoder")
+
+    has_predictor_space = False
+    has_probe_source = False
+    try:
+        has_predictor_space = "predictor_space" in cfg.model
+    except Exception:
+        has_predictor_space = False
+    try:
+        has_probe_source = "probe_source" in cfg.model
+    except Exception:
+        has_probe_source = False
+
+    if has_probe_source:
+        probe_source = cfg.model.get("probe_source")
+    elif has_predictor_space:
+        probe_source = predictor_space
+    else:
+        probe_source = "encoder"
 
     if predictor_space not in ("encoder", "projector"):
         raise ValueError(

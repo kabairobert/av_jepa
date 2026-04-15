@@ -46,12 +46,12 @@ export PATH="$HOME/.cargo/bin:$PATH"
 # 6-way predictor comparison matrix (architecture x location):
 #   ResUNet/MLP/Linear x Encoder/Projector
 CFG_MATRIX=(
-    # "examples/video_jepa/cfgs/sigreg.yaml"
+    "examples/video_jepa/cfgs/sigreg_resunet_encoder.yaml"
     "examples/video_jepa/cfgs/sigreg_resunet_projector.yaml"
-    # "examples/video_jepa/cfgs/sigreg_mlp_encoder.yaml"
-    # "examples/video_jepa/cfgs/sigreg_mlp_projector.yaml"
-    # "examples/video_jepa/cfgs/sigreg_linear_encoder.yaml"
-    # "examples/video_jepa/cfgs/sigreg_linear_projector.yaml"
+    "examples/video_jepa/cfgs/sigreg_mlp_encoder.yaml"
+    "examples/video_jepa/cfgs/sigreg_mlp_projector.yaml"
+    "examples/video_jepa/cfgs/sigreg_linear_encoder.yaml"
+    "examples/video_jepa/cfgs/sigreg_linear_projector.yaml"
 )
 total=${#CFG_MATRIX[@]}
 

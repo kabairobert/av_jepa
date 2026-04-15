@@ -22,6 +22,7 @@ model:
 
   # Predictor (ResUNet)
   hpre: 32          # Hidden dimension in predictor
+  # probe_source: encoder      # values: encoder|projector|both
 
   # Training
   steps: 2          # Number of prediction steps during training
