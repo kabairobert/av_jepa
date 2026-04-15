@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from sklearn.metrics import average_precision_score
 
 from eb_jepa.nn_utils import TemporalBatchMixin, init_module_weights
+from eb_jepa.utils import flatten_spatio_temporal, unflatten_spatio_temporal
 
 
 class conv3d2(nn.Sequential):
