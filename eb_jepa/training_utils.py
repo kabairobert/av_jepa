@@ -114,6 +114,20 @@ def setup_wandb(
     if isinstance(config, DictConfig):
         config = OmegaConf.to_container(config, resolve=True)
 
+    # Optional run notes for W&B UI (editable post-run in the web app).
+    wandb_notes: Optional[str] = None
+    try:
+        if isinstance(config, dict):
+            logging_cfg = config.get("logging", {})
+            if isinstance(logging_cfg, dict):
+                raw_notes = logging_cfg.get("notes")
+                if raw_notes is not None:
+                    notes_text = str(raw_notes).strip()
+                    if notes_text:
+                        wandb_notes = notes_text
+    except Exception:
+        wandb_notes = None
+
     # Handle wandb sweep registration via environment variables
     # This is how wandb associates runs with sweeps
     if sweep_id:
@@ -182,6 +196,8 @@ def setup_wandb(
         wandb_config["tags"] = tags
     if group:
         wandb_config["group"] = group
+    if wandb_notes:
+        wandb_config["notes"] = wandb_notes
 
     run = wandb.init(**wandb_config)
     with open(run_id_file, "w") as f:
