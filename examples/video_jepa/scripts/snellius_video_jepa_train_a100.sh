@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=18
 #SBATCH --gpus=1
 #SBATCH --mem=120G
-#SBATCH --time=08:00:00
+#SBATCH --time=00:30:00
 #SBATCH --output=%x_%j.out
 #SBATCH --error=%x_%j.err
 
@@ -46,18 +46,19 @@ export PATH="$HOME/.cargo/bin:$PATH"
 # 6-way predictor comparison matrix (architecture x location):
 #   ResUNet/MLP/Linear x Encoder/Projector
 CFG_MATRIX=(
-    "examples/video_jepa/cfgs/sigreg.yaml"
+    # "examples/video_jepa/cfgs/sigreg.yaml"
     "examples/video_jepa/cfgs/sigreg_resunet_projector.yaml"
-    "examples/video_jepa/cfgs/sigreg_mlp_encoder.yaml"
-    "examples/video_jepa/cfgs/sigreg_mlp_projector.yaml"
-    "examples/video_jepa/cfgs/sigreg_linear_encoder.yaml"
-    "examples/video_jepa/cfgs/sigreg_linear_projector.yaml"
+    # "examples/video_jepa/cfgs/sigreg_mlp_encoder.yaml"
+    # "examples/video_jepa/cfgs/sigreg_mlp_projector.yaml"
+    # "examples/video_jepa/cfgs/sigreg_linear_encoder.yaml"
+    # "examples/video_jepa/cfgs/sigreg_linear_projector.yaml"
 )
+total=${#CFG_MATRIX[@]}
 
 idx=1
 for cfg in "${CFG_MATRIX[@]}"; do
-    echo "Starting training ${idx}/6: ${cfg}"
-    uv run python -m examples.video_jepa.main --fname "${cfg}"
+    echo "Starting training ${idx}/${total}: ${cfg}"
+    uv run python -m examples.video_jepa.main --fname "${cfg}" --training.max_train_batches=2 --optim.epochs=10 --logging.log_wandb=False
     idx=$((idx + 1))
 done
 
