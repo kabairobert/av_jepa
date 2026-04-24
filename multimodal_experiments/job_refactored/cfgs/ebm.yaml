@@ -1,0 +1,33 @@
+meta:
+  seed: 12345
+  device: auto
+  checkpoint_dir: checkpoints
+
+data:
+  type: 2d
+  num_samples: 4096
+  batch_size: 128
+  num_workers: 0
+
+model:
+  stage_count: 6
+  num_dims: 2
+  hidden_units: 128
+  predictor_type: mlp
+  predictor_hidden_dim: 64
+
+loss:
+  type: ebm
+  lambda_jac: 1.0
+  lambda_prior: 0.5
+  lambda_sparse: 0.0
+  use_l1: false
+
+optim:
+  epochs: 500
+  lr: 1.0e-3
+
+logging:
+  log_wandb: false
+  save_every: 50
+  tqdm_silent: false
