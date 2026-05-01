@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=18
 #SBATCH --gpus=1
 #SBATCH --mem=120G
-#SBATCH --time=00:30:00
+#SBATCH --time=10:00:00
 #SBATCH --output=%x_%j.out
 #SBATCH --error=%x_%j.err
 
@@ -20,7 +20,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # module load Python/3.11.3-GCCcore-12.3.0
 module purge
 module load 2024
-module load Python/3.12.3-GCCcore-13.3.0
+module load Python/3.12.3-GCCcore-13.3.0        
 
 # Source secrets (API keys etc.)
 source ~/.secrets
@@ -58,7 +58,7 @@ total=${#CFG_MATRIX[@]}
 idx=1
 for cfg in "${CFG_MATRIX[@]}"; do
     echo "Starting training ${idx}/${total}: ${cfg}"
-    uv run python -m examples.video_jepa.main --fname "${cfg}" --training.max_train_batches=2 --optim.epochs=10 --logging.log_wandb=False
+    uv run python -m examples.video_jepa.main --fname "${cfg}" --logging.notes='Ablation: predarch: ResUnet vs MLP vs Lin; predpos: encoder vs projector; probe:both' #--training.max_train_batches=2 --optim.epochs=10 --logging.log_wandb=False
     idx=$((idx + 1))
 done
 
