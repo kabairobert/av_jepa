@@ -4,14 +4,17 @@ from torch.utils.data import Dataset
 from multimodal_experiments.initial_trials.ssl_disentangling import sample_curve_data
 
 class DualDisentangleDataset(Dataset):
+    """Synthetic paired dataset (Modality A & B) from a shared 1D latent."""
     def __init__(self, data_type='2d', num_samples=4096):
         self.num_samples = num_samples
         self.data_type = data_type
         
+        # Shared latent parameter
         param_values = np.linspace(0, 1, num_samples)
         self.param_values = param_values
         
         if data_type == '2d':
+            # 2D correlated shapes
             def curve_a_fn(u: np.ndarray):
                 return ((0.8 * u + 0.2) * np.sin(2 * u * 2 * np.pi), (0.8 * u + 0.2) * np.cos(2 * u * 2 * np.pi))
             def curve_b_fn(u: np.ndarray):
@@ -23,6 +26,7 @@ class DualDisentangleDataset(Dataset):
             data_b, _ = sample_curve_data(param_values, curve_b_fn, [0.02, 0.02])
             
         elif data_type == '3d':
+            # 3D physical attributes with rotations
             # Modality A
             pitch = 1.0 / (1.2 - param_values)
             resonance = np.sin(param_values * np.pi)
@@ -49,6 +53,7 @@ class DualDisentangleDataset(Dataset):
         else:
             raise ValueError(f"Unknown data type {data_type}")
             
+        # Torch tensors & dummy target
         self.data_a = torch.tensor(data_a, dtype=torch.float64)
         self.data_b = torch.tensor(data_b, dtype=torch.float64)
         self.corr_target = torch.tensor(np.tile([0.0, 0.9], (num_samples, 1)), dtype=torch.float64) # Dummy target for original loss

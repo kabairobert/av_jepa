@@ -3,6 +3,7 @@ import torch.nn as nn
 from multimodal_experiments.initial_trials.ssl_disentangling import FlowModel, build_flow_layers
 
 class DualPairModel(torch.nn.Module):
+    """Wraps Modality A and B models into a single forward pass."""
     def __init__(self, model_a, model_b):
         super().__init__()
         self.model_a = model_a
@@ -14,6 +15,7 @@ class DualPairModel(torch.nn.Module):
         return torch.cat([output_a, output_b, jac_a.unsqueeze(-1), jac_b.unsqueeze(-1)], dim=1)
 
 class DiagonalPredictor(torch.nn.Module):
+    """Scales input dimensions independently via learnable weights."""
     def __init__(self, dim):
         super().__init__()
         self.weight = torch.nn.Parameter(torch.ones(dim))
@@ -22,6 +24,7 @@ class DiagonalPredictor(torch.nn.Module):
         return x * self.weight
 
 class MLPPredictor(torch.nn.Module):
+    """Standard MLP cross-modal predictor."""
     def __init__(self, dim=1, hidden_dim=64):
         super().__init__()
         self.net = torch.nn.Sequential(

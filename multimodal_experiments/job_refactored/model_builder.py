@@ -2,14 +2,17 @@ from multimodal_experiments.job_refactored.architectures import DualPairModel, D
 from multimodal_experiments.initial_trials.ssl_disentangling import FlowModel, build_flow_layers
 
 def build_model_and_predictors(cfg, device):
+    """Builds unimodal models, wraps them, and sets up cross-modal predictors."""
     stage_count = cfg.model.get('stage_count', 6)
     num_dims = cfg.model.get('num_dims', 2)
     hidden_units = cfg.model.get('hidden_units', 128)
     
+    # 1. Build & wrap unimodal flows
     model_a = FlowModel(build_flow_layers(stage_count=stage_count, num_dims=num_dims, hidden_units=hidden_units)).to(device)
     model_b = FlowModel(build_flow_layers(stage_count=stage_count, num_dims=num_dims, hidden_units=hidden_units)).to(device)
     dual_model = DualPairModel(model_a, model_b).to(device)
     
+    # 2. Setup cross-modal predictors
     predictor_type = cfg.model.get('predictor_type', 'none')
     if predictor_type == 'diagonal':
         predictor_a2b = DiagonalPredictor(num_dims).to(device)

@@ -5,7 +5,7 @@ from mpl_toolkits.mplot3d import Axes3D
 import wandb
 
 def plot_original_spaces(data_a, data_b, param_values):
-    """Plot the raw datasets."""
+    """Plots raw Modality A and Modality B datasets."""
     is_3d = data_a.shape[1] >= 3
     fig = plt.figure(figsize=(12, 6))
     
@@ -38,7 +38,7 @@ def plot_original_spaces(data_a, data_b, param_values):
     return fig
 
 def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, device):
-    """Plot the 4-way reshaping view."""
+    """Plots 4-way view: Input A -> Output A -> Output B -> Input B."""
     dual_model.eval()
     with torch.no_grad():
         output_a, _ = dual_model.model_a(torch.tensor(data_a, device=device, dtype=torch.float64))
@@ -86,6 +86,7 @@ def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, 
     return fig
 
 def log_plots_to_wandb(dual_model, dataset, device, step, wandb_run):
+    """Generates and logs visualizations to W&B."""
     data_a = dataset.data_a.numpy()
     data_b = dataset.data_b.numpy()
     param_values = dataset.param_values

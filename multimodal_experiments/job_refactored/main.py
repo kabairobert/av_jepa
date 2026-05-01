@@ -17,6 +17,7 @@ from multimodal_experiments.initial_trials.ssl_disentangling import SupervisedFa
 from multimodal_experiments.job_refactored.vis import log_plots_to_wandb
 
 def run(fname: str = "multimodal_experiments/job_refactored/cfgs/default.yaml", cfg=None, folder=None, **overrides):
+    # --- 1. Config & Env ---
     if cfg is None:
         cfg = load_config(fname, overrides if overrides else None)
 
@@ -26,6 +27,7 @@ def run(fname: str = "multimodal_experiments/job_refactored/cfgs/default.yaml", 
     # Notebooks used double by default
     torch.set_default_dtype(torch.float64)
 
+    # --- 2. Exp Dir Setup ---
     exp_name = f"{cfg.data.get('type', '2d')}_{cfg.loss.get('type', 'ebm')}_{cfg.model.get('predictor_type', 'none')}"
     if folder is None:
         sweep_name = get_default_dev_name()
@@ -43,6 +45,7 @@ def run(fname: str = "multimodal_experiments/job_refactored/cfgs/default.yaml", 
 
     save_config(cfg, exp_dir)
 
+    # --- 3. W&B Logging ---
     wandb_run = setup_wandb(
         project="eb_jepa",
         config={"example": "dual_disentangle"},
@@ -53,14 +56,17 @@ def run(fname: str = "multimodal_experiments/job_refactored/cfgs/default.yaml", 
         enabled=cfg.logging.get("log_wandb", False),
     )
 
+    # --- 4. Data Setup ---
     train_set = DualDisentangleDataset(data_type=cfg.data.get('type', '2d'), num_samples=cfg.data.get('num_samples', 4096))
     train_loader = DataLoader(train_set, batch_size=cfg.data.get('batch_size', 128), shuffle=True, num_workers=cfg.data.get('num_workers', 0))
 
+    # --- 5. Model Init ---
     built = build_model_and_predictors(cfg, device)
     dual_model = built["dual_model"]
     predictor_a2b = built["predictor_a2b"]
     predictor_b2a = built["predictor_b2a"]
 
+    # --- 6. Loss & Optim ---
     loss_type = cfg.loss.get("type", "ebm")
     if loss_type == "ebm":
         loss_fn = EBMJEPALoss(
@@ -77,6 +83,7 @@ def run(fname: str = "multimodal_experiments/job_refactored/cfgs/default.yaml", 
 
     optimizer = torch.optim.Adam(params, lr=cfg.optim.get("lr", 0.001))
 
+    # --- 7. Resume Checkpoint ---
     start_epoch = 0
     global_step = 0
     if cfg.meta.get("load_model"):
@@ -92,6 +99,7 @@ def run(fname: str = "multimodal_experiments/job_refactored/cfgs/default.yaml", 
     if wandb_run:
         log_plots_to_wandb(dual_model, train_set, device, global_step, wandb_run)
 
+    # --- 8. Training Loop ---
     for epoch_idx in range(start_epoch, epochs):
         dual_model.train()
         epoch_loss = 0.0
@@ -104,12 +112,14 @@ def run(fname: str = "multimodal_experiments/job_refactored/cfgs/default.yaml", 
 
             optimizer.zero_grad()
             
+            # Forward & Loss
             outputs = dual_model(data_a, data_b)
             if loss_type == "ebm":
                 loss = loss_fn(outputs)
             else:
                 loss = loss_fn(corr_target, outputs)
 
+            # Backprop & Step
             loss.backward()
             optimizer.step()
 
@@ -118,6 +128,7 @@ def run(fname: str = "multimodal_experiments/job_refactored/cfgs/default.yaml", 
             
             pbar.set_postfix({"loss": f"{loss.item():.4f}"})
 
+        # --- 9. Log & Save ---
         avg_loss = epoch_loss / len(train_loader)
         if wandb_run:
             import wandb
