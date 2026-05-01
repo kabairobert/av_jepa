@@ -20,10 +20,10 @@ module load Python/3.12.3-GCCcore-13.3.0
 
 source ~/.secrets
 
-export EBJEPA_DSETS=$TMPDIR/datasets
+# export EBJEPA_DSETS=$TMPDIR/datasets
 
-mkdir -p $TMPDIR/datasets
-cp -r ~/JEPA/datasets/* $TMPDIR/datasets/
+# mkdir -p $TMPDIR/datasets
+# cp -r ~/JEPA/datasets/* $TMPDIR/datasets/
 
 cd ~/github/eb_jepa_private
 
