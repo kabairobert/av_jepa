@@ -1,4 +1,4 @@
-from multimodal_experiments.job_refactored.architectures import DualPairModel, DiagonalPredictor, MLPPredictor
+from multimodal_experiments.ssl_dual_alignment.architectures import DualPairModel, DiagonalPredictor, MLPPredictor
 from multimodal_experiments.initial_trials.ssl_disentangling import FlowModel, build_flow_layers
 
 def build_model_and_predictors(cfg, device):

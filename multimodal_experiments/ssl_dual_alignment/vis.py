@@ -41,8 +41,8 @@ def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, 
     """Plots 4-way view: Input A -> Output A -> Output B -> Input B."""
     dual_model.eval()
     with torch.no_grad():
-        output_a, _ = dual_model.model_a(torch.tensor(data_a, device=device, dtype=torch.float64))
-        output_b, _ = dual_model.model_b(torch.tensor(data_b, device=device, dtype=torch.float64))
+        output_a, _ = dual_model.model_a(torch.tensor(data_a, device=device, dtype=torch.float32))
+        output_b, _ = dual_model.model_b(torch.tensor(data_b, device=device, dtype=torch.float32))
 
     output_a = output_a.detach().cpu().numpy()
     output_b = output_b.detach().cpu().numpy()

@@ -10,13 +10,13 @@ from eb_jepa.training_utils import (
     get_default_dev_name, get_exp_name, get_unified_experiment_dir,
     save_config, save_checkpoint, load_checkpoint
 )
-from multimodal_experiments.job_refactored.dataset import DualDisentangleDataset
-from multimodal_experiments.job_refactored.model_builder import build_model_and_predictors
-from multimodal_experiments.job_refactored.losses import EBMJEPALoss
+from multimodal_experiments.ssl_dual_alignment.dataset import DualDisentangleDataset
+from multimodal_experiments.ssl_dual_alignment.model_builder import build_model_and_predictors
+from multimodal_experiments.ssl_dual_alignment.losses import EBMJEPALoss
 from multimodal_experiments.initial_trials.ssl_disentangling import SupervisedFactorLoss
-from multimodal_experiments.job_refactored.vis import log_plots_to_wandb
+from multimodal_experiments.ssl_dual_alignment.vis import log_plots_to_wandb
 
-def run(fname: str = "multimodal_experiments/job_refactored/cfgs/default.yaml", cfg=None, folder=None, **overrides):
+def run(fname: str = "multimodal_experiments/ssl_dual_alignment/cfgs/default.yaml", cfg=None, folder=None, **overrides):
     # --- 1. Config & Env ---
     if cfg is None:
         cfg = load_config(fname, overrides if overrides else None)
@@ -25,7 +25,7 @@ def run(fname: str = "multimodal_experiments/job_refactored/cfgs/default.yaml", 
     setup_seed(cfg.meta.seed)
     
     # Notebooks used double by default
-    torch.set_default_dtype(torch.float64)
+    torch.set_default_dtype(torch.float32)
 
     # --- 2. Exp Dir Setup ---
     exp_name = f"{cfg.data.get('type', '2d')}_{cfg.loss.get('type', 'ebm')}_{cfg.model.get('predictor_type', 'none')}"

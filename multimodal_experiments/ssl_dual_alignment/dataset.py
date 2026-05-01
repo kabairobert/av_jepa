@@ -23,7 +23,7 @@ class DualDisentangleDataset(Dataset):
             
             if data_type == '2d':
                 # 2D shapes from 1D u.
-                """
+                r"""
                 2D data breakdown:
                 Shared 1D source $u$ ($[0,1]$).
 
@@ -39,12 +39,12 @@ class DualDisentangleDataset(Dataset):
                     y = x**3 - 0.5 * x - 0.5
                     return (x, y)
                     
-                data_a, _ = sample_curve_data(param_values, curve_a_fn, [0.02, 0.02])
-                data_b, _ = sample_curve_data(param_values, curve_b_fn, [0.02, 0.02])
+                data_a, _ = sample_curve_data(param_values, curve_a_fn, (0.02, 0.02))
+                data_b, _ = sample_curve_data(param_values, curve_b_fn, (0.02, 0.02))
                 
             elif data_type == '3d-av-1f-common':
                 # 3D physical traits + rotation. 1D u.
-                """
+                r"""
                 3D data with 1 shared source:
                 Both modalities are 3D vectors ($N \times 3$) derived from one shared 1D latent ($u \in [0, 1]$) as only source. Feature breakdown:
 
@@ -88,7 +88,7 @@ class DualDisentangleDataset(Dataset):
 
             elif data_type == '3d-2f-common':
                 # 2 common factors. u1 -> shape, u2 -> 3rd dim (stretch vs shear).
-                """
+                r"""
                 3D data with 2d shared source. Structure:
                 * Base: 2D latent grid $\mathbf{u} = [u_1, u_2] \in [0,1] \times [0,1]$.
                 * $u_1$: Same as $u$ from 2D (controls Spiral/Cubic).
@@ -114,7 +114,7 @@ class DualDisentangleDataset(Dataset):
                     return ((0.8 * u1_vals + 0.2) * np.sin(2 * u1_vals * 2 * np.pi), 
                             (0.8 * u1_vals + 0.2) * np.cos(2 * u1_vals * 2 * np.pi))
 
-                xy_a, _ = sample_curve_data(u1, curve_a_fn_3d, [0.02, 0.02])
+                xy_a, _ = sample_curve_data(u1, curve_a_fn_3d, (0.02, 0.02))
                 z_a = (u2 * 2.0).reshape(-1, 1)
                 data_a = np.hstack([xy_a, z_a])
 
@@ -124,7 +124,7 @@ class DualDisentangleDataset(Dataset):
                     y = x**3 - 0.5 * x - 0.5
                     return (x, y)
 
-                xy_b, _ = sample_curve_data(u1, curve_b_fn_3d, [0.02, 0.02])
+                xy_b, _ = sample_curve_data(u1, curve_b_fn_3d, (0.02, 0.02))
                 z_b = u2.reshape(-1, 1)
                 data_b = np.hstack([xy_b, z_b])
 
@@ -132,9 +132,9 @@ class DualDisentangleDataset(Dataset):
                 raise ValueError(f"Unknown data type {data_type}")
             
         # Data cast. Double precision.
-        self.data_a = torch.tensor(data_a, dtype=torch.float64)
-        self.data_b = torch.tensor(data_b, dtype=torch.float64)
-        self.corr_target = torch.tensor(np.tile([0.0, 0.9], (self.num_samples, 1)), dtype=torch.float64)
+        self.data_a = torch.tensor(data_a, dtype=torch.float32)
+        self.data_b = torch.tensor(data_b, dtype=torch.float32)
+        self.corr_target = torch.tensor(np.tile([0.0, 0.9], (self.num_samples, 1)), dtype=torch.float32)
         
     def _load_file(self, path):
         # Load data. npy/pt support.

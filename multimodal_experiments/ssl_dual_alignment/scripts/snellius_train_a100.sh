@@ -30,18 +30,18 @@ cd ~/github/eb_jepa_private
 export PATH="$HOME/.cargo/bin:$PATH"
 
 CFG_MATRIX=(
-    "multimodal_experiments/job_refactored/cfgs/default.yaml"
-    "multimodal_experiments/job_refactored/cfgs/ebm.yaml"
-    "multimodal_experiments/job_refactored/cfgs/ebm_on_flow.yaml"
-    "multimodal_experiments/job_refactored/cfgs/ebm_on_flow_3D.yaml"
-    "multimodal_experiments/job_refactored/cfgs/ebm_on_flow_3d_2f.yaml"
+    "multimodal_experiments/ssl_dual_alignment/cfgs/default.yaml"
+    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm.yaml"
+    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_on_flow.yaml"
+    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_on_flow_3D.yaml"
+    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_on_flow_3d_2f.yaml"
 )
 total=${#CFG_MATRIX[@]}
 
 idx=1
 for cfg in "${CFG_MATRIX[@]}"; do
     echo "Starting training ${idx}/${total}: ${cfg}"
-    uv run python -m multimodal_experiments.job_refactored.main --fname "${cfg}"
+    uv run python -m multimodal_experiments.ssl_dual_alignment.main --fname "${cfg}"
     idx=$((idx + 1))
 done
 
