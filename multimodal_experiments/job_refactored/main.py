@@ -56,8 +56,13 @@ def run(fname: str = "multimodal_experiments/job_refactored/cfgs/default.yaml", 
         enabled=cfg.logging.get("log_wandb", False),
     )
 
-    # --- 4. Data Setup ---
-    train_set = DualDisentangleDataset(data_type=cfg.data.get('type', '2d'), num_samples=cfg.data.get('num_samples', 4096))
+    # --- 4. Dataset ---
+    train_set = DualDisentangleDataset(
+        data_type=cfg.data.get('type', '2d'), 
+        num_samples=cfg.data.get('num_samples', 4096),
+        path_a=cfg.data.get('path_a', None),
+        path_b=cfg.data.get('path_b', None)
+    )
     train_loader = DataLoader(train_set, batch_size=cfg.data.get('batch_size', 128), shuffle=True, num_workers=cfg.data.get('num_workers', 0))
 
     # --- 5. Model Init ---
@@ -103,6 +108,8 @@ def run(fname: str = "multimodal_experiments/job_refactored/cfgs/default.yaml", 
     for epoch_idx in range(start_epoch, epochs):
         dual_model.train()
         epoch_loss = 0.0
+        epoch_align_a2b = 0.0
+        epoch_align_b2a = 0.0
         
         pbar = tqdm(train_loader, desc=f"Epoch {epoch_idx+1}/{epochs}", disable=cfg.logging.get("tqdm_silent", False))
         for batch in pbar:
@@ -123,16 +130,36 @@ def run(fname: str = "multimodal_experiments/job_refactored/cfgs/default.yaml", 
             loss.backward()
             optimizer.step()
 
+            # Math alignment metrics
+            d = (outputs.shape[1] - 2) // 2
+            z_a, z_b = outputs[:, :d], outputs[:, d:2*d]
+            with torch.no_grad():
+                if predictor_a2b and predictor_b2a:
+                    err_a2b = torch.nn.functional.mse_loss(predictor_a2b(z_a), z_b).item()
+                    err_b2a = torch.nn.functional.mse_loss(predictor_b2a(z_b), z_a).item()
+                    epoch_align_a2b += err_a2b
+                    epoch_align_b2a += err_b2a
+
             epoch_loss += loss.item()
             global_step += 1
             
             pbar.set_postfix({"loss": f"{loss.item():.4f}"})
 
         # --- 9. Log & Save ---
-        avg_loss = epoch_loss / len(train_loader)
+        num_batches = len(train_loader)
+        avg_loss = epoch_loss / num_batches
+        avg_align_a2b = epoch_align_a2b / num_batches
+        avg_align_b2a = epoch_align_b2a / num_batches
+
         if wandb_run:
             import wandb
-            wandb.log({"train/loss": avg_loss, "epoch": epoch_idx+1, "step": global_step}, step=global_step)
+            wandb.log({
+                "train/loss": avg_loss, 
+                "train/align_mse_a2b": avg_align_a2b,
+                "train/align_mse_b2a": avg_align_b2a,
+                "epoch": epoch_idx+1, 
+                "step": global_step
+            }, step=global_step)
 
         if (epoch_idx + 1) % cfg.logging.get("save_every", 50) == 0:
             save_checkpoint(
@@ -149,6 +176,8 @@ def run(fname: str = "multimodal_experiments/job_refactored/cfgs/default.yaml", 
     
     if wandb_run and epochs % cfg.logging.get("save_every", 50) != 0:
         log_plots_to_wandb(dual_model, train_set, device, global_step, wandb_run)
+    
+    if wandb_run:
         import wandb
         wandb.finish()
         
