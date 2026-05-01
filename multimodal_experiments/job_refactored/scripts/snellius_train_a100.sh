@@ -34,6 +34,7 @@ CFG_MATRIX=(
     "multimodal_experiments/job_refactored/cfgs/ebm.yaml"
     "multimodal_experiments/job_refactored/cfgs/ebm_on_flow.yaml"
     "multimodal_experiments/job_refactored/cfgs/ebm_on_flow_3D.yaml"
+    "multimodal_experiments/job_refactored/cfgs/ebm_on_flow_3d_2f.yaml"
 )
 total=${#CFG_MATRIX[@]}
 

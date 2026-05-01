@@ -4,7 +4,7 @@ meta:
   checkpoint_dir: checkpoints
 
 data:
-  type: 3d-av-1f-common
+  type: 3d-2f-common
   num_samples: 4096
   batch_size: 128
   num_workers: 0
