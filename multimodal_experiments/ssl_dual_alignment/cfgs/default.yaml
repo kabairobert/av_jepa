@@ -23,6 +23,6 @@ optim:
   lr: 1.0e-3
 
 logging:
-  log_wandb: false
+  log_wandb: true
   save_every: 50
   tqdm_silent: false
