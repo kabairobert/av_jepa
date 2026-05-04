@@ -48,7 +48,7 @@ def run(fname: str = "multimodal_experiments/ssl_dual_alignment/cfgs/default.yam
     # --- 3. W&B Logging ---
     wandb_run = setup_wandb(
         project="eb_jepa",
-        config={"example": "dual_disentangle"},
+        config=cfg,
         run_dir=exp_dir,
         run_name=exp_name,
         tags=["dual_disentangle", f"seed_{cfg.meta.seed}", "multimodal_initial"],
