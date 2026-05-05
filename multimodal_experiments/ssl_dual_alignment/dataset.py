@@ -20,6 +20,8 @@ class DualDisentangleDataset(Dataset):
             # Synth generation.
             param_values = np.linspace(0, 1, num_samples)
             self.param_values = param_values
+            # Number of spiral turns for spiral-based shapes (use 1 for single-turn spirals)
+            turns = 1
             
             if data_type == '2d':
                 # 2D shapes from 1D u.
@@ -33,7 +35,7 @@ class DualDisentangleDataset(Dataset):
                 Relation: Samples paired by same $u$. Diff geometry, same source. Goal -> map back to shared 1D latent.
                 """
                 def curve_a_fn(u: np.ndarray):
-                    return ((0.8 * u + 0.2) * np.sin(2 * u * 2 * np.pi), (0.8 * u + 0.2) * np.cos(2 * u * 2 * np.pi))
+                    return ((0.8 * u + 0.2) * np.sin(turns * u * 2 * np.pi), (0.8 * u + 0.2) * np.cos(turns * u * 2 * np.pi))
                 def curve_b_fn(u: np.ndarray):
                     x = u * 2.0 - 1.0
                     y = x**3 - 0.5 * x - 0.5
@@ -111,17 +113,17 @@ class DualDisentangleDataset(Dataset):
 
                 # Mod A: 3D Spiral. Stretch width 2.
                 def curve_a_fn_3d(u1_vals):
-                    return ((0.8 * u1_vals + 0.2) * np.sin(2 * u1_vals * 2 * np.pi), 
-                            (0.8 * u1_vals + 0.2) * np.cos(2 * u1_vals * 2 * np.pi))
+                    return ((0.8 * u1_vals + 0.2) * np.sin(turns * u1_vals * 2 * np.pi), 
+                            (0.8 * u1_vals + 0.2) * np.cos(turns * u1_vals * 2 * np.pi))
 
                 xy_a, _ = sample_curve_data(u1, curve_a_fn_3d, (0.02, 0.02))
                 z_a = (u2 * 2.0).reshape(-1, 1)
                 data_a = np.hstack([xy_a, z_a])
 
                 # Mod B: 3D Cubic. Shear width 1.
-                def curve_b_fn_3d(u1_vals):
-                    x = u1_vals * 2.0 - 1.0
-                    y = x**3 - 0.5 * x - 0.5
+                def curve_a_fn_3d(u1_vals):
+                    return ((0.8 * u1_vals + 0.2) * np.sin(turns * u1_vals * 2 * np.pi), 
+                            (0.8 * u1_vals + 0.2) * np.cos(turns * u1_vals * 2 * np.pi))
                     return (x, y)
 
                 xy_b, _ = sample_curve_data(u1, curve_b_fn_3d, (0.02, 0.02))
