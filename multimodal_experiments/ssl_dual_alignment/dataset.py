@@ -121,7 +121,7 @@ class DualDisentangleDataset(Dataset):
                 data_a = np.hstack([xy_a, z_a])
 
                 # Mod B: 3D Cubic. Shear width 1.
-                def curve_a_fn_3d(u1_vals):
+                def curve_b_fn_3d(u1_vals):
                     return ((0.8 * u1_vals + 0.2) * np.sin(turns * u1_vals * 2 * np.pi), 
                             (0.8 * u1_vals + 0.2) * np.cos(turns * u1_vals * 2 * np.pi))
                     return (x, y)
