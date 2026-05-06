@@ -16,7 +16,7 @@ from multimodal_experiments.ssl_dual_alignment.losses import EBMJEPALoss
 from multimodal_experiments.initial_trials.ssl_disentangling import SupervisedFactorLoss
 from multimodal_experiments.ssl_dual_alignment.vis import log_plots_to_wandb
 
-def run(fname: str = "multimodal_experiments/ssl_dual_alignment/cfgs/default.yaml", cfg=None, folder=None, **overrides):
+def run(fname: str = "multimodal_experiments/ssl_dual_alignment/cfgs/paired_factors_2D.yaml", cfg=None, folder=None, **overrides):
     # --- 1. Config & Env ---
     if cfg is None:
         cfg = load_config(fname, overrides if overrides else None)
@@ -28,7 +28,13 @@ def run(fname: str = "multimodal_experiments/ssl_dual_alignment/cfgs/default.yam
     torch.set_default_dtype(torch.float32)
 
     # --- 2. Exp Dir Setup ---
-    exp_name = f"{cfg.data.get('type', '2d')}_{cfg.loss.get('type', 'ebm')}_{cfg.model.get('predictor_type', 'none')}"
+    exp_name = (
+        f"dalign_{cfg.data.get('type', '2d')}_"
+        f"pred_{cfg.model.get('predictor_type', 'none')}_"
+        f"loss_{cfg.loss.get('type', 'ebm')}_"
+        f"l1_{cfg.loss.get('use_l1', False)}_"
+        f"sparse_{cfg.loss.get('lambda_sparse', 0.0)}"
+    )
     if folder is None:
         sweep_name = get_default_dev_name()
         exp_dir = get_unified_experiment_dir(

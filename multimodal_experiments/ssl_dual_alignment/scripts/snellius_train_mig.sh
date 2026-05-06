@@ -29,11 +29,11 @@ cd ~/github/eb_jepa_private
 export PATH="$HOME/.cargo/bin:$PATH"
 
 CFG_MATRIX=(
-    "multimodal_experiments/ssl_dual_alignment/cfgs/default.yaml"
-    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm.yaml"
-    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_on_flow.yaml"
-    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_on_flow_3D.yaml"
-    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_on_flow_3d_2f.yaml"
+    "multimodal_experiments/ssl_dual_alignment/cfgs/paired_factors_2D.yaml"
+    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_pred_mlp_l2_wnosparse_2D.yaml"
+    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_pred_diag_l1_wsparse_2D.yaml"
+    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_pred_diag_l1_wsparse_3D1f.yaml"
+    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_pred_diag_l1_wsparse_3D2f.yaml"
 )
 total=${#CFG_MATRIX[@]}
 
