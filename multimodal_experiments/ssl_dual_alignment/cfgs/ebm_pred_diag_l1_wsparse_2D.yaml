@@ -9,6 +9,12 @@ data:
   num_samples: 4096
   batch_size: 128
   num_workers: 0
+  manifold_noise_a: 0.02
+  manifold_noise_b: 0.02
+  asymmetric_noise_magnitude: 0.1
+  asymmetric_noise_rate_a: 0.025
+  asymmetric_noise_rate_b: 0.025
+  external_noise_ratio: 0.05
 
 model:
   stage_count: 6

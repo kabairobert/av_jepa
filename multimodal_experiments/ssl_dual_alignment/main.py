@@ -64,10 +64,16 @@ def run(fname: str = "multimodal_experiments/ssl_dual_alignment/cfgs/paired_fact
 
     # --- 4. Dataset ---
     train_set = DualDisentangleDataset(
-        data_type=cfg.data.get('type', '2d'), 
+        data_type=cfg.data.get('type', '2d'),
         num_samples=cfg.data.get('num_samples', 4096),
         path_a=cfg.data.get('path_a', None),
-        path_b=cfg.data.get('path_b', None)
+        path_b=cfg.data.get('path_b', None),
+        manifold_noise_a=cfg.data.get('manifold_noise_a', None),
+        manifold_noise_b=cfg.data.get('manifold_noise_b', None),
+        asymmetric_noise_magnitude=cfg.data.get('asymmetric_noise_magnitude', None),
+        asymmetric_noise_rate_a=cfg.data.get('asymmetric_noise_rate_a', None),
+        asymmetric_noise_rate_b=cfg.data.get('asymmetric_noise_rate_b', None),
+        external_noise_ratio=cfg.data.get('external_noise_ratio', None),
     )
     train_loader = DataLoader(train_set, batch_size=cfg.data.get('batch_size', 128), shuffle=True, num_workers=cfg.data.get('num_workers', 0))
 

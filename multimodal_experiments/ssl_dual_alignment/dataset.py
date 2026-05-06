@@ -5,7 +5,19 @@ from multimodal_experiments.initial_trials.ssl_disentangling import sample_curve
 
 class DualDisentangleDataset(Dataset):
     """Paired modality dset. Shared latent source."""
-    def __init__(self, data_type='2d', num_samples=4096, path_a=None, path_b=None):
+    def __init__(
+        self,
+        data_type='2d',
+        num_samples=4096,
+        path_a=None,
+        path_b=None,
+        manifold_noise_a=None,
+        manifold_noise_b=None,
+        asymmetric_noise_magnitude=None,
+        asymmetric_noise_rate_a=None,
+        asymmetric_noise_rate_b=None,
+        external_noise_ratio=None,
+    ):
         # Setup. File paths or synth.
         self.num_samples = num_samples
         self.data_type = data_type
@@ -22,6 +34,15 @@ class DualDisentangleDataset(Dataset):
             self.param_values = param_values
             # Number of spiral turns for spiral-based shapes (use 1 for single-turn spirals)
             turns = 1
+
+            # Noise params: manifold_noise_a and manifold_noise_b mandatory (can be 0 to disable)
+            # Optional: asymmetric/external enabled only when provided (None = off)
+            self.manifold_noise_a = 0.02 if manifold_noise_a is None else manifold_noise_a
+            self.manifold_noise_b = 0.02 if manifold_noise_b is None else manifold_noise_b
+            self.asymmetric_noise_magnitude = asymmetric_noise_magnitude
+            self.asymmetric_noise_rate_a = asymmetric_noise_rate_a if asymmetric_noise_rate_a is not None else 0.0
+            self.asymmetric_noise_rate_b = asymmetric_noise_rate_b if asymmetric_noise_rate_b is not None else 0.0
+            self.external_noise_ratio = external_noise_ratio if external_noise_ratio is not None else 0.0
             
             if data_type == '2d':
                 # 2D shapes from 1D u.
@@ -41,8 +62,71 @@ class DualDisentangleDataset(Dataset):
                     y = x**3 - 0.5 * x - 0.5
                     return (x, y)
                     
-                data_a, _ = sample_curve_data(param_values, curve_a_fn, (0.02, 0.02))
-                data_b, _ = sample_curve_data(param_values, curve_b_fn, (0.02, 0.02))
+                # Split total num_samples into manifold / asymmetric / external according to rates
+                N = num_samples
+                n_external = int(round(N * self.external_noise_ratio))
+                n_asym_a = int(round(N * self.asymmetric_noise_rate_a))
+                n_asym_b = int(round(N * self.asymmetric_noise_rate_b))
+                n_manifold = N - (n_external + n_asym_a + n_asym_b)
+
+                if n_manifold < 1:
+                    raise ValueError("num_samples too small for configured noise rates")
+
+                # Manifold pairs
+                u_man = np.linspace(0, 1, n_manifold)
+                data_a_man, _ = sample_curve_data(u_man, curve_a_fn, (self.manifold_noise_a, self.manifold_noise_a))
+                data_b_man, _ = sample_curve_data(u_man, curve_b_fn, (self.manifold_noise_b, self.manifold_noise_b))
+
+                parts_a = [data_a_man]
+                parts_b = [data_b_man]
+                parts_u = [u_man]
+
+                # Asymmetric: A-good, B-corrupted (asymmetric_noise_rate_a)
+                if n_asym_a > 0:
+                    u_asym_a = np.random.uniform(0, 1, n_asym_a)
+                    a_good, _ = sample_curve_data(u_asym_a, curve_a_fn, (self.manifold_noise_a, self.manifold_noise_a))
+                    b_good, _ = sample_curve_data(u_asym_a, curve_b_fn, (self.manifold_noise_b, self.manifold_noise_b))
+                    if self.asymmetric_noise_magnitude is None:
+                        # default magnitude = 5x max manifold noise
+                        mag = 5.0 * max(self.manifold_noise_a, self.manifold_noise_b)
+                    else:
+                        mag = self.asymmetric_noise_magnitude
+                    b_corrupt = b_good + np.random.normal(scale=mag, size=b_good.shape)
+                    parts_a.append(a_good)
+                    parts_b.append(b_corrupt)
+                    parts_u.append(u_asym_a)
+
+                # Asymmetric: B-good, A-corrupted (asymmetric_noise_rate_b)
+                if n_asym_b > 0:
+                    u_asym_b = np.random.uniform(0, 1, n_asym_b)
+                    a_good2, _ = sample_curve_data(u_asym_b, curve_a_fn, (self.manifold_noise_a, self.manifold_noise_a))
+                    b_good2, _ = sample_curve_data(u_asym_b, curve_b_fn, (self.manifold_noise_b, self.manifold_noise_b))
+                    if self.asymmetric_noise_magnitude is None:
+                        mag2 = 5.0 * max(self.manifold_noise_a, self.manifold_noise_b)
+                    else:
+                        mag2 = self.asymmetric_noise_magnitude
+                    a_corrupt = a_good2 + np.random.normal(scale=mag2, size=a_good2.shape)
+                    parts_a.append(a_corrupt)
+                    parts_b.append(b_good2)
+                    parts_u.append(u_asym_b)
+
+                # External random points (both sides random, independent)
+                if n_external > 0:
+                    # create temporary manifold samples to infer bounds
+                    temp_a, _ = sample_curve_data(np.linspace(0, 1, max(10, n_manifold)), curve_a_fn, (self.manifold_noise_a, self.manifold_noise_a))
+                    temp_b, _ = sample_curve_data(np.linspace(0, 1, max(10, n_manifold)), curve_b_fn, (self.manifold_noise_b, self.manifold_noise_b))
+                    min_a, max_a = temp_a.min(axis=0), temp_a.max(axis=0)
+                    min_b, max_b = temp_b.min(axis=0), temp_b.max(axis=0)
+                    ext_a = np.random.uniform(min_a, max_a, size=(n_external, temp_a.shape[1]))
+                    ext_b = np.random.uniform(min_b, max_b, size=(n_external, temp_b.shape[1]))
+                    ext_u = np.random.uniform(0, 1, n_external)
+                    parts_a.append(ext_a)
+                    parts_b.append(ext_b)
+                    parts_u.append(ext_u)
+
+                data_a = np.vstack(parts_a)
+                data_b = np.vstack(parts_b)
+                param_values = np.concatenate(parts_u)
                 
             elif data_type == '3d-av-1f-common':
                 # 3D physical traits + rotation. 1D u.
@@ -65,28 +149,104 @@ class DualDisentangleDataset(Dataset):
                 """
                 
                 # Modality A: Audio.
-                pitch = 1.0 / (1.2 - param_values)
-                resonance = np.sin(param_values * np.pi)
-                splashing_noise = np.random.normal(0, 0.1, num_samples)
+                # For 3D audio-video case, respect manifold noise config
+                N = num_samples
+                n_external = int(round(N * self.external_noise_ratio))
+                n_asym_a = int(round(N * self.asymmetric_noise_rate_a))
+                n_asym_b = int(round(N * self.asymmetric_noise_rate_b))
+                n_manifold = N - (n_external + n_asym_a + n_asym_b)
+                if n_manifold < 1:
+                    raise ValueError("num_samples too small for configured noise rates")
+
+                # Manifold samples
+                u_man = np.linspace(0, 1, n_manifold)
+                pitch = 1.0 / (1.2 - u_man)
+                resonance = np.sin(u_man * np.pi)
+                splashing_noise = np.random.normal(0, self.manifold_noise_a, n_manifold)
                 data_a_unrot = np.stack([pitch, resonance, splashing_noise], axis=1)
                 data_a_std = (data_a_unrot - data_a_unrot.mean(axis=0)) / data_a_unrot.std(axis=0)
                 theta_y_a = np.pi / 4
                 theta_z_a = np.pi / 3
                 Ry_a = np.array([[np.cos(theta_y_a), 0, np.sin(theta_y_a)], [0, 1, 0], [-np.sin(theta_y_a), 0, np.cos(theta_y_a)]])
                 Rz_a = np.array([[np.cos(theta_z_a), -np.sin(theta_z_a), 0], [np.sin(theta_z_a), np.cos(theta_z_a), 0], [0, 0, 1]])
-                data_a = data_a_std @ (Ry_a @ Rz_a).T
+                data_a_man = data_a_std @ (Ry_a @ Rz_a).T
 
-                # Modality B: Video.
-                dim1_b = param_values
-                dim2_b = np.random.normal(0, 1, num_samples) * (0.5 + param_values)
-                dim3_b = np.random.normal(0, 0.15, num_samples)
+                dim1_b = u_man
+                dim2_b = np.random.normal(0, 1, n_manifold) * (0.5 + u_man)
+                dim3_b = np.random.normal(0, self.manifold_noise_b, n_manifold)
                 data_b_raw = np.column_stack((dim1_b, dim2_b, dim3_b))
-                data_b_std = (data_b_raw - np.mean(data_b_raw, axis=0)) / np.std(data_b_raw, axis=0)
-                theta_x_b = -np.pi / 3
-                theta_y_b = np.pi / 6
-                Rx_b = np.array([[1, 0, 0], [0, np.cos(theta_x_b), -np.sin(theta_x_b)], [0, np.sin(theta_x_b), np.cos(theta_x_b)]])
-                Ry_b = np.array([[np.cos(theta_y_b), 0, np.sin(theta_y_b)], [0, 1, 0], [-np.sin(theta_y_b), 0, np.cos(theta_y_b)]])
-                data_b = data_b_std @ (Rx_b @ Ry_b).T
+                data_b_man = (data_b_raw - np.mean(data_b_raw, axis=0)) / np.std(data_b_raw, axis=0)
+
+                parts_a = [data_a_man]
+                parts_b = [data_b_man]
+                parts_u = [u_man]
+
+                # Asymmetric A-good, B-corrupt
+                if n_asym_a > 0:
+                    u_asym_a = np.random.uniform(0, 1, n_asym_a)
+                    pitch_a = 1.0 / (1.2 - u_asym_a)
+                    res_a = np.sin(u_asym_a * np.pi)
+                    splash_a = np.random.normal(0, self.manifold_noise_a, n_asym_a)
+                    a_good = np.stack([pitch_a, res_a, splash_a], axis=1)
+                    a_good = (a_good - a_good.mean(axis=0)) / a_good.std(axis=0)
+
+                    dim1_b = u_asym_a
+                    dim2_b = np.random.normal(0, 1, n_asym_a) * (0.5 + u_asym_a)
+                    dim3_b = np.random.normal(0, self.manifold_noise_b, n_asym_a)
+                    b_good = (np.column_stack((dim1_b, dim2_b, dim3_b)) - np.mean(np.column_stack((dim1_b, dim2_b, dim3_b)), axis=0)) / np.std(np.column_stack((dim1_b, dim2_b, dim3_b)), axis=0)
+                    mag = self.asymmetric_noise_magnitude if self.asymmetric_noise_magnitude is not None else 5.0 * max(self.manifold_noise_a, self.manifold_noise_b)
+                    b_corrupt = b_good + np.random.normal(scale=mag, size=b_good.shape)
+                    parts_a.append(a_good)
+                    parts_b.append(b_corrupt)
+                    parts_u.append(u_asym_a)
+
+                # Asymmetric B-good, A-corrupt
+                if n_asym_b > 0:
+                    u_asym_b = np.random.uniform(0, 1, n_asym_b)
+                    pitch_a = 1.0 / (1.2 - u_asym_b)
+                    res_a = np.sin(u_asym_b * np.pi)
+                    splash_a = np.random.normal(0, self.manifold_noise_a, n_asym_b)
+                    a_good2 = np.stack([pitch_a, res_a, splash_a], axis=1)
+                    a_good2 = (a_good2 - a_good2.mean(axis=0)) / a_good2.std(axis=0)
+
+                    dim1_b = u_asym_b
+                    dim2_b = np.random.normal(0, 1, n_asym_b) * (0.5 + u_asym_b)
+                    dim3_b = np.random.normal(0, self.manifold_noise_b, n_asym_b)
+                    b_good2 = (np.column_stack((dim1_b, dim2_b, dim3_b)) - np.mean(np.column_stack((dim1_b, dim2_b, dim3_b)), axis=0)) / np.std(np.column_stack((dim1_b, dim2_b, dim3_b)), axis=0)
+                    mag2 = self.asymmetric_noise_magnitude if self.asymmetric_noise_magnitude is not None else 5.0 * max(self.manifold_noise_a, self.manifold_noise_b)
+                    a_corrupt = a_good2 + np.random.normal(scale=mag2, size=a_good2.shape)
+                    parts_a.append(a_corrupt)
+                    parts_b.append(b_good2)
+                    parts_u.append(u_asym_b)
+
+                # External random points
+                if n_external > 0:
+                    # build temp manifolds with correct dimensionality for A (3D) and B (3D)
+                    temp_u = np.linspace(0, 1, max(10, n_manifold))
+                    # temp A (pitch,resonance,splash)
+                    pitch_t = 1.0 / (1.2 - temp_u)
+                    resonance_t = np.sin(temp_u * np.pi)
+                    splash_t = np.random.normal(0, self.manifold_noise_a, len(temp_u))
+                    temp_a_unrot = np.stack([pitch_t, resonance_t, splash_t], axis=1)
+                    temp_a = (temp_a_unrot - temp_a_unrot.mean(axis=0)) / temp_a_unrot.std(axis=0)
+                    # temp B
+                    dim1_tb = temp_u
+                    dim2_tb = np.random.normal(0, 1, len(temp_u)) * (0.5 + temp_u)
+                    dim3_tb = np.random.normal(0, self.manifold_noise_b, len(temp_u))
+                    temp_b_raw = np.column_stack((dim1_tb, dim2_tb, dim3_tb))
+                    temp_b = (temp_b_raw - np.mean(temp_b_raw, axis=0)) / np.std(temp_b_raw, axis=0)
+                    min_a, max_a = temp_a.min(axis=0), temp_a.max(axis=0)
+                    min_b, max_b = temp_b.min(axis=0), temp_b.max(axis=0)
+                    ext_a = np.random.uniform(min_a, max_a, size=(n_external, temp_a.shape[1]))
+                    ext_b = np.random.uniform(min_b, max_b, size=(n_external, temp_b.shape[1]))
+                    ext_u = np.random.uniform(0, 1, n_external)
+                    parts_a.append(ext_a)
+                    parts_b.append(ext_b)
+                    parts_u.append(ext_u)
+
+                data_a = np.vstack(parts_a)
+                data_b = np.vstack(parts_b)
+                param_values = np.concatenate(parts_u)
 
             elif data_type == '3d-2f-common':
                 # 2 common factors. u1 -> shape, u2 -> 3rd dim (stretch vs shear).
@@ -108,17 +268,26 @@ class DualDisentangleDataset(Dataset):
                 3. Multiplier 1 (width 1).
                 4. Final: $(x, y, u_2) + \text{noise}$.
                 """
-                u1 = param_values
-                u2 = np.random.uniform(0, 1, num_samples)
+                # For 3d-2f-common split counts same as other types
+                N = num_samples
+                n_external = int(round(N * self.external_noise_ratio))
+                n_asym_a = int(round(N * self.asymmetric_noise_rate_a))
+                n_asym_b = int(round(N * self.asymmetric_noise_rate_b))
+                n_manifold = N - (n_external + n_asym_a + n_asym_b)
+                if n_manifold < 1:
+                    raise ValueError("num_samples too small for configured noise rates")
+
+                u1_man = np.linspace(0, 1, n_manifold)
+                u2_man = np.random.uniform(0, 1, n_manifold)
 
                 # Mod A: 3D Spiral. Stretch width 2.
                 def curve_a_fn_3d(u1_vals):
                     return ((0.8 * u1_vals + 0.2) * np.sin(turns * u1_vals * 2 * np.pi), 
                             (0.8 * u1_vals + 0.2) * np.cos(turns * u1_vals * 2 * np.pi))
 
-                xy_a, _ = sample_curve_data(u1, curve_a_fn_3d, (0.02, 0.02))
-                z_a = (u2 * 2.0).reshape(-1, 1)
-                data_a = np.hstack([xy_a, z_a])
+                xy_a_man, _ = sample_curve_data(u1_man, curve_a_fn_3d, (self.manifold_noise_a, self.manifold_noise_a))
+                z_a_man = (u2_man * 2.0).reshape(-1, 1)
+                data_a_man = np.hstack([xy_a_man, z_a_man])
 
                 # Mod B: 3D Cubic. Shear width 1.
                 def curve_b_fn_3d(u1_vals):
@@ -126,9 +295,64 @@ class DualDisentangleDataset(Dataset):
                     y = x**3 - 0.5 * x - 0.5
                     return (x, y)
 
-                xy_b, _ = sample_curve_data(u1, curve_b_fn_3d, (0.02, 0.02))
-                z_b = u2.reshape(-1, 1)
-                data_b = np.hstack([xy_b, z_b])
+                xy_b_man, _ = sample_curve_data(u1_man, curve_b_fn_3d, (self.manifold_noise_b, self.manifold_noise_b))
+                z_b_man = u2_man.reshape(-1, 1)
+                data_b_man = np.hstack([xy_b_man, z_b_man])
+
+                parts_a = [data_a_man]
+                parts_b = [data_b_man]
+                parts_u = [np.column_stack([u1_man, u2_man])]
+
+                # Asymmetric A-good, B-corrupt
+                if n_asym_a > 0:
+                    u1_as = np.random.uniform(0, 1, n_asym_a)
+                    u2_as = np.random.uniform(0, 1, n_asym_a)
+                    xy_a_as, _ = sample_curve_data(u1_as, curve_a_fn_3d, (self.manifold_noise_a, self.manifold_noise_a))
+                    z_a_as = (u2_as * 2.0).reshape(-1, 1)
+                    a_good = np.hstack([xy_a_as, z_a_as])
+
+                    xy_b_as, _ = sample_curve_data(u1_as, curve_b_fn_3d, (self.manifold_noise_b, self.manifold_noise_b))
+                    z_b_as = u2_as.reshape(-1, 1)
+                    b_good = np.hstack([xy_b_as, z_b_as])
+                    mag = self.asymmetric_noise_magnitude if self.asymmetric_noise_magnitude is not None else 5.0 * max(self.manifold_noise_a, self.manifold_noise_b)
+                    b_corrupt = b_good + np.random.normal(scale=mag, size=b_good.shape)
+                    parts_a.append(a_good)
+                    parts_b.append(b_corrupt)
+                    parts_u.append(np.column_stack([u1_as, u2_as]))
+
+                # Asymmetric B-good, A-corrupt
+                if n_asym_b > 0:
+                    u1_as2 = np.random.uniform(0, 1, n_asym_b)
+                    u2_as2 = np.random.uniform(0, 1, n_asym_b)
+                    xy_a_as2, _ = sample_curve_data(u1_as2, curve_a_fn_3d, (self.manifold_noise_a, self.manifold_noise_a))
+                    z_a_as2 = (u2_as2 * 2.0).reshape(-1, 1)
+                    a_good2 = np.hstack([xy_a_as2, z_a_as2])
+
+                    xy_b_as2, _ = sample_curve_data(u1_as2, curve_b_fn_3d, (self.manifold_noise_b, self.manifold_noise_b))
+                    z_b_as2 = u2_as2.reshape(-1, 1)
+                    b_good2 = np.hstack([xy_b_as2, z_b_as2])
+                    mag2 = self.asymmetric_noise_magnitude if self.asymmetric_noise_magnitude is not None else 5.0 * max(self.manifold_noise_a, self.manifold_noise_b)
+                    a_corrupt = a_good2 + np.random.normal(scale=mag2, size=a_good2.shape)
+                    parts_a.append(a_corrupt)
+                    parts_b.append(b_good2)
+                    parts_u.append(np.column_stack([u1_as2, u2_as2]))
+
+                # External random points
+                if n_external > 0:
+                    temp_a, _ = sample_curve_data(np.linspace(0, 1, max(10, n_manifold)), curve_a_fn_3d, (self.manifold_noise_a, self.manifold_noise_a))
+                    temp_b, _ = sample_curve_data(np.linspace(0, 1, max(10, n_manifold)), curve_b_fn_3d, (self.manifold_noise_b, self.manifold_noise_b))
+                    min_a, max_a = temp_a.min(axis=0), temp_a.max(axis=0)
+                    min_b, max_b = temp_b.min(axis=0), temp_b.max(axis=0)
+                    ext_a = np.random.uniform(min_a, max_a, size=(n_external, temp_a.shape[1]))
+                    ext_b = np.random.uniform(min_b, max_b, size=(n_external, temp_b.shape[1]))
+                    ext_u = np.column_stack([np.random.uniform(0, 1, n_external), np.random.uniform(0, 1, n_external)])
+                    parts_a.append(ext_a)
+                    parts_b.append(ext_b)
+                    parts_u.append(ext_u)
+
+                data_a = np.vstack(parts_a)
+                data_b = np.vstack(parts_b)
+                param_values = np.vstack(parts_u)
 
             else:
                 raise ValueError(f"Unknown data type {data_type}")
