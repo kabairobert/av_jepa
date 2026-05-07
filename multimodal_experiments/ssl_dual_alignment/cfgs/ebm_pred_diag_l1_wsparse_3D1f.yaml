@@ -30,7 +30,7 @@ loss:
   use_l1: true
 
 optim:
-  epochs: 500
+  epochs: 150
   lr: 1.0e-3
 
 logging:
