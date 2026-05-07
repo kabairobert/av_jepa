@@ -339,8 +339,14 @@ class DualDisentangleDataset(Dataset):
 
                 # External random points
                 if n_external > 0:
-                    temp_a, _ = sample_curve_data(np.linspace(0, 1, max(10, n_manifold)), curve_a_fn_3d, (self.manifold_noise_a, self.manifold_noise_a))
-                    temp_b, _ = sample_curve_data(np.linspace(0, 1, max(10, n_manifold)), curve_b_fn_3d, (self.manifold_noise_b, self.manifold_noise_b))
+                    temp_u1 = np.linspace(0, 1, max(10, n_manifold))
+                    temp_u2 = np.random.uniform(0, 1, len(temp_u1))
+
+                    temp_xy_a, _ = sample_curve_data(temp_u1, curve_a_fn_3d, (self.manifold_noise_a, self.manifold_noise_a))
+                    temp_a = np.hstack([temp_xy_a, (2.0 * temp_u2).reshape(-1, 1)])
+
+                    temp_xy_b, _ = sample_curve_data(temp_u1, curve_b_fn_3d, (self.manifold_noise_b, self.manifold_noise_b))
+                    temp_b = np.hstack([temp_xy_b, temp_u2.reshape(-1, 1)])
                     min_a, max_a = temp_a.min(axis=0), temp_a.max(axis=0)
                     min_b, max_b = temp_b.min(axis=0), temp_b.max(axis=0)
                     ext_a = np.random.uniform(min_a, max_a, size=(n_external, temp_a.shape[1]))
