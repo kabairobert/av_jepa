@@ -225,7 +225,10 @@ tests/logs/
 checkpoints/
 *.pth
 *.npy
+*.err
+*.out
 CLAUDE.md
 eb_jepa_private_gdrive.code-workspace
 uv uninstalled.txt
 .github/copilot-instructions.md
+.github/skills/
