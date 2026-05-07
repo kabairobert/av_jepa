@@ -40,7 +40,7 @@ total=${#CFG_MATRIX[@]}
 idx=1
 for cfg in "${CFG_MATRIX[@]}"; do
     echo "Starting training ${idx}/${total}: ${cfg}"
-    uv run python -m multimodal_experiments.ssl_dual_alignment.main --fname "${cfg}" --logging.notes "SSL dual alignment 5 versions 2D/3D."
+    uv run python -m multimodal_experiments.ssl_dual_alignment.main --fname "${cfg}" --logging.notes "SSL dual alignment w/noise, 5 model vers"
     idx=$((idx + 1))
 done
 
