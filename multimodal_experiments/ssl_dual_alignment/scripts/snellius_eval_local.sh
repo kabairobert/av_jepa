@@ -1,22 +1,3 @@
-#!/bin/bash
-#SBATCH --job-name=dalign_eval
-#SBATCH --partition=gpu_mig
-#SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=9
-#SBATCH --gpus=1
-#SBATCH --mem=60G
-#SBATCH --time=00:05:00
-#SBATCH --output=%x_%j.out
-#SBATCH --error=%x_%j.err
-
-set -e
-
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-
-module load 2023
-module load Python/3.11.3-GCCcore-12.3.0
-
 source ~/.secrets
 
 cd ~/github/eb_jepa_private
