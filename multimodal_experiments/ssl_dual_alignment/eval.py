@@ -158,24 +158,10 @@ def _build_interactive_4way_html(
         showlegend=False,
         hovermode="closest",
     )
-    scene_aspect = dict(aspectmode="manual", aspectratio=dict(x=1.6, y=1.0, z=0.9))
-    # Apply consistent axis ranges if axis_box provided
-    if axis_box is not None:
-        min_box = axis_box[0]
-        max_box = axis_box[1]
-        scene_range = dict(
-            xaxis=dict(range=[float(min_box[0]), float(max_box[0])]),
-            yaxis=dict(range=[float(min_box[1]), float(max_box[1])]),
-            zaxis=dict(range=[float(min_box[2]), float(max_box[2])]),
-        )
-        fig.update_layout(
-            scene={**scene_aspect, **scene_range},
-            scene2={**scene_aspect, **scene_range},
-            scene3={**scene_aspect, **scene_range},
-            scene4={**scene_aspect, **scene_range},
-        )
-    else:
-        fig.update_layout(scene=scene_aspect, scene2=scene_aspect, scene3=scene_aspect, scene4=scene_aspect)
+    # Let each subplot autoscale independently, but enforce cube aspect so all
+    # 3 axes use equal visual scale in every scene.
+    scene_cube = dict(aspectmode="cube")
+    fig.update_layout(scene=scene_cube, scene2=scene_cube, scene3=scene_cube, scene4=scene_cube)
 
     html_body = fig.to_html(full_html=False, include_plotlyjs="cdn", default_width="100%", default_height="100%")
     wrapped = f"<div style='width:100%;height:100%;min-height:{int(min_height_px)}px'>{html_body}</div>"
@@ -308,7 +294,6 @@ def evaluate_and_log_checkpoint(
                 out_b,
                 np.asarray(param_values),
                 min_height_px=int(interactive_min_height),
-                axis_box=getattr(eval_set, 'axis_box', None),
             )
             if html is not None:
                 wandb.log({"interactive_3d_4way_html": wandb.Html(html)}, step=step)

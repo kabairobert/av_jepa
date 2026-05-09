@@ -21,23 +21,11 @@ def plot_original_spaces(data_a, data_b, param_values, axis_box=None):
                     c=param_values_1d, cmap='turbo', s=5, alpha=0.5)
         ax1.set_title('Modality A')
         ax1.set_xlabel('Dim 1'); ax1.set_ylabel('Dim 2'); ax1.set_zlabel('Dim 3')
-        # Apply unified cubic axis limits if provided
-        if axis_box is not None:
-            min_box, max_box = axis_box[0], axis_box[1]
-            ax1.set_xlim(min_box[0], max_box[0])
-            ax1.set_ylim(min_box[1], max_box[1])
-            ax1.set_zlim(min_box[2], max_box[2])
         ax2 = fig.add_subplot(122, projection='3d')
         ax2.scatter(data_b[:, 0], data_b[:, 1], data_b[:, 2],
                     c=param_values_1d, cmap='turbo', s=5, alpha=0.5)
         ax2.set_title('Modality B')
         ax2.set_xlabel('Dim 1'); ax2.set_ylabel('Dim 2'); ax2.set_zlabel('Dim 3')
-
-        if axis_box is not None:
-            min_box, max_box = axis_box[0], axis_box[1]
-            ax2.set_xlim(min_box[0], max_box[0])
-            ax2.set_ylim(min_box[1], max_box[1])
-            ax2.set_zlim(min_box[2], max_box[2])
     else:
         ax1 = fig.add_subplot(121)
         ax1.scatter(data_a[:, 0], data_a[:, 1], c=param_values_1d, cmap='turbo', alpha=0.5)
@@ -89,13 +77,6 @@ def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, 
             axs[i].set_ylabel('Dim 2')
             axs[i].set_zlabel('Dim 3')
 
-        # Apply unified cubic axis limits (same for all 4 subplots) if provided
-        if axis_box is not None:
-            min_box, max_box = axis_box[0], axis_box[1]
-            for ax in axs:
-                ax.set_xlim(min_box[0], max_box[0])
-                ax.set_ylim(min_box[1], max_box[1])
-                ax.set_zlim(min_box[2], max_box[2])
     else:
         axs = [fig.add_subplot(1, 4, i+1) for i in range(4)]
         axs[0].scatter(data_a[:, 0], data_a[:, 1], c=color_code, cmap='turbo', s=10, alpha=0.85)
@@ -122,9 +103,8 @@ def log_plots_to_wandb(dual_model, dataset, device, step, wandb_run):
     data_b = dataset.data_b.numpy()
     param_values = dataset.param_values
     
-    axis_box = getattr(dataset, 'axis_box', None)
-    fig_spaces = plot_original_spaces(data_a, data_b, param_values, axis_box=axis_box)
-    fig_reshaping = plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, device, axis_box=axis_box)
+    fig_spaces = plot_original_spaces(data_a, data_b, param_values)
+    fig_reshaping = plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, device)
     
     if wandb_run:
         wandb.log({
