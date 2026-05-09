@@ -9,10 +9,16 @@ def plot_original_spaces(data_a, data_b, param_values, axis_box=None):
     is_3d = data_a.shape[1] >= 3
     fig = plt.figure(figsize=(12, 6))
     
+    # For 2D param_values (multi-factor case), extract first factor for matplotlib coloring
+    if isinstance(param_values, np.ndarray) and param_values.ndim == 2:
+        param_values_1d = param_values[:, 0]
+    else:
+        param_values_1d = param_values
+    
     if is_3d:
         ax1 = fig.add_subplot(121, projection='3d')
         ax1.scatter(data_a[:, 0], data_a[:, 1], data_a[:, 2],
-                    c=param_values, cmap='turbo', s=5, alpha=0.5)
+                    c=param_values_1d, cmap='turbo', s=5, alpha=0.5)
         ax1.set_title('Modality A')
         ax1.set_xlabel('Dim 1'); ax1.set_ylabel('Dim 2'); ax1.set_zlabel('Dim 3')
         # Apply unified cubic axis limits if provided
@@ -23,7 +29,7 @@ def plot_original_spaces(data_a, data_b, param_values, axis_box=None):
             ax1.set_zlim(min_box[2], max_box[2])
         ax2 = fig.add_subplot(122, projection='3d')
         ax2.scatter(data_b[:, 0], data_b[:, 1], data_b[:, 2],
-                    c=param_values, cmap='turbo', s=5, alpha=0.5)
+                    c=param_values_1d, cmap='turbo', s=5, alpha=0.5)
         ax2.set_title('Modality B')
         ax2.set_xlabel('Dim 1'); ax2.set_ylabel('Dim 2'); ax2.set_zlabel('Dim 3')
 
@@ -34,13 +40,13 @@ def plot_original_spaces(data_a, data_b, param_values, axis_box=None):
             ax2.set_zlim(min_box[2], max_box[2])
     else:
         ax1 = fig.add_subplot(121)
-        ax1.scatter(data_a[:, 0], data_a[:, 1], c=param_values, cmap='turbo', alpha=0.5)
+        ax1.scatter(data_a[:, 0], data_a[:, 1], c=param_values_1d, cmap='turbo', alpha=0.5)
         ax1.set_title('Modality A')
         ax1.set_xlabel('Dim 1'); ax1.set_ylabel('Dim 2')
         ax1.axis('equal')
 
         ax2 = fig.add_subplot(122)
-        ax2.scatter(data_b[:, 0], data_b[:, 1], c=param_values, cmap='turbo', alpha=0.5)
+        ax2.scatter(data_b[:, 0], data_b[:, 1], c=param_values_1d, cmap='turbo', alpha=0.5)
         ax2.set_title('Modality B')
         ax2.set_xlabel('Dim 1'); ax2.set_ylabel('Dim 2')
         ax2.axis('equal')
@@ -58,8 +64,14 @@ def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, 
     output_a = output_a.detach().cpu().numpy()
     output_b = output_b.detach().cpu().numpy()
     
+    # For 2D param_values (multi-factor case), extract first factor for matplotlib coloring
+    if isinstance(param_values, np.ndarray) and param_values.ndim == 2:
+        param_values_1d = param_values[:, 0]
+    else:
+        param_values_1d = param_values
+    
     # Normalize color code
-    color_code = (param_values - np.min(param_values)) / (np.max(param_values) - np.min(param_values) + 1e-12)
+    color_code = (param_values_1d - np.min(param_values_1d)) / (np.max(param_values_1d) - np.min(param_values_1d) + 1e-12)
 
     is_3d = data_a.shape[1] >= 3
     fig = plt.figure(figsize=(18, 4))
