@@ -175,6 +175,88 @@ def _eval_loop(
     }
 
 
+def evaluate_and_log_checkpoint(
+    eval_set: DualDisentangleDataset,
+    eval_loader: DataLoader,
+    dual_model: torch.nn.Module,
+    loss_fn: torch.nn.Module,
+    loss_type: str,
+    predictors: Dict[str, Optional[torch.nn.Module]],
+    device: torch.device,
+    step: int,
+    wandb_run,
+    *,
+    checkpoint_name: Optional[str] = None,
+    checkpoint_path: Optional[str] = None,
+    max_batches: Optional[int] = None,
+    log_interactive_3d: bool = True,
+    interactive_min_height: int = 420,
+    max_interactive_points: int = 2000,
+    log_prefix: str = "val",
+    is_3d: Optional[bool] = None,
+) -> Dict[str, float]:
+    metrics = _eval_loop(
+        eval_loader,
+        dual_model,
+        loss_fn,
+        loss_type,
+        predictors,
+        device,
+        max_batches=max_batches,
+    )
+
+    logs = {
+        f"{log_prefix}/loss": metrics["loss"],
+        f"{log_prefix}/align_mse_a2b": metrics["align_mse_a2b"],
+        f"{log_prefix}/align_mse_b2a": metrics["align_mse_b2a"],
+    }
+    if checkpoint_name is not None:
+        logs["eval/checkpoint_name"] = checkpoint_name
+    if checkpoint_path is not None:
+        logs["eval/checkpoint_path"] = checkpoint_path
+    logs["eval/checkpoint_step"] = int(step)
+
+    if wandb_run:
+        import wandb
+
+        wandb.log(logs, step=step)
+        log_plots_to_wandb(dual_model, eval_set, device, step, wandb_run)
+
+        if is_3d is None:
+            data_type = str(getattr(eval_set, "data_type", ""))
+            is_3d = data_type.startswith("3d")
+
+        if is_3d and log_interactive_3d:
+            data_a = eval_set.data_a.numpy()
+            data_b = eval_set.data_b.numpy()
+            param_values = eval_set.param_values
+            if data_a.shape[0] > max_interactive_points:
+                idxs = np.random.choice(data_a.shape[0], size=max_interactive_points, replace=False)
+                data_a = data_a[idxs]
+                data_b = data_b[idxs]
+                param_values = param_values[idxs]
+
+            dual_model.eval()
+            with torch.no_grad():
+                out_a, _ = dual_model.model_a(torch.tensor(data_a, device=device, dtype=torch.float32))
+                out_b, _ = dual_model.model_b(torch.tensor(data_b, device=device, dtype=torch.float32))
+            out_a = out_a.detach().cpu().numpy()
+            out_b = out_b.detach().cpu().numpy()
+
+            html = _build_interactive_4way_html(
+                data_a,
+                data_b,
+                out_a,
+                out_b,
+                np.asarray(param_values),
+                min_height_px=int(interactive_min_height),
+            )
+            if html is not None:
+                wandb.log({"interactive_3d_4way_html": wandb.Html(html)}, step=step)
+
+    return metrics
+
+
 def run(
     folder: Optional[str] = None,
     cfg: Optional[str] = None,
@@ -307,60 +389,25 @@ def run(
             ckpt_step = int(_checkpoint_epoch(ckpt))
         ckpt_step = int(ckpt_step)
 
-        metrics = _eval_loop(
+        metrics = evaluate_and_log_checkpoint(
+            eval_set,
             eval_loader,
             dual_model,
             loss_fn,
             loss_type,
             {"a2b": predictor_a2b, "b2a": predictor_b2a},
             device,
+            ckpt_step,
+            wandb_run,
+            checkpoint_name=ckpt.name,
+            checkpoint_path=str(ckpt),
             max_batches=max_batches,
+            log_interactive_3d=is_3d and is_last and log_interactive_3d,
+            interactive_min_height=interactive_min_height,
+            max_interactive_points=max_interactive_points,
+            log_prefix="val",
+            is_3d=is_3d,
         )
-
-        logs = {
-            "val/loss": metrics["loss"],
-            "val/align_mse_a2b": metrics["align_mse_a2b"],
-            "val/align_mse_b2a": metrics["align_mse_b2a"],
-            "eval/checkpoint_name": ckpt.name,
-            "eval/checkpoint_path": str(ckpt),
-            "eval/checkpoint_step": int(ckpt_step),
-        }
-
-        if wandb_run:
-            import wandb
-
-            wandb.log(logs, step=ckpt_step)
-            # Static 4-way plots in media
-            log_plots_to_wandb(dual_model, eval_set, device, ckpt_step, wandb_run)
-
-            # Interactive HTML (3D only, last checkpoint)
-            if is_3d and is_last and log_interactive_3d:
-                data_a = eval_set.data_a.numpy()
-                data_b = eval_set.data_b.numpy()
-                param_values = eval_set.param_values
-                if data_a.shape[0] > max_interactive_points:
-                    idxs = np.random.choice(data_a.shape[0], size=max_interactive_points, replace=False)
-                    data_a = data_a[idxs]
-                    data_b = data_b[idxs]
-                    param_values = param_values[idxs]
-
-                dual_model.eval()
-                with torch.no_grad():
-                    out_a, _ = dual_model.model_a(torch.tensor(data_a, device=device, dtype=torch.float32))
-                    out_b, _ = dual_model.model_b(torch.tensor(data_b, device=device, dtype=torch.float32))
-                out_a = out_a.detach().cpu().numpy()
-                out_b = out_b.detach().cpu().numpy()
-
-                html = _build_interactive_4way_html(
-                    data_a,
-                    data_b,
-                    out_a,
-                    out_b,
-                    np.asarray(param_values),
-                    min_height_px=int(interactive_min_height),
-                )
-                if html is not None:
-                    wandb.log({"interactive_3d_4way_html": wandb.Html(html)}, step=ckpt_step)
 
         logger.info(
             "Eval %s | loss=%.4f | a2b=%.4f | b2a=%.4f",

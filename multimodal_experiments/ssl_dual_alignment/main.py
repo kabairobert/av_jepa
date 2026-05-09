@@ -14,6 +14,7 @@ from multimodal_experiments.ssl_dual_alignment.dataset import DualDisentangleDat
 from multimodal_experiments.ssl_dual_alignment.model_builder import build_model_and_predictors
 from multimodal_experiments.ssl_dual_alignment.losses import EBMJEPALoss
 from multimodal_experiments.initial_trials.ssl_disentangling import SupervisedFactorLoss
+from multimodal_experiments.ssl_dual_alignment.eval import evaluate_and_log_checkpoint
 from multimodal_experiments.ssl_dual_alignment.vis import log_plots_to_wandb
 
 def run(fname: str = "multimodal_experiments/ssl_dual_alignment/cfgs/paired_factors_2D.yaml", cfg=None, folder=None, **overrides):
@@ -182,12 +183,42 @@ def run(fname: str = "multimodal_experiments/ssl_dual_alignment/cfgs/paired_fact
                 step=global_step,
             )
             if wandb_run:
-                log_plots_to_wandb(dual_model, train_set, device, global_step, wandb_run)
+                evaluate_and_log_checkpoint(
+                    train_set,
+                    train_loader,
+                    dual_model,
+                    loss_fn,
+                    loss_type,
+                    {"a2b": predictor_a2b, "b2a": predictor_b2a},
+                    device,
+                    global_step,
+                    wandb_run,
+                    checkpoint_name=f"epoch_{epoch_idx+1}.pth.tar",
+                    checkpoint_path=str(exp_dir / f"epoch_{epoch_idx+1}.pth.tar"),
+                    log_interactive_3d=str(cfg.data.get("type", "2d")).startswith("3d"),
+                    log_prefix="val",
+                    is_3d=str(cfg.data.get("type", "2d")).startswith("3d"),
+                )
             
     save_checkpoint(exp_dir / "latest.pth.tar", model=dual_model, optimizer=optimizer, epoch=epochs, step=global_step)
     
     if wandb_run and epochs % cfg.logging.get("save_every", 50) != 0:
-        log_plots_to_wandb(dual_model, train_set, device, global_step, wandb_run)
+        evaluate_and_log_checkpoint(
+            train_set,
+            train_loader,
+            dual_model,
+            loss_fn,
+            loss_type,
+            {"a2b": predictor_a2b, "b2a": predictor_b2a},
+            device,
+            global_step,
+            wandb_run,
+            checkpoint_name="latest.pth.tar",
+            checkpoint_path=str(exp_dir / "latest.pth.tar"),
+            log_interactive_3d=str(cfg.data.get("type", "2d")).startswith("3d"),
+            log_prefix="val",
+            is_3d=str(cfg.data.get("type", "2d")).startswith("3d"),
+        )
     
     if wandb_run:
         import wandb
