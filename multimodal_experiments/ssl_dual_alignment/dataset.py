@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 from torch.utils.data import Dataset
+from scipy.spatial.transform import Rotation
 from multimodal_experiments.initial_trials.ssl_disentangling import sample_curve_data
 
 class DualDisentangleDataset(Dataset):
@@ -17,10 +18,16 @@ class DualDisentangleDataset(Dataset):
         asymmetric_noise_rate_a=None,
         asymmetric_noise_rate_b=None,
         external_noise_ratio=None,
+        seed=None,
     ):
         # Setup. File paths or synth.
         self.num_samples = num_samples
         self.data_type = data_type
+        self.seed = seed
+        
+        # Set global seed for reproducibility of noise generation
+        if seed is not None:
+            np.random.seed(seed)
         
         if path_a is not None and path_b is not None:
             # External load.
@@ -363,11 +370,51 @@ class DualDisentangleDataset(Dataset):
             else:
                 raise ValueError(f"Unknown data type {data_type}")
             
+            # Apply random 3D rotations (for 3D data types) after all generation
+            if data_type.startswith('3d') and data_a.shape[1] == 3:
+                data_a = self._apply_random_rotation(data_a, seed_offset=0)
+                data_b = self._apply_random_rotation(data_b, seed_offset=1)
+            
+            # Compute a universal cubic axis box based on (rotated) input spaces
+            # Combine inputs and compute per-dim min/max, then build a symmetric
+            # cubic box whose half-size equals the largest half-range across dims.
+            if data_type.startswith('3d') and data_a.shape[1] == 3:
+                combined = np.vstack([data_a, data_b])
+                mins = combined.min(axis=0)
+                maxs = combined.max(axis=0)
+                center = (mins + maxs) / 2.0
+                ranges = maxs - mins
+                half_size = float(np.max(ranges) / 2.0)
+                min_box = center - half_size
+                max_box = center + half_size
+                # store as numpy array shape (2,3): [min_box, max_box]
+                self.axis_box = np.vstack([min_box, max_box])
+            else:
+                self.axis_box = None
+
         # Data cast. Double precision.
         self.data_a = torch.tensor(data_a, dtype=torch.float32)
         self.data_b = torch.tensor(data_b, dtype=torch.float32)
+        self.param_values = param_values  # Keep as numpy for slicing in __getitem__
         self.corr_target = torch.tensor(np.tile([0.0, 0.9], (self.num_samples, 1)), dtype=torch.float32)
         
+    def _apply_random_rotation(self, data: np.ndarray, seed_offset: int = 0) -> np.ndarray:
+        """Apply uniform random 3D rotation to data. Seed ensures reproducibility per modality."""
+        if self.seed is None:
+            return data
+        
+        # Use offset seed for separate modalities (seed+0 for A, seed+1 for B)
+        rotation_seed = self.seed + seed_offset
+        rng = np.random.RandomState(rotation_seed)
+        
+        # Generate uniform random 3D rotation using Scipy
+        rot = Rotation.random(random_state=rng)
+        rotation_matrix = rot.as_matrix()  # (3, 3)
+        
+        # Apply rotation to all data points
+        rotated_data = data @ rotation_matrix.T
+        return rotated_data
+
     def _load_file(self, path):
         # Load data. npy/pt support.
         if path.endswith('.npy'):
@@ -381,9 +428,10 @@ class DualDisentangleDataset(Dataset):
         return self.num_samples
         
     def __getitem__(self, idx):
+        param_val = self.param_values[idx] if isinstance(self.param_values, np.ndarray) else self.param_values[idx].numpy()
         return {
             "data_a": self.data_a[idx],
             "data_b": self.data_b[idx],
             "corr_target": self.corr_target[idx],
-            "param_values": self.param_values[idx]
+            "param_values": torch.tensor(param_val, dtype=torch.float32)
         }

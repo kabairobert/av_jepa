@@ -75,6 +75,7 @@ def run(fname: str = "multimodal_experiments/ssl_dual_alignment/cfgs/paired_fact
         asymmetric_noise_rate_a=cfg.data.get('asymmetric_noise_rate_a', None),
         asymmetric_noise_rate_b=cfg.data.get('asymmetric_noise_rate_b', None),
         external_noise_ratio=cfg.data.get('external_noise_ratio', None),
+        seed=cfg.meta.seed,
     )
     train_loader = DataLoader(train_set, batch_size=cfg.data.get('batch_size', 128), shuffle=True, num_workers=cfg.data.get('num_workers', 0))
 
@@ -181,6 +182,7 @@ def run(fname: str = "multimodal_experiments/ssl_dual_alignment/cfgs/paired_fact
                 optimizer=optimizer,
                 epoch=epoch_idx,
                 step=global_step,
+                axis_box=getattr(train_set, 'axis_box', None),
             )
             if wandb_run:
                 evaluate_and_log_checkpoint(
@@ -200,7 +202,7 @@ def run(fname: str = "multimodal_experiments/ssl_dual_alignment/cfgs/paired_fact
                     is_3d=str(cfg.data.get("type", "2d")).startswith("3d"),
                 )
             
-    save_checkpoint(exp_dir / "latest.pth.tar", model=dual_model, optimizer=optimizer, epoch=epochs, step=global_step)
+    save_checkpoint(exp_dir / "latest.pth.tar", model=dual_model, optimizer=optimizer, epoch=epochs, step=global_step, axis_box=getattr(train_set, 'axis_box', None))
     
     if wandb_run and epochs % cfg.logging.get("save_every", 50) != 0:
         evaluate_and_log_checkpoint(

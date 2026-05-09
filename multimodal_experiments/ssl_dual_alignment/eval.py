@@ -56,12 +56,55 @@ def _discover_checkpoints(run_dir: Path) -> list[Path]:
 
 
 def _get_color_values(param_values: np.ndarray) -> np.ndarray:
+    """Convert param values to RGB colors.
+    
+    For 1D param_values: use Turbo colorscale.
+    For 2D param_values: use HSV encoding (u1 → Hue, u2 → Saturation [0.2, 1]).
+    
+    Returns: list of color strings (RGB or hex) for Plotly.
+    """
+    # Convert to numpy if torch tensor
+    if hasattr(param_values, 'numpy'):
+        param_values = param_values.numpy()
+    
     if param_values.ndim == 1:
+        # 1D case: use Turbo colorscale
         vals = param_values
+        denom = (vals.max() - vals.min()) + 1e-8
+        normalized = (vals - vals.min()) / denom
+        
+        # Map to Turbo colors
+        from plotly.colors import sample_colorscale
+        turbo_scale = "Turbo"
+        color_list = sample_colorscale(turbo_scale, normalized)
+        return color_list
     else:
-        vals = param_values[:, 0]
-    denom = (vals.max() - vals.min()) + 1e-8
-    return (vals - vals.min()) / denom
+        # 2D case: HSV encoding
+        # param_values shape: (N, 2), values in [0, 1]
+        u1 = param_values[:, 0]  # Hue factor
+        u2 = param_values[:, 1]  # Saturation factor
+        
+        # HSV encoding:
+        # Hue: u1 ∈ [0, 1] → full spectrum [0, 360]
+        # Saturation: u2 ∈ [0, 1] → [0.2, 1.0] (floor at 0.2 for visibility)
+        # Value: constant at 1.0 (full brightness)
+        
+        hue = u1 * 360.0  # Convert to degrees
+        saturation = 0.2 + u2 * 0.8  # Map [0, 1] to [0.2, 1.0]
+        value = np.ones_like(u1)
+        
+        # Convert HSV to RGB
+        import colorsys
+        color_list = []
+        for h, s, v in zip(hue, saturation, value):
+            # colorsys expects hue in [0, 1], not [0, 360]
+            h_normalized = (h % 360.0) / 360.0
+            r, g, b = colorsys.hsv_to_rgb(h_normalized, s, v)
+            # Convert to RGB string for Plotly
+            color_str = 'rgb({},{},{})'.format(int(r*255), int(g*255), int(b*255))
+            color_list.append(color_str)
+        
+        return color_list
 
 
 def _build_interactive_4way_html(
@@ -71,6 +114,7 @@ def _build_interactive_4way_html(
     out_b: np.ndarray,
     param_values: np.ndarray,
     min_height_px: int = 420,
+    axis_box: Optional[np.ndarray] = None,
 ) -> Optional[str]:
     try:
         import plotly.graph_objects as go
@@ -97,9 +141,7 @@ def _build_interactive_4way_html(
             marker=dict(
                 size=3,
                 color=color_vals,
-                colorscale="Turbo",
-                showscale=show_scale,
-                colorbar=dict(thickness=15, len=0.7),
+                showscale=False,
             ),
             name=name,
         )
@@ -117,7 +159,23 @@ def _build_interactive_4way_html(
         hovermode="closest",
     )
     scene_aspect = dict(aspectmode="manual", aspectratio=dict(x=1.6, y=1.0, z=0.9))
-    fig.update_layout(scene=scene_aspect, scene2=scene_aspect, scene3=scene_aspect, scene4=scene_aspect)
+    # Apply consistent axis ranges if axis_box provided
+    if axis_box is not None:
+        min_box = axis_box[0]
+        max_box = axis_box[1]
+        scene_range = dict(
+            xaxis=dict(range=[float(min_box[0]), float(max_box[0])]),
+            yaxis=dict(range=[float(min_box[1]), float(max_box[1])]),
+            zaxis=dict(range=[float(min_box[2]), float(max_box[2])]),
+        )
+        fig.update_layout(
+            scene={**scene_aspect, **scene_range},
+            scene2={**scene_aspect, **scene_range},
+            scene3={**scene_aspect, **scene_range},
+            scene4={**scene_aspect, **scene_range},
+        )
+    else:
+        fig.update_layout(scene=scene_aspect, scene2=scene_aspect, scene3=scene_aspect, scene4=scene_aspect)
 
     html_body = fig.to_html(full_html=False, include_plotlyjs="cdn", default_width="100%", default_height="100%")
     wrapped = f"<div style='width:100%;height:100%;min-height:{int(min_height_px)}px'>{html_body}</div>"
@@ -250,6 +308,7 @@ def evaluate_and_log_checkpoint(
                 out_b,
                 np.asarray(param_values),
                 min_height_px=int(interactive_min_height),
+                axis_box=getattr(eval_set, 'axis_box', None),
             )
             if html is not None:
                 wandb.log({"interactive_3d_4way_html": wandb.Html(html)}, step=step)
@@ -321,6 +380,7 @@ def run(
         asymmetric_noise_rate_a=data_cfg.get("asymmetric_noise_rate_a", None),
         asymmetric_noise_rate_b=data_cfg.get("asymmetric_noise_rate_b", None),
         external_noise_ratio=data_cfg.get("external_noise_ratio", None),
+        seed=cfg_obj.meta.seed,
     )
     effective_batch_size = int(batch_size) if batch_size is not None else int(data_cfg.get("batch_size", 128))
     effective_num_workers = int(num_workers) if num_workers is not None else int(data_cfg.get("num_workers", 0))
