@@ -1,4 +1,6 @@
-# Based on: multimodal_experiments/initial_trials/Pytorch-dual-disentangle_ebm.ipynb
+# Based on: multimodal_experiments/initial_trials/Pytorch-dual-disentangle_ebm_on_flow.ipynb
+# Original 2D EBM config — MLP predictor, L2 prior, no sparsity penalty
+# Updated: use_l1 -> prior_type/pred_loss/noise_reweighting (new field names)
 meta:
   seed: 12345
   device: auto
@@ -21,14 +23,16 @@ model:
   num_dims: 2
   hidden_units: 128
   predictor_type: mlp
-  predictor_hidden_dim: 64
 
 loss:
   type: ebm
   lambda_jac: 1.0
   lambda_prior: 0.5
   lambda_sparse: 0.0
-  use_l1: false
+  prior_type: l2
+  pred_loss: l1
+  noise_reweighting: none
+  reweighting_tau: 0.5
 
 optim:
   epochs: 150
