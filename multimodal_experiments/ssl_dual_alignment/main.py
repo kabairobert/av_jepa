@@ -26,12 +26,21 @@ from multimodal_experiments.ssl_dual_alignment.eval import evaluate_and_log_chec
 from multimodal_experiments.ssl_dual_alignment.vis import log_plots_to_wandb
 
 
+def _parse_tags(wandb_tags):
+    """Normalize wandb_tags: Fire may pass str, tuple, or list."""
+    if not wandb_tags:
+        return []
+    if isinstance(wandb_tags, (list, tuple)):
+        return [str(t).strip() for t in wandb_tags if str(t).strip()]
+    return [t.strip() for t in str(wandb_tags).split(",") if t.strip()]
+
+
 def run(
     fname: str = "multimodal_experiments/ssl_dual_alignment/cfgs/paired_factors_2D.yaml",
     config: str = None,
     cfg=None,
     folder=None,
-    wandb_tags: str = "",
+    wandb_tags=None,
     **overrides
 ):
     # --config is an alias for --fname (used by sweep.py)
@@ -84,9 +93,8 @@ def run(
     save_config(cfg, exp_dir)
 
     # --- 3. W&B Logging ---
-    # Base tags + any sweep-injected tags from --wandb_tags "tag1,tag2"
     base_tags = ["dual_disentangle", f"seed_{cfg.meta.seed}", "multimodal_initial"]
-    extra_tags = [t.strip() for t in wandb_tags.split(",") if t.strip()]
+    extra_tags = _parse_tags(wandb_tags)
     all_tags = base_tags + extra_tags
 
     wandb_run = setup_wandb(
