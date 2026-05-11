@@ -60,50 +60,27 @@ def _get_color_values(param_values: np.ndarray) -> np.ndarray:
     
     For 1D param_values: use Turbo colorscale.
     For 2D param_values: use HSV encoding (u1 → Hue, u2 → Saturation [0.2, 1]).
-    
-    Returns: list of color strings (RGB or hex) for Plotly.
     """
-    # Convert to numpy if torch tensor
     if hasattr(param_values, 'numpy'):
         param_values = param_values.numpy()
     
     if param_values.ndim == 1:
-        # 1D case: use Turbo colorscale
         vals = param_values
         denom = (vals.max() - vals.min()) + 1e-8
         normalized = (vals - vals.min()) / denom
-        
-        # Map to Turbo colors
         from plotly.colors import sample_colorscale
-        turbo_scale = "Turbo"
-        color_list = sample_colorscale(turbo_scale, normalized)
-        return color_list
+        return sample_colorscale("Turbo", normalized)
     else:
-        # 2D case: HSV encoding
-        # param_values shape: (N, 2), values in [0, 1]
-        u1 = param_values[:, 0]  # Hue factor
-        u2 = param_values[:, 1]  # Saturation factor
-        
-        # HSV encoding:
-        # Hue: u1 ∈ [0, 1] → full spectrum [0, 360]
-        # Saturation: u2 ∈ [0, 1] → [0.2, 1.0] (floor at 0.2 for visibility)
-        # Value: constant at 1.0 (full brightness)
-        
-        hue = u1 * 360.0  # Convert to degrees
-        saturation = 0.2 + u2 * 0.8  # Map [0, 1] to [0.2, 1.0]
+        u1 = param_values[:, 0]
+        u2 = param_values[:, 1]
+        hue = u1 * 360.0
+        saturation = 0.2 + u2 * 0.8
         value = np.ones_like(u1)
-        
-        # Convert HSV to RGB
         import colorsys
         color_list = []
         for h, s, v in zip(hue, saturation, value):
-            # colorsys expects hue in [0, 1], not [0, 360]
-            h_normalized = (h % 360.0) / 360.0
-            r, g, b = colorsys.hsv_to_rgb(h_normalized, s, v)
-            # Convert to RGB string for Plotly
-            color_str = 'rgb({},{},{})'.format(int(r*255), int(g*255), int(b*255))
-            color_list.append(color_str)
-        
+            r, g, b = colorsys.hsv_to_rgb((h % 360.0) / 360.0, s, v)
+            color_list.append('rgb({},{},{})'.format(int(r*255), int(g*255), int(b*255)))
         return color_list
 
 
@@ -126,47 +103,146 @@ def _build_interactive_4way_html(
     color_vals = _get_color_values(param_values)
 
     fig = make_subplots(
-        rows=1,
-        cols=4,
+        rows=1, cols=4,
         specs=[[{"type": "scatter3d"}] * 4],
         subplot_titles=("Input Space A", "Output Space A", "Output Space B", "Input Space B"),
     )
 
-    def _scatter(xyz, name, show_scale=False):
+    def _scatter(xyz, name):
         return go.Scatter3d(
-            x=xyz[:, 0],
-            y=xyz[:, 1],
-            z=xyz[:, 2],
+            x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2],
             mode="markers",
-            marker=dict(
-                size=3,
-                color=color_vals,
-                showscale=False,
-            ),
+            marker=dict(size=3, color=color_vals, showscale=False),
             name=name,
         )
 
     fig.add_trace(_scatter(data_a, "Input A"), row=1, col=1)
     fig.add_trace(_scatter(out_a, "Output A"), row=1, col=2)
     fig.add_trace(_scatter(out_b, "Output B"), row=1, col=3)
-    fig.add_trace(_scatter(data_b, "Input B", show_scale=True), row=1, col=4)
+    fig.add_trace(_scatter(data_b, "Input B"), row=1, col=4)
 
-    fig.update_layout(
-        autosize=True,
-        height=min_height_px,
-        margin=dict(l=40, r=40, t=80, b=40),
-        showlegend=False,
-        hovermode="closest",
-    )
-    # Let each subplot autoscale independently, but enforce cube aspect so all
-    # 3 axes use equal visual scale in every scene.
     scene_cube = dict(aspectmode="cube")
-    fig.update_layout(scene=scene_cube, scene2=scene_cube, scene3=scene_cube, scene4=scene_cube)
+    fig.update_layout(
+        autosize=True, height=min_height_px,
+        margin=dict(l=40, r=40, t=80, b=40),
+        showlegend=False, hovermode="closest",
+        scene=scene_cube, scene2=scene_cube, scene3=scene_cube, scene4=scene_cube,
+    )
 
     html_body = fig.to_html(full_html=False, include_plotlyjs="cdn", default_width="100%", default_height="100%")
-    wrapped = f"<div style='width:100%;height:100%;min-height:{int(min_height_px)}px'>{html_body}</div>"
-    return wrapped
+    return f"<div style='width:100%;height:100%;min-height:{int(min_height_px)}px'>{html_body}</div>"
 
+
+# ---------------------------------------------------------------------------
+# New metric helpers
+# ---------------------------------------------------------------------------
+
+def linear_probe_r2(z: np.ndarray, u: np.ndarray) -> dict:
+    """Fit Ridge regression z → u, return R² per factor and mean.
+    
+    Returns dict with keys r2_u{i} for each factor and r2_mean.
+    """
+    from sklearn.linear_model import Ridge
+    from sklearn.metrics import r2_score
+    reg = Ridge(alpha=1.0).fit(z, u)
+    u_pred = reg.predict(z)
+    if u.ndim == 1:
+        return {'r2_u0': float(r2_score(u, u_pred)), 'r2_mean': float(r2_score(u, u_pred))}
+    r2_per = [float(r2_score(u[:, i], u_pred[:, i])) for i in range(u.shape[1])]
+    result = {f'r2_u{i}': v for i, v in enumerate(r2_per)}
+    result['r2_mean'] = float(np.mean(r2_per))
+    return result
+
+
+def retrieval_accuracy(z_a: np.ndarray, z_b: np.ndarray, ks=(1, 5)) -> dict:
+    """For each z_A[i], find k-nearest z_B by L2 and cosine. Check if correct index in top-k."""
+    from sklearn.metrics.pairwise import euclidean_distances, cosine_distances
+    results = {}
+    for dist_fn, name in [(euclidean_distances, 'l2'), (cosine_distances, 'cos')]:
+        D = dist_fn(z_a, z_b)
+        for k in ks:
+            top_k = np.argsort(D, axis=1)[:, :k]
+            hits = float(np.mean([i in top_k[i] for i in range(len(z_a))]))
+            results[f'retrieval_{name}@{k}'] = hits
+    return results
+
+
+def cca_score(z_a: np.ndarray, z_b: np.ndarray) -> dict:
+    """CCA between z_A and z_B. Returns per-dim canonical correlations and effective rank (corr > 0.5)."""
+    from sklearn.cross_decomposition import CCA
+    n_components = min(z_a.shape[1], z_b.shape[1])
+    try:
+        cca = CCA(n_components=n_components).fit(z_a, z_b)
+        z_a_c, z_b_c = cca.transform(z_a, z_b)
+        corrs = [float(np.corrcoef(z_a_c[:, i], z_b_c[:, i])[0, 1]) for i in range(n_components)]
+    except Exception as exc:
+        logger.warning("CCA failed: %s", exc)
+        corrs = [0.0] * n_components
+    result = {f'cca_corr_dim{i}': c for i, c in enumerate(corrs)}
+    result['cca_effective_rank'] = float(np.sum(np.array(corrs) > 0.5))
+    return result
+
+
+def compute_geometry_metrics(
+    dual_model: torch.nn.Module,
+    dataset: DualDisentangleDataset,
+    device: torch.device,
+    max_points: int = 4096,
+) -> dict:
+    """Collect z_A, z_B from model, compute R², retrieval, CCA, and norm diagnostics.
+    
+    Returns flat dict suitable for wandb.log.
+    """
+    dual_model.eval()
+    data_a = dataset.data_a
+    data_b = dataset.data_b
+    param_values = np.asarray(dataset.param_values)
+
+    if data_a.shape[0] > max_points:
+        idxs = np.random.choice(data_a.shape[0], size=max_points, replace=False)
+        data_a = data_a[idxs]
+        data_b = data_b[idxs]
+        param_values = param_values[idxs]
+
+    with torch.no_grad():
+        out_a, _ = dual_model.model_a(data_a.to(device).float())
+        out_b, _ = dual_model.model_b(data_b.to(device).float())
+    z_a = out_a.cpu().numpy()
+    z_b = out_b.cpu().numpy()
+
+    metrics = {}
+
+    # Linear probing R² — per modality and joint
+    if param_values.ndim == 1:
+        u = param_values
+    else:
+        u = param_values  # (N, n_factors)
+
+    for prefix, z in [('za', z_a), ('zb', z_b), ('zjoint', np.concatenate([z_a, z_b], axis=1))]:
+        probe = linear_probe_r2(z, u)
+        for k, v in probe.items():
+            metrics[f'geom/{prefix}/{k}'] = v
+
+    # Retrieval
+    ret = retrieval_accuracy(z_a, z_b)
+    for k, v in ret.items():
+        metrics[f'geom/{k}'] = v
+
+    # CCA
+    cca = cca_score(z_a, z_b)
+    for k, v in cca.items():
+        metrics[f'geom/{k}'] = v
+
+    # Norm diagnostics (exposes prior shrinkage)
+    metrics['geom/z_a_norm_mean'] = float(np.linalg.norm(z_a, axis=1).mean())
+    metrics['geom/z_b_norm_mean'] = float(np.linalg.norm(z_b, axis=1).mean())
+
+    return metrics
+
+
+# ---------------------------------------------------------------------------
+# Eval loop
+# ---------------------------------------------------------------------------
 
 def _eval_loop(
     loader: DataLoader,
@@ -178,12 +254,7 @@ def _eval_loop(
     max_batches: Optional[int] = None,
 ) -> Dict[str, float]:
     dual_model.eval()
-    metrics = {
-        "loss": 0.0,
-        "align_mse_a2b": 0.0,
-        "align_mse_b2a": 0.0,
-        "num_batches": 0,
-    }
+    metrics = {"loss": 0.0, "align_mse_a2b": 0.0, "align_mse_b2a": 0.0, "num_batches": 0}
 
     with torch.no_grad():
         for bi, batch in enumerate(tqdm(loader, desc="Eval", leave=False)):
@@ -202,6 +273,7 @@ def _eval_loop(
             if predictors["a2b"] is not None and predictors["b2a"] is not None:
                 err_a2b = F.mse_loss(predictors["a2b"](z_a), z_b).item()
                 err_b2a = F.mse_loss(predictors["b2a"](z_b), z_a).item()
+                # Normalized by z_b / z_a variance to remove prior shrinkage confound
                 metrics["align_mse_a2b"] += err_a2b
                 metrics["align_mse_b2a"] += err_b2a
 
@@ -239,15 +311,7 @@ def evaluate_and_log_checkpoint(
     log_prefix: str = "val",
     is_3d: Optional[bool] = None,
 ) -> Dict[str, float]:
-    metrics = _eval_loop(
-        eval_loader,
-        dual_model,
-        loss_fn,
-        loss_type,
-        predictors,
-        device,
-        max_batches=max_batches,
-    )
+    metrics = _eval_loop(eval_loader, dual_model, loss_fn, loss_type, predictors, device, max_batches=max_batches)
 
     logs = {
         f"{log_prefix}/loss": metrics["loss"],
@@ -262,13 +326,15 @@ def evaluate_and_log_checkpoint(
 
     if wandb_run:
         import wandb
-
         wandb.log(logs, step=step)
         log_plots_to_wandb(dual_model, eval_set, device, step, wandb_run)
 
+        # Geometry metrics (R², retrieval, CCA, norms)
+        geom_metrics = compute_geometry_metrics(dual_model, eval_set, device)
+        wandb.log(geom_metrics, step=step)
+
         if is_3d is None:
-            data_type = str(getattr(eval_set, "data_type", ""))
-            is_3d = data_type.startswith("3d")
+            is_3d = str(getattr(eval_set, "data_type", "")).startswith("3d")
 
         if is_3d and log_interactive_3d:
             data_a = eval_set.data_a.numpy()
@@ -288,11 +354,7 @@ def evaluate_and_log_checkpoint(
             out_b = out_b.detach().cpu().numpy()
 
             html = _build_interactive_4way_html(
-                data_a,
-                data_b,
-                out_a,
-                out_b,
-                np.asarray(param_values),
+                data_a, data_b, out_a, out_b, np.asarray(param_values),
                 min_height_px=int(interactive_min_height),
             )
             if html is not None:
@@ -345,14 +407,11 @@ def run(
                 current = current.setdefault(k, {})
             current[keys[-1]] = value
         from omegaconf import OmegaConf
-
         cfg_obj = OmegaConf.merge(cfg_obj, OmegaConf.create(override_dict))
-        logger.info("Applied %d CLI override(s)", len(overrides))
 
     device = setup_device(cfg_obj.meta.device)
     setup_seed(cfg_obj.meta.seed)
 
-    # Dataset (reuse train data)
     data_cfg = cfg_obj.data
     eval_set = DualDisentangleDataset(
         data_type=data_cfg.get("type", "2d"),
@@ -368,15 +427,9 @@ def run(
         seed=cfg_obj.meta.seed,
     )
     effective_batch_size = int(batch_size) if batch_size is not None else int(data_cfg.get("batch_size", 128))
-    effective_num_workers = int(num_workers) if num_workers is not None else int(data_cfg.get("num_workers", 0))
-    eval_loader = DataLoader(
-        eval_set,
-        batch_size=effective_batch_size,
-        shuffle=False,
-        num_workers=effective_num_workers,
-    )
+    eval_loader = DataLoader(eval_set, batch_size=effective_batch_size, shuffle=False,
+                             num_workers=int(num_workers or data_cfg.get("num_workers", 0)))
 
-    # Model + predictors
     built = build_model_and_predictors(cfg_obj, device)
     dual_model = built["dual_model"]
     predictor_a2b = built["predictor_a2b"]
@@ -385,90 +438,61 @@ def run(
     loss_type = cfg_obj.loss.get("type", "ebm")
     if loss_type == "ebm":
         loss_fn = EBMJEPALoss(
-            predictor_a2b,
-            predictor_b2a,
+            predictor_a2b, predictor_b2a,
             lambda_jac=cfg_obj.loss.get("lambda_jac", 1.0),
             lambda_prior=cfg_obj.loss.get("lambda_prior", 0.5),
             lambda_sparse=cfg_obj.loss.get("lambda_sparse", 0.1),
-            use_l1=cfg_obj.loss.get("use_l1", False),
+            prior_type=cfg_obj.loss.get("prior_type", 'l1'),
+            pred_loss=cfg_obj.loss.get("pred_loss", 'l1'),
+            noise_reweighting=cfg_obj.loss.get("noise_reweighting", 'none'),
+            reweighting_tau=cfg_obj.loss.get("reweighting_tau", 0.5),
         )
     else:
         loss_fn = SupervisedFactorLoss(
             dimensions_per_factor=[1, 1] if data_cfg.get("type", "2d") == "2d" else [1, 1, 1]
         )
 
-    # W&B
     log_wandb_override = _to_bool_or_none(log_wandb)
     enabled_wandb = bool(cfg_obj.logging.get("log_wandb", False)) if log_wandb_override is None else bool(log_wandb_override)
     run_dir = folder_path if folder_path is not None else (checkpoint_path.parent if checkpoint_path is not None else cfg_path.parent)
-    run_name = f"{run_dir.name}_eval"
-
     wandb_run = setup_wandb(
-        project="eb_jepa",
-        config=cfg_obj,
-        run_dir=run_dir / "eval_wandb",
-        run_name=run_name,
+        project="eb_jepa", config=cfg_obj, run_dir=run_dir / "eval_wandb",
+        run_name=f"{run_dir.name}_eval",
         tags=["dual_disentangle", "eval", f"seed_{cfg_obj.meta.seed}"],
         group=cfg_obj.logging.get("wandb_group"),
-        enabled=enabled_wandb,
-        resume=False,
+        enabled=enabled_wandb, resume=False,
     )
 
-    # Checkpoints
-    if checkpoint_path is not None:
-        ckpts = [checkpoint_path]
-    else:
-        ckpts = _discover_checkpoints(run_dir)
-
+    ckpts = [checkpoint_path] if checkpoint_path is not None else _discover_checkpoints(run_dir)
     if not ckpts:
         raise ValueError(f"No checkpoints found in {run_dir}")
 
-    data_type = str(data_cfg.get("type", "2d"))
-    is_3d = data_type.startswith("3d")
+    is_3d = str(data_cfg.get("type", "2d")).startswith("3d")
 
     for idx, ckpt in enumerate(ckpts):
         is_last = (idx == (len(ckpts) - 1))
         ckpt_meta = load_checkpoint(ckpt, dual_model, optimizer=None, device=device)
-        ckpt_step = ckpt_meta.get("step", None)
-        if ckpt_step is None:
-            ckpt_step = int(_checkpoint_epoch(ckpt))
-        ckpt_step = int(ckpt_step)
+        ckpt_step = int(ckpt_meta.get("step", None) or _checkpoint_epoch(ckpt))
 
         metrics = evaluate_and_log_checkpoint(
-            eval_set,
-            eval_loader,
-            dual_model,
-            loss_fn,
-            loss_type,
+            eval_set, eval_loader, dual_model, loss_fn, loss_type,
             {"a2b": predictor_a2b, "b2a": predictor_b2a},
-            device,
-            ckpt_step,
-            wandb_run,
-            checkpoint_name=ckpt.name,
-            checkpoint_path=str(ckpt),
+            device, ckpt_step, wandb_run,
+            checkpoint_name=ckpt.name, checkpoint_path=str(ckpt),
             max_batches=max_batches,
             log_interactive_3d=is_3d and is_last and log_interactive_3d,
             interactive_min_height=interactive_min_height,
             max_interactive_points=max_interactive_points,
-            log_prefix="val",
-            is_3d=is_3d,
+            log_prefix="val", is_3d=is_3d,
         )
-
-        logger.info(
-            "Eval %s | loss=%.4f | a2b=%.4f | b2a=%.4f",
-            ckpt.name,
-            metrics["loss"],
-            metrics["align_mse_a2b"],
-            metrics["align_mse_b2a"],
-        )
+        logger.info("Eval %s | loss=%.4f | a2b=%.4f | b2a=%.4f",
+                    ckpt.name, metrics["loss"], metrics["align_mse_a2b"], metrics["align_mse_b2a"])
 
     if wandb_run:
         import wandb
-
         wandb.finish()
 
 
 if __name__ == "__main__":
     import fire
-
     fire.Fire(run)
