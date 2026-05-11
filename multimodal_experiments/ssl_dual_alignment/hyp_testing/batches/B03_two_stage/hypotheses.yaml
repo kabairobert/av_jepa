@@ -1,0 +1,24 @@
+batch_id: B03_two_stage
+description: "Does decoupling flow training from predictor training improve alignment quality for MLP?"
+configs:
+  - C05_mlp_l2prior_l1pred_3D2f
+  - C06_mlp_l2prior_l1pred_3D2f_twostage
+
+hypotheses:
+
+  - id: H9
+    claim: "Two-stage MLP training produces better geometry than one-stage MLP"
+    configs_compared:
+      a: C05_mlp_l2prior_l1pred_3D2f
+      b: C06_mlp_l2prior_l1pred_3D2f_twostage
+    primary_metrics: [r2_mean, cca_effective_rank, retrieval_l2_at_1]
+    decision_rules:
+      - metric: r2_mean
+        condition: "{b} > {a} + {threshold}"
+        threshold: null  # fill before running, suggested: 0.05
+        verdict_true: SUPPORTED
+        verdict_false: REFUTED
+    check_plots:
+      - "Training loss breakdown by stage for C06"
+      - "3D latent scatter end-of-stage-1 vs end-of-stage-2 for C06"
+      - "CCA per-dim for C05 vs C06"

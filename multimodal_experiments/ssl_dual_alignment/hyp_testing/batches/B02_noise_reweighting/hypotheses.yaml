@@ -1,0 +1,62 @@
+batch_id: B02_noise_reweighting
+description: "Does per-sample reweighting based on cross-modal predictability improve robustness under high noise?"
+configs:
+  - C03_affine_l1prior_l1pred_3D2f
+  - C07_affine_l1prior_l1pred_3D2f_highnoise
+  - C08_affine_l1prior_l1pred_3D2f_highnoise_rw_pred
+  - C09_affine_l1prior_l1pred_3D2f_highnoise_rw_full
+
+hypotheses:
+
+  - id: H6
+    claim: "High noise degrades geometry quality vs low noise baseline"
+    configs_compared:
+      a: C03_affine_l1prior_l1pred_3D2f
+      b: C07_affine_l1prior_l1pred_3D2f_highnoise
+    primary_metrics: [r2_mean, retrieval_l2_at_1]
+    decision_rules:
+      - metric: r2_mean
+        condition: "{a} > {b} + {threshold}"
+        threshold: null  # fill before running, suggested: 0.10
+        verdict_true: SUPPORTED
+        verdict_false: REFUTED
+    check_plots:
+      - "Training loss curves C03 vs C07"
+      - "3D latent scatter C07"
+
+  - id: H7
+    claim: "pred_only reweighting partially recovers geometry under high noise"
+    configs_compared:
+      a: C07_affine_l1prior_l1pred_3D2f_highnoise
+      b: C08_affine_l1prior_l1pred_3D2f_highnoise_rw_pred
+    primary_metrics: [r2_mean, retrieval_l2_at_1, align_mse_normalized]
+    decision_rules:
+      - metric: r2_mean
+        condition: "{b} > {a} + {threshold}"
+        threshold: null  # fill before running, suggested: 0.05
+        verdict_true: SUPPORTED
+        verdict_false: REFUTED
+    check_plots:
+      - "z_a_norm_mean for C07 vs C08"
+      - "val_pred_loss curves for C07 vs C08"
+
+  - id: H8
+    claim: "full reweighting recovers more geometry than pred_only but risks unimodal compression"
+    configs_compared:
+      a: C08_affine_l1prior_l1pred_3D2f_highnoise_rw_pred
+      b: C09_affine_l1prior_l1pred_3D2f_highnoise_rw_full
+    primary_metrics: [r2_mean, retrieval_l2_at_1, z_a_norm_mean, z_b_norm_mean]
+    decision_rules:
+      - metric: r2_mean
+        condition: "{b} > {a} + {threshold}"
+        threshold: null  # fill before running, suggested: 0.05
+        verdict_true: full_OUTPERFORMS
+        verdict_false: EQUIVALENT_OR_WORSE
+      - metric: z_a_norm_mean
+        condition: "{b} < {a} - {threshold}"
+        threshold: null  # fill before running, suggested: 0.05
+        verdict_true: UNIMODAL_COMPRESSED
+        verdict_false: UNIMODAL_PRESERVED
+    check_plots:
+      - "3D latent scatter C08 vs C09"
+      - "CCA per-dim for C08 vs C09"
