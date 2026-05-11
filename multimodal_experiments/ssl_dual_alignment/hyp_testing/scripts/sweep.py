@@ -6,6 +6,7 @@ Usage:
     python sweep.py --batch B01_predictor_geometry --cfg_dir ../cfgs
     python sweep.py --all --cfg_dir ../cfgs
     python sweep.py --all --cfg_dir ../cfgs --dry-run
+    python sweep.py --all --from C07_affine_l1prior_l1pred_3D2f_highnoise
 
 Each wandb run is tagged with all batch IDs it belongs to + the config name.
 Shared configs across batches are launched once with multiple batch tags.
@@ -70,6 +71,11 @@ def main():
     group.add_argument("--all", action="store_true", help="Run all batches (deduplicates shared configs)")
     parser.add_argument("--cfg_dir", type=str, default="../cfgs", help="Path to cfgs/ directory")
     parser.add_argument("--dry-run", action="store_true", help="Print commands without launching")
+    parser.add_argument(
+        "--from", dest="from_cfg", type=str, default=None,
+        metavar="CFG_NAME",
+        help="Skip all configs before CFG_NAME (inclusive start); useful to resume a stopped sweep"
+    )
     args = parser.parse_args()
 
     script_dir = Path(__file__).parent
@@ -79,8 +85,24 @@ def main():
     if args.all:
         batches = collect_all_batches(batches_root)
         cfg_to_batches = build_config_to_batches(batches)
-        print(f"Found {len(batches)} batches, {len(cfg_to_batches)} unique configs to launch.")
-        for cfg_name, batch_ids in sorted(cfg_to_batches.items()):
+        all_cfgs = sorted(cfg_to_batches.items())  # deterministic order
+
+        # Apply --from: skip everything before the named config
+        if args.from_cfg is not None:
+            names = [name for name, _ in all_cfgs]
+            if args.from_cfg not in names:
+                print(f"ERROR: --from config '{args.from_cfg}' not found in any batch.", file=sys.stderr)
+                print(f"       Available configs: {names}", file=sys.stderr)
+                sys.exit(1)
+            start_idx = names.index(args.from_cfg)
+            skipped = names[:start_idx]
+            if skipped:
+                print(f"Skipping {len(skipped)} already-done configs: {skipped}")
+            all_cfgs = all_cfgs[start_idx:]
+
+        print(f"Found {len(batches)} batches, {len(cfg_to_batches)} unique configs total, "
+              f"launching {len(all_cfgs)}.")
+        for cfg_name, batch_ids in all_cfgs:
             cfg_path = cfg_dir / f"{cfg_name}.yaml"
             if not cfg_path.exists():
                 print(f"WARNING: Config file not found: {cfg_path}", file=sys.stderr)
@@ -93,8 +115,18 @@ def main():
             sys.exit(1)
         batch = load_batch(batch_dir)
         batch_id = batch["batch_id"]
-        print(f"Launching batch {batch_id} ({len(batch['configs'])} configs)")
-        for cfg_name in batch["configs"]:
+        cfgs = batch["configs"]
+
+        # Apply --from within a single batch too
+        if args.from_cfg is not None:
+            if args.from_cfg not in cfgs:
+                print(f"ERROR: --from config '{args.from_cfg}' not found in batch {batch_id}.", file=sys.stderr)
+                sys.exit(1)
+            start_idx = cfgs.index(args.from_cfg)
+            cfgs = cfgs[start_idx:]
+
+        print(f"Launching batch {batch_id} ({len(cfgs)} configs)")
+        for cfg_name in cfgs:
             cfg_path = cfg_dir / f"{cfg_name}.yaml"
             if not cfg_path.exists():
                 print(f"WARNING: Config file not found: {cfg_path}", file=sys.stderr)
