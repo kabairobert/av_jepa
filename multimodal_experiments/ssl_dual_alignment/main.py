@@ -35,6 +35,20 @@ def _parse_tags(wandb_tags):
     return [t.strip() for t in str(wandb_tags).split(",") if t.strip()]
 
 
+def _save_optimizer_only(path: Path, optimizer, epoch: int, step: int) -> None:
+    """Save only optimizer state (no model) for Stage-2 predictor checkpoints.
+
+    save_checkpoint() requires a non-None model; use this helper when only the
+    optimizer state needs to be persisted (e.g. predictor optimizer in two-stage).
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {"epoch": epoch, "step": step, "optimizer_state_dict": optimizer.state_dict()},
+        path,
+    )
+
+
 def run(
     fname: str = "multimodal_experiments/ssl_dual_alignment/cfgs/paired_factors_2D.yaml",
     config: str = None,
@@ -180,11 +194,15 @@ def run(
             ckpt_info = load_checkpoint(ckpt_path, dual_model, opt_flow, device=device)
             # If resuming into Stage 2, also restore opt_pred state if a separate
             # pred_optimizer checkpoint is available alongside the main checkpoint.
+            # load_checkpoint returns epoch+1, so after saving at stage1_epochs-1 we
+            # get back stage1_epochs here — the condition is therefore exact (no off-by-one).
             start_epoch_probe = ckpt_info.get("epoch", 0)
             if start_epoch_probe >= stage1_epochs and opt_pred is not None:
                 pred_ckpt = Path(str(ckpt_path).replace(".pth.tar", "_pred.pth.tar"))
                 if pred_ckpt.exists():
-                    load_checkpoint(pred_ckpt, None, opt_pred, device=device)
+                    raw = torch.load(pred_ckpt, map_location=device)
+                    if "optimizer_state_dict" in raw:
+                        opt_pred.load_state_dict(raw["optimizer_state_dict"])
         start_epoch = ckpt_info.get("epoch", 0)
         global_step = ckpt_info.get("step", 0)
 
@@ -248,9 +266,10 @@ def run(
         )
         if wandb_run:
             import wandb
-            extra_logs = {}
+            # FIX Bug1: evaluate_and_log_checkpoint has no extra_logs param.
+            # Log training_stage directly before the eval call instead.
             if current_stage is not None:
-                extra_logs["eval/training_stage"] = current_stage
+                wandb.log({"eval/training_stage": current_stage}, step=global_step)
             evaluate_and_log_checkpoint(
                 train_set, train_loader, dual_model, loss_fn, loss_type,
                 {"a2b": predictor_a2b, "b2a": predictor_b2a},
@@ -260,7 +279,6 @@ def run(
                 log_interactive_3d=str(cfg.data.get("type", "2d")).startswith("3d"),
                 log_prefix="val",
                 is_3d=str(cfg.data.get("type", "2d")).startswith("3d"),
-                extra_logs=extra_logs,
             )
 
     save_every = cfg.logging.get("save_every", 50)
@@ -276,43 +294,48 @@ def run(
                     "train/align_mse_a2b": avg_a2b,
                     "train/align_mse_b2a": avg_b2a,
                     "train/stage": 1,
-                    "epoch": epoch_idx+1,
-                    "step": global_step
                 }, step=global_step)
             if (epoch_idx + 1) % save_every == 0:
                 _maybe_eval_and_save(epoch_idx, opt_flow, current_stage=1)
-        # Stage 2: freeze flows, train predictor only
+
+        # Freeze flows, unfreeze predictors for Stage 2
+        dual_model.requires_grad_(False)
+        if predictor_a2b is not None:
+            predictor_a2b.requires_grad_(True)
+            predictor_b2a.requires_grad_(True)
+
+        # Stage 2: train predictors only
         print(f"=== Stage 2: predictor training ({stage2_epochs} epochs) ===")
-        for p in dual_model.parameters():
-            p.requires_grad_(False)
-        for epoch_idx in range(stage1_epochs, stage1_epochs + stage2_epochs):
+        if opt_pred is None:
+            print("WARNING: no predictor params — Stage 2 is a no-op")
+        for epoch_idx in range(stage1_epochs, epochs):
             if opt_pred is not None:
                 avg_loss, avg_a2b, avg_b2a = _train_epoch(epoch_idx, opt_pred, stage=2)
-                if wandb_run:
-                    import wandb
-                    wandb.log({
-                        "train/loss": avg_loss,
-                        "train/align_mse_a2b": avg_a2b,
-                        "train/align_mse_b2a": avg_b2a,
-                        "train/stage": 2,
-                        "epoch": epoch_idx+1,
-                        "step": global_step
-                    }, step=global_step)
-                if (epoch_idx + 1) % save_every == 0:
-                    _maybe_eval_and_save(epoch_idx, opt_pred, current_stage=2)
-                    # Save opt_pred state separately for correct Stage-2 resume
-                    if opt_pred is not None:
-                        save_checkpoint(
-                            exp_dir / f"epoch_{epoch_idx+1}_pred.pth.tar",
-                            model=None, optimizer=opt_pred,
-                            epoch=epoch_idx, step=global_step,
-                        )
-        # Re-enable all grads for final save
-        for p in dual_model.parameters():
-            p.requires_grad_(True)
+            else:
+                avg_loss, avg_a2b, avg_b2a = 0.0, 0.0, 0.0
+            if wandb_run:
+                import wandb
+                wandb.log({
+                    "train/loss": avg_loss,
+                    "train/align_mse_a2b": avg_a2b,
+                    "train/align_mse_b2a": avg_b2a,
+                    "train/stage": 2,
+                }, step=global_step)
+            if (epoch_idx + 1) % save_every == 0:
+                _maybe_eval_and_save(epoch_idx, opt_pred or opt_flow, current_stage=2)
+                # FIX Bug2: save_checkpoint requires a non-None model.
+                # Persist only opt_pred state with the dedicated helper.
+                if opt_pred is not None:
+                    _save_optimizer_only(
+                        exp_dir / f"epoch_{epoch_idx+1}_pred.pth.tar",
+                        opt_pred, epoch=epoch_idx, step=global_step,
+                    )
+
+        # Restore flow grad for final save
+        dual_model.requires_grad_(True)
         final_optimizer = opt_pred if opt_pred is not None else opt_flow
+
     else:
-        # One-stage: joint training
         for epoch_idx in range(start_epoch, epochs):
             avg_loss, avg_a2b, avg_b2a = _train_epoch(epoch_idx, optimizer)
             if wandb_run:
@@ -321,23 +344,23 @@ def run(
                     "train/loss": avg_loss,
                     "train/align_mse_a2b": avg_a2b,
                     "train/align_mse_b2a": avg_b2a,
-                    "epoch": epoch_idx+1,
-                    "step": global_step
                 }, step=global_step)
             if (epoch_idx + 1) % save_every == 0:
                 _maybe_eval_and_save(epoch_idx, optimizer)
         final_optimizer = optimizer
 
-    # --- 10. Final Save & Eval ---
+    # --- 10. Final checkpoint ---
     save_checkpoint(
         exp_dir / "latest.pth.tar",
         model=dual_model,
         optimizer=final_optimizer,
-        epoch=epochs,
+        epoch=epochs - 1,
         step=global_step,
-        axis_box=getattr(train_set, 'axis_box', None)
+        axis_box=getattr(train_set, 'axis_box', None),
     )
-    if wandb_run and epochs % save_every != 0:
+
+    if wandb_run:
+        import wandb
         evaluate_and_log_checkpoint(
             train_set, train_loader, dual_model, loss_fn, loss_type,
             {"a2b": predictor_a2b, "b2a": predictor_b2a},
@@ -348,10 +371,10 @@ def run(
             log_prefix="val",
             is_3d=str(cfg.data.get("type", "2d")).startswith("3d"),
         )
-    if wandb_run:
-        import wandb
+        log_plots_to_wandb(dual_model, train_set, device, global_step, wandb_run)
         wandb.finish()
-    print("Training complete!")
+
+    print("Training complete.")
 
 
 if __name__ == "__main__":
