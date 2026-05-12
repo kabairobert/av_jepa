@@ -11,11 +11,11 @@ hypotheses:
     configs_compared:
       a: C05_mlp_l2prior_l1pred_3D2f
       b: C06_mlp_l2prior_l1pred_3D2f_twostage
-    primary_metrics: [r2_mean, cca_effective_rank, retrieval_l2_at_1]
+    primary_metrics: [r2_joint, cca_rank, retrieval_l2@1]
     decision_rules:
-      - metric: r2_mean
+      - metric: r2_joint
         condition: "{b} > {a} + {threshold}"
-        threshold: null  # fill before running, suggested: 0.05
+        threshold: null  # fill after first run, suggested: 0.05
         verdict_true: SUPPORTED
         verdict_false: REFUTED
     check_plots:

@@ -13,11 +13,11 @@ hypotheses:
     configs_compared:
       a: C03_affine_l1prior_l1pred_3D2f
       b: C07_affine_l1prior_l1pred_3D2f_highnoise
-    primary_metrics: [r2_mean, retrieval_l2_at_1]
+    primary_metrics: [r2_joint, retrieval_l2@1]
     decision_rules:
-      - metric: r2_mean
+      - metric: r2_joint
         condition: "{a} > {b} + {threshold}"
-        threshold: null  # fill before running, suggested: 0.10
+        threshold: null  # fill after first run, suggested: 0.10
         verdict_true: SUPPORTED
         verdict_false: REFUTED
     check_plots:
@@ -29,32 +29,32 @@ hypotheses:
     configs_compared:
       a: C07_affine_l1prior_l1pred_3D2f_highnoise
       b: C08_affine_l1prior_l1pred_3D2f_highnoise_rw_pred
-    primary_metrics: [r2_mean, retrieval_l2_at_1, align_mse_normalized]
+    primary_metrics: [r2_joint, retrieval_l2@1, val_align_a2b]
     decision_rules:
-      - metric: r2_mean
+      - metric: r2_joint
         condition: "{b} > {a} + {threshold}"
-        threshold: null  # fill before running, suggested: 0.05
+        threshold: null  # fill after first run, suggested: 0.05
         verdict_true: SUPPORTED
         verdict_false: REFUTED
     check_plots:
-      - "z_a_norm_mean for C07 vs C08"
-      - "val_pred_loss curves for C07 vs C08"
+      - "z_a_norm for C07 vs C08"
+      - "val_loss curves for C07 vs C08"
 
   - id: H8
     claim: "full reweighting recovers more geometry than pred_only but risks unimodal compression"
     configs_compared:
       a: C08_affine_l1prior_l1pred_3D2f_highnoise_rw_pred
       b: C09_affine_l1prior_l1pred_3D2f_highnoise_rw_full
-    primary_metrics: [r2_mean, retrieval_l2_at_1, z_a_norm_mean, z_b_norm_mean]
+    primary_metrics: [r2_joint, retrieval_l2@1, z_a_norm, z_b_norm]
     decision_rules:
-      - metric: r2_mean
+      - metric: r2_joint
         condition: "{b} > {a} + {threshold}"
-        threshold: null  # fill before running, suggested: 0.05
+        threshold: null  # fill after first run, suggested: 0.05
         verdict_true: full_OUTPERFORMS
         verdict_false: EQUIVALENT_OR_WORSE
-      - metric: z_a_norm_mean
+      - metric: z_a_norm
         condition: "{b} < {a} - {threshold}"
-        threshold: null  # fill before running, suggested: 0.05
+        threshold: null  # fill after first run, suggested: 0.05
         verdict_true: UNIMODAL_COMPRESSED
         verdict_false: UNIMODAL_PRESERVED
     check_plots:

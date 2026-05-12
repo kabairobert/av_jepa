@@ -15,11 +15,11 @@ hypotheses:
     configs_compared:
       a: C01_diag_l1prior_l1pred_3D2f
       b: C02_diag_l2prior_l1pred_3D2f
-    primary_metrics: [r2_mean, cca_effective_rank]
+    primary_metrics: [r2_joint, cca_rank]
     decision_rules:
-      - metric: r2_mean
+      - metric: r2_joint
         condition: "{a} > {b} + {threshold}"
-        threshold: 0.05  # fill before running, suggested: 0.05
+        threshold: 0.05
         verdict_true: SUPPORTED
         verdict_false: REFUTED
     check_plots:
@@ -31,42 +31,42 @@ hypotheses:
     configs_compared:
       a: C01_diag_l1prior_l1pred_3D2f
       b: C03_affine_l1prior_l1pred_3D2f
-    primary_metrics: [r2_mean, retrieval_l2_at_1, align_mse_normalized]
+    primary_metrics: [r2_joint, retrieval_l2@1, val_align_a2b]
     decision_rules:
-      - metric: r2_mean
+      - metric: r2_joint
         condition: "{b} > {a} + {threshold}"
-        threshold: 0.05  # fill before running, suggested: 0.05
+        threshold: 0.05
         verdict_true: SUPPORTED
         verdict_false: REFUTED
     check_plots:
       - "3D latent scatter z_A and z_B for C01 vs C03"
-      - "align_mse_normalized training curves for C01 vs C03"
+      - "val_align_a2b training curves for C01 vs C03"
 
   - id: H3
     claim: "Affine + L2 prior degrades geometry vs Affine + L1 prior"
     configs_compared:
       a: C03_affine_l1prior_l1pred_3D2f
       b: C04_affine_l2prior_l1pred_3D2f
-    primary_metrics: [r2_mean, cca_effective_rank]
+    primary_metrics: [r2_joint, cca_rank]
     decision_rules:
-      - metric: r2_mean
+      - metric: r2_joint
         condition: "{a} > {b} + {threshold}"
-        threshold: 0.03  # fill before running, suggested: 0.03
+        threshold: 0.03
         verdict_true: SUPPORTED
         verdict_false: REFUTED
     check_plots:
-      - "z_a_norm_mean for C03 vs C04"
+      - "z_a_norm for C03 vs C04"
 
   - id: H4
     claim: "MLP predictor undoes axis alignment vs structured predictors"
     configs_compared:
       a: C03_affine_l1prior_l1pred_3D2f
       b: C05_mlp_l2prior_l1pred_3D2f
-    primary_metrics: [cca_effective_rank, retrieval_l2_at_1, r2_mean]
+    primary_metrics: [cca_rank, retrieval_l2@1, r2_joint]
     decision_rules:
-      - metric: cca_effective_rank
+      - metric: cca_rank
         condition: "{a} > {b} + {threshold}"
-        threshold: 0.5  # fill before running, suggested: 0.5
+        threshold: 0.5
         verdict_true: SUPPORTED
         verdict_false: REFUTED
     check_plots:
@@ -78,12 +78,12 @@ hypotheses:
     configs_compared:
       a: C03_affine_l1prior_l1pred_3D2f
       b: C10_affine_l1prior_l2pred_3D2f
-    primary_metrics: [r2_mean, val_pred_loss]
+    primary_metrics: [r2_joint, val_loss]
     decision_rules:
-      - metric: r2_mean
+      - metric: r2_joint
         condition: "abs({a} - {b}) < {threshold}"
-        threshold: 0.05  # fill before running, suggested: 0.05
-        verdict_true: SUPPORTED  # pred loss is minor factor
-        verdict_false: REFUTED   # pred loss matters more than expected
+        threshold: 0.05
+        verdict_true: SUPPORTED
+        verdict_false: REFUTED
     check_plots:
-      - "val_pred_loss curves for C03 vs C10"
+      - "val_loss curves for C03 vs C10"
