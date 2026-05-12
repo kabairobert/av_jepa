@@ -22,17 +22,15 @@ model:
   num_dims: 3
   hidden_units: 128
   predictor_type: mlp
-  predictor_hidden_dim: 64
 
 loss:
   type: ebm
   lambda_jac: 1.0
   lambda_prior: 0.5
-  lambda_sparse: 0.0
+  lambda_sparse: 0.1
   prior_type: l2
   pred_loss: l1
-  noise_reweighting: none
-  reweighting_tau: 0.5
+  congruence_mode: none
 
 training:
   two_stage: true
