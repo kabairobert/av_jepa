@@ -1,0 +1,203 @@
+batch_id: B05_congruence_weighting
+description: >-
+  Sigmoid congruence gate applied to pred_loss (and optionally sparse_loss) only;
+  jac_loss and prior_loss kept uniformly weighted.
+  Rationale: jac and prior are geometry regularisers — gating them by
+  per-sample prediction quality corrupts the latent geometry precisely
+  where the model is uncertain. Pred and sparse losses are signal-quality
+  proxies and benefit from down-weighting incongruent samples.
+  Tests: (1) gate improves geometry under high noise, (2) pred_and_sparse
+  adds no benefit over pred_only, (3) tau sensitivity, (4) predictor-type
+  interaction.
+
+configs:
+  - C19_diag_l1prior_l1pred_3D2f_highnoise_cg_none          # baseline
+  - C20_diag_l1prior_l1pred_3D2f_highnoise_cg_pred           # pred_only tau=0.5
+  - C21_diag_l1prior_l1pred_3D2f_highnoise_cg_pred_and_sparse
+  - C22_diag_l1prior_l1pred_3D2f_highnoise_cg_pred_tau025    # sharper gate
+  - C23_diag_l1prior_l1pred_3D2f_highnoise_cg_pred_tau10     # softer gate
+  - C24_mlp_l2prior_l1pred_3D2f_highnoise_cg_pred            # MLP predictor
+
+hypotheses:
+
+  # ------------------------------------------------------------------
+  # H1 — Congruence gate (pred_only) improves geometry vs no gate
+  #
+  # Mechanism: noisy/incongruent samples pull gradients away from the
+  # true cross-modal structure. Sigmoid down-weighting → cleaner signal
+  # → better axis-alignment and cross-modal retrieval.
+  # Assumption: pred_loss_per correlates with sample noise level.
+  # Falsification: if pred_loss_per is dominated by model capacity rather
+  # than sample noise, the gate becomes uninformative.
+  # ------------------------------------------------------------------
+
+  - id: H1
+    claim: >-
+      congruence_mode=pred_only (tau=0.5) outperforms none on geometry
+      and retrieval under high noise (diag + L1 prior + L1 pred)
+    configs_compared:
+      a: C19_diag_l1prior_l1pred_3D2f_highnoise_cg_none
+      b: C20_diag_l1prior_l1pred_3D2f_highnoise_cg_pred
+    primary_metrics: [r2_joint, retrieval_cos@1, pca_axis_align_a, pca_axis_align_b]
+    decision_rules:
+      - metric: r2_joint
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: GATE_IMPROVES_GEOMETRY
+        verdict_false: GATE_NO_GEOMETRY_BENEFIT
+      - metric: retrieval_cos@1
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: GATE_IMPROVES_RETRIEVAL
+        verdict_false: GATE_NO_RETRIEVAL_BENEFIT
+      - metric: pca_axis_align_a
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: GATE_IMPROVES_AXIS_ALIGN
+        verdict_false: GATE_NO_AXIS_ALIGN_BENEFIT
+    check_plots:
+      - "val_loss curves C19 vs C20"
+      - "r2_joint, r2_a, r2_b bar: C19 vs C20"
+      - "3D latent scatter colour-coded by u1/u2: C19 vs C20"
+      - "per-sample w_i histogram at epoch 50/150/300"
+
+  # ------------------------------------------------------------------
+  # H2 — pred_and_sparse adds no benefit over pred_only
+  #
+  # Mechanism: sparse_loss is a structural (global) penalty on predictor
+  # weights — it does not vary per-sample in a meaningful way. Gating it
+  # effectively oscillates the regularisation strength based on noisy
+  # sample estimates, adding variance without gain.
+  # ------------------------------------------------------------------
+
+  - id: H2
+    claim: >-
+      pred_and_sparse shows no consistent improvement over pred_only;
+      the extra sparsity gate adds noise without benefit
+    configs_compared:
+      a: C20_diag_l1prior_l1pred_3D2f_highnoise_cg_pred
+      b: C21_diag_l1prior_l1pred_3D2f_highnoise_cg_pred_and_sparse
+    primary_metrics: [r2_joint, retrieval_cos@1, val_loss]
+    decision_rules:
+      - metric: r2_joint
+        condition: "abs({b} - {a}) < {threshold}"
+        threshold: 0.05
+        verdict_true: SPARSE_GATE_NEUTRAL
+        verdict_false: SPARSE_GATE_MATTERS
+      - metric: val_loss
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.01
+        verdict_true: SPARSE_GATE_HURTS_LOSS
+        verdict_false: SPARSE_GATE_SAME_LOSS
+    check_plots:
+      - "val_loss curves C20 vs C21"
+      - "r2_joint bar: C19 vs C20 vs C21"
+
+  # ------------------------------------------------------------------
+  # H3 — Gate benefits are robust to tau in [0.25, 1.0]
+  #
+  # Mechanism: if gate selectivity is too sharp (tau→0) it behaves like
+  # hard sample selection (brittle); too soft (tau→∞) it degenerates to
+  # uniform weighting. We hypothesise a plateau in [0.25, 1.0].
+  # Key metric: r2_joint should not vary by more than 0.05 across tau.
+  # ------------------------------------------------------------------
+
+  - id: H3a
+    claim: "tau=0.25 (sharper gate) not significantly worse than tau=0.5"
+    configs_compared:
+      a: C20_diag_l1prior_l1pred_3D2f_highnoise_cg_pred
+      b: C22_diag_l1prior_l1pred_3D2f_highnoise_cg_pred_tau025
+    primary_metrics: [r2_joint, retrieval_cos@1]
+    decision_rules:
+      - metric: r2_joint
+        condition: "abs({b} - {a}) < {threshold}"
+        threshold: 0.05
+        verdict_true: TAU_ROBUST_025
+        verdict_false: TAU_SENSITIVE_025
+    check_plots:
+      - "r2_joint vs tau bar: C22 (0.25) vs C20 (0.5) vs C23 (1.0)"
+      - "w_i distribution histograms for tau=0.25, 0.5, 1.0"
+
+  - id: H3b
+    claim: "tau=1.0 (softer gate) not significantly worse than tau=0.5"
+    configs_compared:
+      a: C20_diag_l1prior_l1pred_3D2f_highnoise_cg_pred
+      b: C23_diag_l1prior_l1pred_3D2f_highnoise_cg_pred_tau10
+    primary_metrics: [r2_joint, retrieval_cos@1]
+    decision_rules:
+      - metric: r2_joint
+        condition: "abs({b} - {a}) < {threshold}"
+        threshold: 0.05
+        verdict_true: TAU_ROBUST_10
+        verdict_false: TAU_SENSITIVE_10
+    check_plots:
+      - "r2_joint vs tau bar: C22 vs C20 vs C23"
+
+  # ------------------------------------------------------------------
+  # H4 — Congruence gate benefits transfer to MLP predictor
+  #
+  # Mechanism: the gate operates on pred_loss_per which is predictor-
+  # agnostic — it should improve geometry regardless of predictor type.
+  # Secondary: MLP has more capacity so pred_loss_per may be less
+  # correlated with noise → gate less effective for MLP.
+  # ------------------------------------------------------------------
+
+  - id: H4
+    claim: >-
+      congruence gate (pred_only, tau=0.5) also improves geometry for
+      MLP predictor (C24 vs C15 from B04)
+    configs_compared:
+      a: C15_mlp_l2prior_l1pred_3D2f_highnoise_1stage   # from B04, no gate
+      b: C24_mlp_l2prior_l1pred_3D2f_highnoise_cg_pred
+    primary_metrics: [r2_joint, retrieval_cos@1]
+    decision_rules:
+      - metric: r2_joint
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.03
+        verdict_true: GATE_TRANSFERS_TO_MLP
+        verdict_false: GATE_MLP_NO_BENEFIT
+    check_plots:
+      - "r2_joint bar: C15 (no gate) vs C24 (gate, MLP)"
+      - "Compare gate effect: diag (H1: C19 vs C20) vs mlp (H4: C15 vs C24)"
+
+  # ------------------------------------------------------------------
+  # H5 — Jac/prior uniformity: gating jac (full mode from B02) degrades
+  #       geometry vs congruence gate (pred_only)
+  #
+  # Key mechanistic hypothesis: the original noise_reweighting='full'
+  # (now called pred_and_sparse, but previously also weighted jac)
+  # hurts geometry because it suppresses Jacobian regularisation
+  # exactly where the encoder is uncertain — the region that most needs
+  # geometric regularisation.
+  # Cross-batch: compare B02 C08/C09 (old full/pred_only reweighting)
+  # against C19/C20 (new congruence gate). Note: C08/C09 used old API
+  # (noise_reweighting) so jac was also weighted in 'full' mode.
+  # ------------------------------------------------------------------
+
+  - id: H5
+    claim: >-
+      Old noise_reweighting='full' (jac also gated) hurts geometry vs
+      new congruence_mode='pred_only' (jac uniform); cross-batch B02 vs B05
+    configs_compared:
+      a: C09_affine_l1prior_l1pred_3D2f_highnoise_rw_full   # B02: old full
+      b: C20_diag_l1prior_l1pred_3D2f_highnoise_cg_pred     # B05: new pred_only
+    primary_metrics: [r2_joint, pca_axis_align_a, cca_diag_score]
+    decision_rules:
+      - metric: r2_joint
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: JAC_UNIFORM_BETTER
+        verdict_false: JAC_GATING_OK
+      - metric: pca_axis_align_a
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: JAC_UNIFORM_AXIS_ALIGN_BETTER
+        verdict_false: JAC_GATING_AXIS_ALIGN_OK
+    notes: >-
+      Confounded by predictor type (affine C09 vs diagonal C20) and prior
+      type. Treat as exploratory / directional only. Main signal:
+      is pca_axis_align and cca_diag_score systematically higher for C20?
+    check_plots:
+      - "r2_joint, pca_axis_align bar: C09 vs C20"
+      - "CCA heatmap: C09 vs C20"
+      - "val_loss comparison curves"

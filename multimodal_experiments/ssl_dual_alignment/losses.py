@@ -1,3 +1,4 @@
+import warnings
 import torch
 import torch.nn.functional as F
 
@@ -5,17 +6,50 @@ import torch.nn.functional as F
 class EBMJEPALoss(torch.nn.Module):
     """EBM JEPA Loss: Prediction error + Prior - Jacobian + Sparsity.
 
+    Loss decomposition
+    ------------------
+    Four terms with fundamentally different roles:
+
+      pred_loss   – cross-modal prediction quality; signal-congruence proxy
+      jac_loss    – Jacobian regulariser; encourages volume-preserving geometry
+      prior_loss  – latent prior (L1/L2); keeps encoders near a known prior
+      sparse_loss – predictor weight sparsity; structural inductive bias
+
+    Congruence gate
+    ---------------
+    A per-sample sigmoid weight  w_i = σ(−pred_per_i / τ)  is applied to
+    the prediction loss (and optionally the sparsity penalty) so that
+    noisy / incongruent samples contribute less to the gradient.
+
+    Crucially, jac_loss and prior_loss are kept *uniformly weighted*:
+      - jac_loss  reshapes the latent geometry globally; downweighting
+        samples based on prediction error would corrupt the geometry
+        exactly where the model is uncertain — the opposite of what we want.
+      - prior_loss  is a per-sample magnitude penalty; it must stay
+        uniform so that the prior is enforced regardless of prediction ease.
+
     Args:
-        prior_type: 'l1' (Laplace) or 'l2' (Gaussian)
-        pred_loss:  'l1' or 'l2' (smooth_l1) for cross-modal prediction
-        noise_reweighting: 'none' | 'pred_only' | 'full'
-            - 'none':      all samples equally weighted (original behaviour)
-            - 'pred_only': softmax re-weight applied to pred loss only;
-                           Jacobian and prior losses unweighted
-            - 'full':      softmax re-weight applied to all three terms;
-                           motivates geometry reshaping away from noise
-        reweighting_tau: temperature for softmax re-weighting
+        predictor_a2b, predictor_b2a : cross-modal predictor modules
+        lambda_jac   : weight for Jacobian loss (kept uniform)
+        lambda_prior : weight for prior loss (kept uniform)
+        lambda_sparse: weight for predictor weight sparsity
+        prior_type   : 'l1' (Laplace) or 'l2' (Gaussian)
+        pred_loss    : 'l1' or 'l2' (smooth_l1) for cross-modal prediction
+        congruence_mode : 'none' | 'pred_only' | 'pred_and_sparse'
+            - 'none'           : all terms equally weighted (baseline)
+            - 'pred_only'      : sigmoid gate on pred_loss only
+            - 'pred_and_sparse': sigmoid gate on pred_loss AND sparse_loss
+        congruence_tau : temperature τ for sigmoid gate (lower = sharper)
+
+        noise_reweighting (deprecated): old alias; mapped automatically.
     """
+
+    _REWEIGHTING_MAP = {
+        'none':      'none',
+        'pred_only': 'pred_only',
+        'full':      'pred_and_sparse',   # old 'full' closest to pred_and_sparse
+    }
+
     def __init__(
         self,
         predictor_a2b,
@@ -25,10 +59,43 @@ class EBMJEPALoss(torch.nn.Module):
         lambda_sparse: float = 0.1,
         prior_type: str = 'l1',
         pred_loss: str = 'l1',
-        noise_reweighting: str = 'none',
-        reweighting_tau: float = 0.5,
+        congruence_mode: str = 'none',
+        congruence_tau: float = 0.5,
+        # ---- deprecated alias ----
+        noise_reweighting: str = None,
+        reweighting_tau: float = None,
     ):
         super().__init__()
+        # Backward-compat: map deprecated noise_reweighting -> congruence_mode
+        if noise_reweighting is not None:
+            mapped = self._REWEIGHTING_MAP.get(noise_reweighting)
+            if mapped is None:
+                raise ValueError(
+                    f"noise_reweighting='{noise_reweighting}' unknown. "
+                    "Use congruence_mode instead."
+                )
+            warnings.warn(
+                f"noise_reweighting='{noise_reweighting}' is deprecated. "
+                f"Use congruence_mode='{mapped}' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            congruence_mode = mapped
+        if reweighting_tau is not None:
+            warnings.warn(
+                "reweighting_tau is deprecated. Use congruence_tau instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            congruence_tau = reweighting_tau
+
+        valid_modes = ('none', 'pred_only', 'pred_and_sparse')
+        if congruence_mode not in valid_modes:
+            raise ValueError(
+                f"congruence_mode must be one of {valid_modes}, "
+                f"got '{congruence_mode}'"
+            )
+
         self.predictor_a2b = predictor_a2b
         self.predictor_b2a = predictor_b2a
         self.lambda_jac = lambda_jac
@@ -36,8 +103,12 @@ class EBMJEPALoss(torch.nn.Module):
         self.lambda_sparse = lambda_sparse
         self.prior_type = prior_type
         self.pred_loss = pred_loss
-        self.noise_reweighting = noise_reweighting
-        self.reweighting_tau = reweighting_tau
+        self.congruence_mode = congruence_mode
+        self.congruence_tau = congruence_tau
+
+    # ------------------------------------------------------------------
+    # Per-sample loss helpers
+    # ------------------------------------------------------------------
 
     def _pred_loss_per_sample(self, pred, target):
         """Per-sample prediction loss, summed over dims, shape (N,)."""
@@ -53,15 +124,32 @@ class EBMJEPALoss(torch.nn.Module):
         else:  # l2 Gaussian
             return self.lambda_prior * (z_a.pow(2).sum(dim=-1) + z_b.pow(2).sum(dim=-1))
 
+    # ------------------------------------------------------------------
+    # Congruence gate
+    # ------------------------------------------------------------------
+
+    def _congruence_weights(self, pred_loss_per):
+        """Sigmoid gate: w_i = σ(−pred_per_i / τ) ∈ (0, 1).
+
+        High prediction error → low weight (noisy / incongruent sample).
+        Normalised so weights sum to 1 (expectation-equivalent to .mean()).
+        """
+        raw = torch.sigmoid(-pred_loss_per / self.congruence_tau)  # (N,)
+        return raw / (raw.sum() + 1e-8)                            # normalised
+
+    # ------------------------------------------------------------------
+    # Forward
+    # ------------------------------------------------------------------
+
     def forward(self, dual_model_outputs):
         # 1. Unpack latents & jacobians
         d = (dual_model_outputs.shape[1] - 2) // 2
         z_a = dual_model_outputs[:, :d]
         z_b = dual_model_outputs[:, d:2 * d]
-        jac_a = dual_model_outputs[:, 2 * d]
-        jac_b = dual_model_outputs[:, 2 * d + 1]
+        jac_a = dual_model_outputs[:, 2 * d]       # (N,)
+        jac_b = dual_model_outputs[:, 2 * d + 1]   # (N,)
 
-        # 2. Per-sample losses
+        # 2. Per-sample primary losses
         loss_a2b = self._pred_loss_per_sample(self.predictor_a2b(z_a), z_b)   # (N,)
         loss_b2a = self._pred_loss_per_sample(self.predictor_b2a(z_b), z_a)   # (N,)
         pred_loss_per = loss_a2b + loss_b2a                                    # (N,)
@@ -69,28 +157,8 @@ class EBMJEPALoss(torch.nn.Module):
         prior_loss_per = self._prior_per_sample(z_a, z_b)                     # (N,)
         jac_per = jac_a + jac_b                                                # (N,)
 
-        # 3. Reweighting
-        if self.noise_reweighting == 'none':
-            total = (pred_loss_per - self.lambda_jac * jac_per + prior_loss_per).mean()
-
-        elif self.noise_reweighting == 'pred_only':
-            weights = torch.softmax(-pred_loss_per / self.reweighting_tau, dim=0)  # (N,)
-            total = (
-                (weights * pred_loss_per).sum()
-                - self.lambda_jac * jac_per.mean()
-                + prior_loss_per.mean()
-            )
-
-        else:  # full
-            weights = torch.softmax(-pred_loss_per / self.reweighting_tau, dim=0)  # (N,)
-            total = (
-                (weights * pred_loss_per).sum()
-                - self.lambda_jac * (weights * jac_per).sum()
-                + (weights * prior_loss_per).sum()
-            )
-
-        # 4. Sparsity penalty — works for all predictor types (weights only, not biases)
-        sparse_loss = torch.tensor(0.0, device=dual_model_outputs.device)
+        # 3. Sparsity penalty (scalar; predictor weights only, not biases)
+        sparse_loss = pred_loss_per.new_zeros(())
         if self.lambda_sparse > 0 and self.predictor_a2b is not None:
             for predictor in [self.predictor_a2b, self.predictor_b2a]:
                 sparse_loss = sparse_loss + self.lambda_sparse * sum(
@@ -99,4 +167,32 @@ class EBMJEPALoss(torch.nn.Module):
                     if 'weight' in name
                 )
 
-        return total + sparse_loss
+        # 4. Aggregate with congruence gate
+        #
+        # Design principle:
+        #   pred_loss   → congruence-gated (signal-quality proxy)
+        #   sparse_loss → optionally gated (structural, but scales with pred)
+        #   jac_loss    → UNIFORM mean (geometry regulariser; must not be
+        #                 suppressed where the model is uncertain)
+        #   prior_loss  → UNIFORM mean (magnitude prior; must be enforced
+        #                 uniformly to avoid prior collapse on easy samples)
+        jac_term   = -self.lambda_jac * jac_per.mean()          # uniform
+        prior_term = prior_loss_per.mean()                       # uniform
+
+        if self.congruence_mode == 'none':
+            pred_term   = pred_loss_per.mean()
+            total = pred_term + jac_term + prior_term + sparse_loss
+
+        elif self.congruence_mode == 'pred_only':
+            w = self._congruence_weights(pred_loss_per)          # (N,) sums to 1
+            pred_term = (w * pred_loss_per).sum()
+            total = pred_term + jac_term + prior_term + sparse_loss
+
+        else:  # 'pred_and_sparse'
+            w = self._congruence_weights(pred_loss_per)          # (N,) sums to 1
+            pred_term = (w * pred_loss_per).sum()
+            # sparse_loss is scalar — scale by mean weight (no-op for 'none')
+            sparse_gated = sparse_loss * w.mean() * w.shape[0]   # restore scale
+            total = pred_term + jac_term + prior_term + sparse_gated
+
+        return total
