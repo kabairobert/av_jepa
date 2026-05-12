@@ -75,7 +75,6 @@ def validate_metrics(
     aliases = collect_all_aliases(batches_root)
     api = wandb.Api()
 
-    # find a sample run to check keys against
     if sample_cfg and sample_batch:
         runs = list(api.runs(wandb_project, filters={"tags": {"$all": [sample_batch, sample_cfg]}}))
     else:
@@ -86,7 +85,6 @@ def validate_metrics(
         return False
 
     actual_keys = set(runs[0].summary.keys())
-    registry_keys = set(registry.values())
 
     print(f"\nVALIDATE: Checking {len(aliases)} aliases against wandb run '{runs[0].name}'")
     print(f"          Run summary has {len(actual_keys)} keys.\n")
@@ -115,10 +113,6 @@ def validate_metrics(
 # ---------------------------------------------------------------------------
 
 def fetch_run_metrics(wandb_project: str, cfg_name: str, batch_id: str) -> dict | None:
-    """
-    Find the wandb run tagged with both batch_id and cfg_name.
-    Returns final metric values as a flat dict, or None if not found.
-    """
     api = wandb.Api()
     runs = api.runs(
         wandb_project,
@@ -264,7 +258,7 @@ def write_results_md(batch: dict, hyp_results: list, output_path: Path) -> None:
             for p in r["check_plots"]:
                 lines.append(f"- [ ] {p}")
         lines.append("\n---\n")
-    output_path.write_text("\n".join(lines))
+    output_path.write_text("\n".join(lines), encoding="utf-8")
     print(f"  Written: {output_path}")
 
 
@@ -284,7 +278,7 @@ def write_master_results_md(all_results: list[tuple[dict, list]], output_path: P
             delta = f"{rr['delta']:+.4f}" if rr.get("delta") is not None else "\u2014"
             claim_short = r["claim"][:60] + "..." if len(r["claim"]) > 60 else r["claim"]
             lines.append(f"| {r['id']} | {batch['batch_id']} | {claim_short} | {verdict} | {metric} | {delta} |")
-    output_path.write_text("\n".join(lines))
+    output_path.write_text("\n".join(lines), encoding="utf-8")
     print(f"  Written: {output_path}")
 
 
