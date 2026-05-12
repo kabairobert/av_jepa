@@ -57,15 +57,20 @@ class BlockDiagonalPredictor(torch.nn.Module):
 
 
 class MLPPredictor(torch.nn.Module):
-    """Standard MLP cross-modal predictor."""
+    """Standard MLP cross-modal predictor.
+
+    Uses LayerNorm instead of BatchNorm1d: correct at any batch size (including
+    batch=1 during eval) and normalises across features rather than batch samples,
+    which is more appropriate for a per-sample cross-modal mapping.
+    """
     def __init__(self, dim=1, hidden_dim=64):
         super().__init__()
         self.net = torch.nn.Sequential(
             torch.nn.Linear(dim, hidden_dim),
-            torch.nn.BatchNorm1d(hidden_dim),
+            torch.nn.LayerNorm(hidden_dim),
             torch.nn.GELU(),
             torch.nn.Linear(hidden_dim, dim)
         )
-        
+
     def forward(self, x):
         return self.net(x)
