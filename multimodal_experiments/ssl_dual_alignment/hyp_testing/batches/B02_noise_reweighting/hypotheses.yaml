@@ -17,7 +17,7 @@ hypotheses:
     decision_rules:
       - metric: r2_joint
         condition: "{a} > {b} + {threshold}"
-        threshold: null  # fill after first run, suggested: 0.10
+        threshold: 0.10  # fill after first run, suggested: 0.10
         verdict_true: SUPPORTED
         verdict_false: REFUTED
     check_plots:
@@ -33,7 +33,7 @@ hypotheses:
     decision_rules:
       - metric: r2_joint
         condition: "{b} > {a} + {threshold}"
-        threshold: null  # fill after first run, suggested: 0.05
+        threshold: 0.05  # fill after first run, suggested: 0.05
         verdict_true: SUPPORTED
         verdict_false: REFUTED
     check_plots:
@@ -49,12 +49,12 @@ hypotheses:
     decision_rules:
       - metric: r2_joint
         condition: "{b} > {a} + {threshold}"
-        threshold: null  # fill after first run, suggested: 0.05
+        threshold: 0.05  # fill after first run, suggested: 0.05
         verdict_true: full_OUTPERFORMS
         verdict_false: EQUIVALENT_OR_WORSE
       - metric: z_a_norm
         condition: "{b} < {a} - {threshold}"
-        threshold: null  # fill after first run, suggested: 0.05
+        threshold: 0.05  # fill after first run, suggested: 0.05
         verdict_true: UNIMODAL_COMPRESSED
         verdict_false: UNIMODAL_PRESERVED
     check_plots:

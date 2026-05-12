@@ -15,7 +15,7 @@ hypotheses:
     decision_rules:
       - metric: r2_joint
         condition: "{b} > {a} + {threshold}"
-        threshold: null  # fill after first run, suggested: 0.05
+        threshold: 0.05  # fill after first run, suggested: 0.05
         verdict_true: SUPPORTED
         verdict_false: REFUTED
     check_plots:
