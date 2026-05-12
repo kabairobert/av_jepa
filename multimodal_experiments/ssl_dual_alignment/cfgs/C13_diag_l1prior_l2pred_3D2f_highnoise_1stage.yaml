@@ -1,0 +1,43 @@
+# C13 — Diagonal + L1 prior + L2 pred, high noise, ONE-stage
+# B04 pair P2a
+meta:
+  seed: 12345
+  device: auto
+  checkpoint_dir: checkpoints
+
+data:
+  type: 3d-2f-common
+  num_samples: 4096
+  batch_size: 128
+  num_workers: 0
+  manifold_noise_a: 0.02
+  manifold_noise_b: 0.02
+  asymmetric_noise_magnitude: 0.1
+  asymmetric_noise_rate_a: 0.10
+  asymmetric_noise_rate_b: 0.10
+  external_noise_ratio: 0.15
+
+model:
+  stage_count: 6
+  num_dims: 3
+  hidden_units: 128
+  predictor_type: diagonal
+
+loss:
+  type: ebm
+  lambda_jac: 1.0
+  lambda_prior: 0.5
+  lambda_sparse: 0.1
+  prior_type: l1
+  pred_loss: l2
+  noise_reweighting: none
+  reweighting_tau: 0.5
+
+optim:
+  epochs: 300
+  lr: 1.0e-3
+
+logging:
+  log_wandb: true
+  save_every: 50
+  tqdm_silent: false

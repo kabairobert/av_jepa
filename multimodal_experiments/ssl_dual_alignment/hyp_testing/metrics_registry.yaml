@@ -4,7 +4,7 @@
 # When logging keys change in main.py, update here only.
 
 metrics:
-  # --- geometry / R2 ---
+  # --- geometry / R2 (joint + per-modality) ---
   r2_joint:          "geom/zjoint/r2_mean"
   r2_a:              "geom/za/r2_mean"
   r2_b:              "geom/zb/r2_mean"
@@ -15,11 +15,26 @@ metrics:
   r2_b_u0:           "geom/zb/r2_u0"
   r2_b_u1:           "geom/zb/r2_u1"
 
+  # --- geometry / per-dim disentanglement (B04 H_disent) ---
+  # dim0/dim1/dim2 of z_A regressed onto u1, u2, noise respectively
+  r2_dim0_u1:        "geom/za/r2_dim0_u1"
+  r2_dim1_u2:        "geom/za/r2_dim1_u2"
+  r2_dim2_noise:     "geom/za/r2_dim2_noise"
+
+  # --- geometry / PCA axis-alignment (B04 H_geo) ---
+  # max cosine similarity between top-2 PCA eigenvectors and nearest coord axis
+  # 1.0 = perfectly axis-aligned, ~0.57 = random in 3D
+  pca_axis_align_a:  "geom/pca_axis_align_a"
+  pca_axis_align_b:  "geom/pca_axis_align_b"
+
   # --- geometry / CCA ---
   cca_rank:          "geom/cca_effective_rank"
   cca_dim0:          "geom/cca_corr_dim0"
   cca_dim1:          "geom/cca_corr_dim1"
   cca_dim2:          "geom/cca_corr_dim2"
+  # diagonality score: sum(diag(CCA_corr_matrix)) / sum(CCA_corr_matrix)
+  # 1.0 = dim-i of z_A maps exactly to dim-i of z_B, 0 = fully off-diagonal
+  cca_diag_score:    "geom/cca_diag_score"
 
   # --- geometry / retrieval ---
   retrieval_cos@1:   "geom/retrieval_cos@1"

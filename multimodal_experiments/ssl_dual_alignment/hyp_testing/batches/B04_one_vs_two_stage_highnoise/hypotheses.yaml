@@ -1,0 +1,339 @@
+batch_id: B04_one_vs_two_stage_highnoise
+description: >-
+  One-stage vs two-stage training under high noise (ext_noise=0.15, asym_rate=0.10).
+  Tests whether two-stage universally helps, and whether predictor type, pred-loss,
+  and manifold geometry (axis-alignment, disentanglement, cross-modal CCA) are modulated
+  by training regime.
+
+configs:
+  - C11_diag_l1prior_l1pred_3D2f_highnoise_1stage
+  - C12_diag_l1prior_l1pred_3D2f_highnoise_2stage
+  - C13_diag_l1prior_l2pred_3D2f_highnoise_1stage
+  - C14_diag_l1prior_l2pred_3D2f_highnoise_2stage
+  - C15_mlp_l2prior_l1pred_3D2f_highnoise_1stage
+  - C16_mlp_l2prior_l1pred_3D2f_highnoise_2stage
+  - C17_mlp_l2prior_l2pred_3D2f_highnoise_1stage
+  - C18_mlp_l2prior_l2pred_3D2f_highnoise_2stage
+
+hypotheses:
+
+  # ------------------------------------------------------------------
+  # H1 — Two-stage universally better (4 sub-claims, one per pair)
+  # ------------------------------------------------------------------
+
+  - id: H1a
+    claim: "Two-stage > one-stage: diag + L1prior + L1pred + high noise"
+    configs_compared:
+      a: C11_diag_l1prior_l1pred_3D2f_highnoise_1stage
+      b: C12_diag_l1prior_l1pred_3D2f_highnoise_2stage
+    primary_metrics: [r2_joint, retrieval_cos@1]
+    decision_rules:
+      - metric: r2_joint
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: SUPPORTED
+        verdict_false: REFUTED
+      - metric: retrieval_cos@1
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: RETRIEVAL_IMPROVED
+        verdict_false: RETRIEVAL_UNCHANGED
+    check_plots:
+      - "val_loss curves C11 vs C12"
+      - "3D latent scatter: axis-alignment comparison C11 vs C12"
+
+  - id: H1b
+    claim: "Two-stage > one-stage: diag + L1prior + L2pred + high noise"
+    configs_compared:
+      a: C13_diag_l1prior_l2pred_3D2f_highnoise_1stage
+      b: C14_diag_l1prior_l2pred_3D2f_highnoise_2stage
+    primary_metrics: [r2_joint, retrieval_cos@1]
+    decision_rules:
+      - metric: r2_joint
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: SUPPORTED
+        verdict_false: REFUTED
+      - metric: retrieval_cos@1
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: RETRIEVAL_IMPROVED
+        verdict_false: RETRIEVAL_UNCHANGED
+    check_plots:
+      - "val_loss curves C13 vs C14"
+      - "3D latent scatter: axis-alignment comparison C13 vs C14"
+
+  - id: H1c
+    claim: "Two-stage > one-stage: mlp + L2prior + L1pred + high noise"
+    configs_compared:
+      a: C15_mlp_l2prior_l1pred_3D2f_highnoise_1stage
+      b: C16_mlp_l2prior_l1pred_3D2f_highnoise_2stage
+    primary_metrics: [r2_joint, retrieval_cos@1]
+    decision_rules:
+      - metric: r2_joint
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: SUPPORTED
+        verdict_false: REFUTED
+      - metric: retrieval_cos@1
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: RETRIEVAL_IMPROVED
+        verdict_false: RETRIEVAL_UNCHANGED
+    check_plots:
+      - "val_loss curves C15 vs C16"
+      - "3D latent scatter: axis-alignment comparison C15 vs C16"
+
+  - id: H1d
+    claim: "Two-stage > one-stage: mlp + L2prior + L2pred + high noise"
+    configs_compared:
+      a: C17_mlp_l2prior_l2pred_3D2f_highnoise_1stage
+      b: C18_mlp_l2prior_l2pred_3D2f_highnoise_2stage
+    primary_metrics: [r2_joint, retrieval_cos@1]
+    decision_rules:
+      - metric: r2_joint
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: SUPPORTED
+        verdict_false: REFUTED
+      - metric: retrieval_cos@1
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: RETRIEVAL_IMPROVED
+        verdict_false: RETRIEVAL_UNCHANGED
+    check_plots:
+      - "val_loss curves C17 vs C18"
+      - "3D latent scatter: axis-alignment comparison C17 vs C18"
+
+  # ------------------------------------------------------------------
+  # H2 — Predictor type modulates the two-stage advantage
+  # Proxy: compare delta_r2 for diag pairs (H1a+H1b) vs mlp pairs (H1c+H1d)
+  # We encode this as: does mlp show larger gain than diag?
+  # Use C11->C12 (diag L1pred) vs C15->C16 (mlp L1pred) — same pred-loss, different pred type
+  # ------------------------------------------------------------------
+
+  - id: H2
+    claim: "MLP predictor gains more from two-stage than diagonal (under L1 pred-loss)"
+    configs_compared:
+      a: C11_diag_l1prior_l1pred_3D2f_highnoise_1stage   # diag 1stage reference
+      b: C15_mlp_l2prior_l1pred_3D2f_highnoise_1stage    # mlp 1stage reference
+    primary_metrics: [r2_joint, r2_a, r2_b]
+    decision_rules:
+      - metric: r2_joint
+        condition: "{b} - {a} < {threshold}"
+        threshold: 0.10
+        verdict_true: PRED_TYPE_MINOR_AT_1STAGE
+        verdict_false: PRED_TYPE_ALREADY_MATTERS_1STAGE
+    check_plots:
+      - "Delta r2_joint: (C16-C15) vs (C12-C11) — mlp gain vs diag gain from two-stage"
+      - "r2_a and r2_b separately for all 4 pairs"
+
+  # ------------------------------------------------------------------
+  # H3 — Pred-loss (L1 vs L2) modulates two-stage advantage
+  # Compare C11/C12 (L1pred, diag) vs C13/C14 (L2pred, diag) — same pred type
+  # ------------------------------------------------------------------
+
+  - id: H3
+    claim: "L2 pred-loss hurts more in one-stage than L1 pred-loss (diag predictor, high noise)"
+    configs_compared:
+      a: C11_diag_l1prior_l1pred_3D2f_highnoise_1stage
+      b: C13_diag_l1prior_l2pred_3D2f_highnoise_1stage
+    primary_metrics: [r2_joint, val_loss]
+    decision_rules:
+      - metric: r2_joint
+        condition: "{a} - {b} > {threshold}"
+        threshold: 0.05
+        verdict_true: L1PRED_BETTER_IN_1STAGE
+        verdict_false: PRED_LOSS_MINOR_IN_1STAGE
+    check_plots:
+      - "Delta r2_joint one-stage: L1pred (C11) vs L2pred (C13)"
+      - "Delta r2_joint two-stage: L1pred (C12) vs L2pred (C14) — does gap shrink?"
+
+  # ------------------------------------------------------------------
+  # H4 — High noise amplifies two-stage advantage vs low-noise (cross-batch B01)
+  # Reference: C03 (low noise, diag, L1prior, L1pred) from B01
+  # Compare C11 (high noise, 1stage) vs C03 to quantify noise degradation
+  # Compare C12 (high noise, 2stage) vs C03 to check two-stage recovery
+  # ------------------------------------------------------------------
+
+  - id: H4
+    claim: "High noise degrades 1-stage geometry but two-stage partially recovers it"
+    configs_compared:
+      a: C11_diag_l1prior_l1pred_3D2f_highnoise_1stage
+      b: C12_diag_l1prior_l1pred_3D2f_highnoise_2stage
+    primary_metrics: [r2_joint, r2_a, r2_b]
+    decision_rules:
+      - metric: r2_joint
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.08
+        verdict_true: TWO_STAGE_RECOVERS_UNDER_NOISE
+        verdict_false: TWO_STAGE_INSUFFICIENT_FOR_NOISE
+    check_plots:
+      - "C03 (B01, lownoise) vs C11 (highnoise 1stage) vs C12 (highnoise 2stage) — r2_joint bar"
+      - "val_loss convergence curves all three"
+
+  # ------------------------------------------------------------------
+  # H5 (exploratory) — Prior type effect under high noise
+  # L1prior+diag (C11) vs L2prior+mlp (C15): confounded, descriptive only
+  # ------------------------------------------------------------------
+
+  - id: H5
+    claim: "Exploratory: L1prior+diag vs L2prior+mlp under high noise one-stage"
+    configs_compared:
+      a: C11_diag_l1prior_l1pred_3D2f_highnoise_1stage
+      b: C15_mlp_l2prior_l1pred_3D2f_highnoise_1stage
+    primary_metrics: [r2_joint, r2_a, r2_b, val_loss]
+    decision_rules:
+      - metric: r2_joint
+        condition: "abs({a} - {b}) < {threshold}"
+        threshold: 0.20
+        verdict_true: COMPARABLE_SETTINGS
+        verdict_false: LARGE_SETTING_DIFFERENCE
+    check_plots:
+      - "Descriptive: r2_a, r2_b, r2_joint bar chart for C11 vs C15"
+
+  # ------------------------------------------------------------------
+  # H_geo — Two-stage produces more axis-aligned unimodal geometry
+  # ------------------------------------------------------------------
+
+  - id: H_geo_P1
+    claim: "Two-stage produces more axis-aligned 3D manifold (diag+L1prior+L1pred, high noise)"
+    configs_compared:
+      a: C11_diag_l1prior_l1pred_3D2f_highnoise_1stage
+      b: C12_diag_l1prior_l1pred_3D2f_highnoise_2stage
+    primary_metrics: [pca_axis_align_a, pca_axis_align_b]
+    decision_rules:
+      - metric: pca_axis_align_a
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.10
+        verdict_true: AXIS_ALIGNMENT_IMPROVED
+        verdict_false: AXIS_ALIGNMENT_UNCHANGED
+      - metric: pca_axis_align_b
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.10
+        verdict_true: AXIS_ALIGNMENT_IMPROVED
+        verdict_false: AXIS_ALIGNMENT_UNCHANGED
+    check_plots:
+      - "PCA eigenvector plot: C11 vs C12 — are top-2 PCs parallel to coord axes?"
+      - "3D scatter color-coded by u1 and u2 separately: C11 vs C12"
+
+  - id: H_geo_P3
+    claim: "Two-stage produces more axis-aligned 3D manifold (mlp+L2prior+L1pred, high noise)"
+    configs_compared:
+      a: C15_mlp_l2prior_l1pred_3D2f_highnoise_1stage
+      b: C16_mlp_l2prior_l1pred_3D2f_highnoise_2stage
+    primary_metrics: [pca_axis_align_a, pca_axis_align_b]
+    decision_rules:
+      - metric: pca_axis_align_a
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.10
+        verdict_true: AXIS_ALIGNMENT_IMPROVED
+        verdict_false: AXIS_ALIGNMENT_UNCHANGED
+      - metric: pca_axis_align_b
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.10
+        verdict_true: AXIS_ALIGNMENT_IMPROVED
+        verdict_false: AXIS_ALIGNMENT_UNCHANGED
+    check_plots:
+      - "PCA eigenvector plot: C15 vs C16"
+      - "3D scatter color-coded by u1 and u2 separately: C15 vs C16"
+
+  # ------------------------------------------------------------------
+  # H_disent — Two-stage yields better per-dim disentanglement of u1/u2
+  # ------------------------------------------------------------------
+
+  - id: H_disent_P1
+    claim: "Two-stage improves per-dim disentanglement: dim0->u1, dim1->u2 (diag, high noise)"
+    configs_compared:
+      a: C11_diag_l1prior_l1pred_3D2f_highnoise_1stage
+      b: C12_diag_l1prior_l1pred_3D2f_highnoise_2stage
+    primary_metrics: [r2_dim0_u1, r2_dim1_u2, r2_dim2_noise]
+    decision_rules:
+      - metric: r2_dim0_u1
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: DIM0_U1_IMPROVED
+        verdict_false: DIM0_U1_UNCHANGED
+      - metric: r2_dim1_u2
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: DIM1_U2_IMPROVED
+        verdict_false: DIM1_U2_UNCHANGED
+      - metric: r2_dim2_noise
+        condition: "{b} < {threshold}"
+        threshold: 0.10
+        verdict_true: NOISE_DIM_CLEAN
+        verdict_false: NOISE_DIM_DIRTY
+    check_plots:
+      - "Per-dim R2 bar: dim0->u1, dim1->u2, dim2->noise for C11 vs C12"
+
+  - id: H_disent_P3
+    claim: "Two-stage improves per-dim disentanglement (mlp, high noise)"
+    configs_compared:
+      a: C15_mlp_l2prior_l1pred_3D2f_highnoise_1stage
+      b: C16_mlp_l2prior_l1pred_3D2f_highnoise_2stage
+    primary_metrics: [r2_dim0_u1, r2_dim1_u2, r2_dim2_noise]
+    decision_rules:
+      - metric: r2_dim0_u1
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: DIM0_U1_IMPROVED
+        verdict_false: DIM0_U1_UNCHANGED
+      - metric: r2_dim1_u2
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: DIM1_U2_IMPROVED
+        verdict_false: DIM1_U2_UNCHANGED
+      - metric: r2_dim2_noise
+        condition: "{b} < {threshold}"
+        threshold: 0.10
+        verdict_true: NOISE_DIM_CLEAN
+        verdict_false: NOISE_DIM_DIRTY
+    check_plots:
+      - "Per-dim R2 bar: dim0->u1, dim1->u2, dim2->noise for C15 vs C16"
+
+  # ------------------------------------------------------------------
+  # H_align — Two-stage improves cross-modal dim-to-dim correspondence
+  # ------------------------------------------------------------------
+
+  - id: H_align_P1
+    claim: "Two-stage improves CCA diagonality and retrieval (diag+L1prior+L1pred, high noise)"
+    configs_compared:
+      a: C11_diag_l1prior_l1pred_3D2f_highnoise_1stage
+      b: C12_diag_l1prior_l1pred_3D2f_highnoise_2stage
+    primary_metrics: [cca_diag_score, retrieval_cos@1, retrieval_cos@5]
+    decision_rules:
+      - metric: cca_diag_score
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: CCA_ALIGNMENT_IMPROVED
+        verdict_false: CCA_ALIGNMENT_UNCHANGED
+      - metric: retrieval_cos@1
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: RETRIEVAL_IMPROVED
+        verdict_false: RETRIEVAL_UNCHANGED
+    check_plots:
+      - "CCA correlation matrix heatmap: C11 vs C12"
+      - "Retrieval@1 and @5 bar: C11 vs C12"
+
+  - id: H_align_P3
+    claim: "Two-stage improves CCA diagonality and retrieval (mlp+L2prior+L1pred, high noise)"
+    configs_compared:
+      a: C15_mlp_l2prior_l1pred_3D2f_highnoise_1stage
+      b: C16_mlp_l2prior_l1pred_3D2f_highnoise_2stage
+    primary_metrics: [cca_diag_score, retrieval_cos@1, retrieval_cos@5]
+    decision_rules:
+      - metric: cca_diag_score
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: CCA_ALIGNMENT_IMPROVED
+        verdict_false: CCA_ALIGNMENT_UNCHANGED
+      - metric: retrieval_cos@1
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: RETRIEVAL_IMPROVED
+        verdict_false: RETRIEVAL_UNCHANGED
+    check_plots:
+      - "CCA correlation matrix heatmap: C15 vs C16"
+      - "Retrieval@1 and @5 bar: C15 vs C16"

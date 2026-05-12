@@ -57,13 +57,13 @@ def _discover_checkpoints(run_dir: Path) -> list[Path]:
 
 def _get_color_values(param_values: np.ndarray) -> np.ndarray:
     """Convert param values to RGB colors.
-    
+
     For 1D param_values: use Turbo colorscale.
-    For 2D param_values: use HSV encoding (u1 → Hue, u2 → Saturation [0.2, 1]).
+    For 2D param_values: use HSV encoding (u1 -> Hue, u2 -> Saturation [0.2, 1]).
     """
     if hasattr(param_values, 'numpy'):
         param_values = param_values.numpy()
-    
+
     if param_values.ndim == 1:
         vals = param_values
         denom = (vals.max() - vals.min()) + 1e-8
@@ -80,7 +80,7 @@ def _get_color_values(param_values: np.ndarray) -> np.ndarray:
         color_list = []
         for h, s, v in zip(hue, saturation, value):
             r, g, b = colorsys.hsv_to_rgb((h % 360.0) / 360.0, s, v)
-            color_list.append('rgb({},{},{})'.format(int(r*255), int(g*255), int(b*255)))
+            color_list.append('rgb({},{},{})'.format(int(r * 255), int(g * 255), int(b * 255)))
         return color_list
 
 
@@ -134,14 +134,11 @@ def _build_interactive_4way_html(
 
 
 # ---------------------------------------------------------------------------
-# New metric helpers
+# Metric helpers
 # ---------------------------------------------------------------------------
 
 def linear_probe_r2(z: np.ndarray, u: np.ndarray) -> dict:
-    """Fit Ridge regression z → u, return R² per factor and mean.
-    
-    Returns dict with keys r2_u{i} for each factor and r2_mean.
-    """
+    """Fit Ridge regression z -> u, return R2 per factor and mean."""
     from sklearn.linear_model import Ridge
     from sklearn.metrics import r2_score
     reg = Ridge(alpha=1.0).fit(z, u)
@@ -152,6 +149,62 @@ def linear_probe_r2(z: np.ndarray, u: np.ndarray) -> dict:
     result = {f'r2_u{i}': v for i, v in enumerate(r2_per)}
     result['r2_mean'] = float(np.mean(r2_per))
     return result
+
+
+def per_dim_disentanglement(z_a: np.ndarray, u: np.ndarray) -> dict:
+    """Per-dim linear R2: regress each dim of z_A independently onto each factor.
+
+    Returns:
+      r2_dim{i}_u{j}: R2 of z_A[:, i] -> u[:, j]
+      r2_dim2_noise:  max R2 of z_A[:, 2] onto any factor (should be ~0 if noise dim is clean)
+    """
+    from sklearn.linear_model import Ridge
+    from sklearn.metrics import r2_score
+
+    if u.ndim == 1:
+        u = u[:, None]
+
+    n_dims = z_a.shape[1]
+    n_factors = u.shape[1]
+    results = {}
+
+    for i in range(n_dims):
+        zi = z_a[:, i:i+1]
+        for j in range(n_factors):
+            uj = u[:, j]
+            reg = Ridge(alpha=1.0).fit(zi, uj)
+            r2 = float(r2_score(uj, reg.predict(zi)))
+            results[f'r2_dim{i}_u{j}'] = r2
+
+    # Canonical aliases used in hypotheses.yaml
+    # dim0 -> u1 (factor 0), dim1 -> u2 (factor 1), dim2 -> max(any factor) = noise purity
+    results['r2_dim0_u1'] = results.get('r2_dim0_u0', 0.0)   # u1 = factor index 0
+    results['r2_dim1_u2'] = results.get('r2_dim1_u1', 0.0)   # u2 = factor index 1
+    if n_dims > 2:
+        noise_r2s = [results.get(f'r2_dim2_u{j}', 0.0) for j in range(n_factors)]
+        results['r2_dim2_noise'] = float(max(noise_r2s))      # high = noise dim is NOT clean
+    return results
+
+
+def pca_axis_alignment(z: np.ndarray, n_active: int = 2) -> float:
+    """Measure how axis-aligned the top-n_active PCA components of z are.
+
+    For each of the top-n_active eigenvectors, compute max |cosine| with any coord axis.
+    Return the mean of these max cosines across the active components.
+
+    Interpretation:
+      1.0  = each active PC perfectly parallel to a coord axis (ideal)
+      ~0.57 = random orientation in 3D (1/sqrt(3))
+    """
+    z_centered = z - z.mean(axis=0)
+    _, _, Vt = np.linalg.svd(z_centered, full_matrices=False)
+    n_dims = z.shape[1]
+    identity = np.eye(n_dims)
+    scores = []
+    for i in range(min(n_active, Vt.shape[0])):
+        cosines = np.abs(Vt[i] @ identity)   # |cos| with each coord axis
+        scores.append(float(cosines.max()))
+    return float(np.mean(scores))
 
 
 def retrieval_accuracy(z_a: np.ndarray, z_b: np.ndarray, ks=(1, 5)) -> dict:
@@ -168,18 +221,39 @@ def retrieval_accuracy(z_a: np.ndarray, z_b: np.ndarray, ks=(1, 5)) -> dict:
 
 
 def cca_score(z_a: np.ndarray, z_b: np.ndarray) -> dict:
-    """CCA between z_A and z_B. Returns per-dim canonical correlations and effective rank (corr > 0.5)."""
+    """CCA between z_A and z_B.
+
+    Returns:
+      cca_corr_dim{i}: canonical correlation for each component
+      cca_effective_rank: number of components with corr > 0.5
+      cca_diag_score: diagonality of cross-correlation matrix in CCA space
+        = sum(|diag(C)|) / sum(|C|) where C[i,j] = corr(z_a_c[:,i], z_b_c[:,j])
+        1.0 = dim-i of z_A maps exactly to dim-i of z_B
+        0.0 = fully off-diagonal (rotated alignment)
+    """
     from sklearn.cross_decomposition import CCA
     n_components = min(z_a.shape[1], z_b.shape[1])
     try:
         cca = CCA(n_components=n_components).fit(z_a, z_b)
         z_a_c, z_b_c = cca.transform(z_a, z_b)
         corrs = [float(np.corrcoef(z_a_c[:, i], z_b_c[:, i])[0, 1]) for i in range(n_components)]
+
+        # Full cross-correlation matrix for diagonality score
+        C = np.zeros((n_components, n_components))
+        for i in range(n_components):
+            for j in range(n_components):
+                C[i, j] = abs(float(np.corrcoef(z_a_c[:, i], z_b_c[:, j])[0, 1]))
+        total = C.sum()
+        diag_score = float(np.diag(C).sum() / total) if total > 1e-8 else 0.0
+
     except Exception as exc:
         logger.warning("CCA failed: %s", exc)
         corrs = [0.0] * n_components
+        diag_score = 0.0
+
     result = {f'cca_corr_dim{i}': c for i, c in enumerate(corrs)}
     result['cca_effective_rank'] = float(np.sum(np.array(corrs) > 0.5))
+    result['cca_diag_score'] = diag_score
     return result
 
 
@@ -189,8 +263,9 @@ def compute_geometry_metrics(
     device: torch.device,
     max_points: int = 4096,
 ) -> dict:
-    """Collect z_A, z_B from model, compute R², retrieval, CCA, and norm diagnostics.
-    
+    """Collect z_A, z_B from model; compute R2, per-dim disentanglement,
+    PCA axis-alignment, retrieval, CCA, and norm diagnostics.
+
     Returns flat dict suitable for wandb.log.
     """
     dual_model.eval()
@@ -211,29 +286,36 @@ def compute_geometry_metrics(
     z_b = out_b.cpu().numpy()
 
     metrics = {}
+    u = param_values  # shape (N,) or (N, n_factors)
 
-    # Linear probing R² — per modality and joint
-    if param_values.ndim == 1:
-        u = param_values
-    else:
-        u = param_values  # (N, n_factors)
-
+    # --- Joint + per-modality linear probe R2 ---
     for prefix, z in [('za', z_a), ('zb', z_b), ('zjoint', np.concatenate([z_a, z_b], axis=1))]:
         probe = linear_probe_r2(z, u)
         for k, v in probe.items():
             metrics[f'geom/{prefix}/{k}'] = v
 
-    # Retrieval
+    # --- Per-dim disentanglement (z_A only — primary geometry space) ---
+    if param_values.ndim == 2 and z_a.shape[1] >= 3:
+        pdis = per_dim_disentanglement(z_a, u)
+        for k, v in pdis.items():
+            metrics[f'geom/za/{k}'] = v
+
+    # --- PCA axis-alignment ---
+    n_active = 2 if param_values.ndim == 2 else 1
+    metrics['geom/pca_axis_align_a'] = pca_axis_alignment(z_a, n_active=n_active)
+    metrics['geom/pca_axis_align_b'] = pca_axis_alignment(z_b, n_active=n_active)
+
+    # --- Retrieval ---
     ret = retrieval_accuracy(z_a, z_b)
     for k, v in ret.items():
         metrics[f'geom/{k}'] = v
 
-    # CCA
+    # --- CCA (includes cca_diag_score) ---
     cca = cca_score(z_a, z_b)
     for k, v in cca.items():
         metrics[f'geom/{k}'] = v
 
-    # Norm diagnostics (exposes prior shrinkage)
+    # --- Norm diagnostics ---
     metrics['geom/z_a_norm_mean'] = float(np.linalg.norm(z_a, axis=1).mean())
     metrics['geom/z_b_norm_mean'] = float(np.linalg.norm(z_b, axis=1).mean())
 
@@ -273,7 +355,6 @@ def _eval_loop(
             if predictors["a2b"] is not None and predictors["b2a"] is not None:
                 err_a2b = F.mse_loss(predictors["a2b"](z_a), z_b).item()
                 err_b2a = F.mse_loss(predictors["b2a"](z_b), z_a).item()
-                # Normalized by z_b / z_a variance to remove prior shrinkage confound
                 metrics["align_mse_a2b"] += err_a2b
                 metrics["align_mse_b2a"] += err_b2a
 
@@ -329,7 +410,7 @@ def evaluate_and_log_checkpoint(
         wandb.log(logs, step=step)
         log_plots_to_wandb(dual_model, eval_set, device, step, wandb_run)
 
-        # Geometry metrics (R², retrieval, CCA, norms)
+        # Geometry metrics: R2, per-dim disentanglement, PCA axis-align, retrieval, CCA, norms
         geom_metrics = compute_geometry_metrics(dual_model, eval_set, device)
         wandb.log(geom_metrics, step=step)
 
