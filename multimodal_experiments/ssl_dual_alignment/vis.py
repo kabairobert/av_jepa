@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from mpl_toolkits.mplot3d import Axes3D
+import matplotlib.colors as mcolors
 import wandb
 
 # ---- Point color helpers ----
@@ -23,12 +24,14 @@ def _get_point_colors(param_values_1d, point_types, cmap='turbo'):
     norm_p = (param_values_1d - param_values_1d.min()) / (
         param_values_1d.max() - param_values_1d.min() + 1e-12)
     colormap = cm.get_cmap(cmap)
+    gray_rgba = mcolors.to_rgba(_GRAY_CORRUPT)
+    black_rgba = mcolors.to_rgba(_BLACK_EXTERNAL)
     colors = []
     for i, pt in enumerate(point_types):
         if pt == 5:
-            colors.append(_BLACK_EXTERNAL)
+            colors.append(black_rgba)
         elif pt in (2, 4):   # corrupted / noise side of asymmetric pair
-            colors.append(_GRAY_CORRUPT)
+            colors.append(gray_rgba)
         else:                 # manifold (0), asym_a_good (1), asym_b_good (3)
             colors.append(colormap(float(norm_p[i])))
     return colors
