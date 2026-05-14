@@ -21,6 +21,20 @@ metrics:
   r2_dim1_u2:        "geom/za/r2_dim1_u2"
   r2_dim2_noise:     "geom/za/r2_dim2_noise"
 
+  # --- geometry / manifold flatness (B06) ---
+  # flatness_ratio: fraction of variance in top-2 PCA plane
+  #   -> 1.0 = all variance in flat 2D plane (perfectly unrolled)
+  #   -> low = variance spread into 3rd dim (curved manifold)
+  # orth_residual: mean distance of each point from top-2 PCA plane
+  #   -> 0.0 = all points lie in a flat plane
+  #   -> high = manifold is curved / 3D
+  # NOTE: computed over all points until point_type implemented;
+  #       noise points underestimate true flatness (lower bound).
+  flatness_ratio_a:  "geom/za/flatness_ratio"
+  flatness_ratio_b:  "geom/zb/flatness_ratio"
+  orth_residual_a:   "geom/za/orth_residual_mean"
+  orth_residual_b:   "geom/zb/orth_residual_mean"
+
   # --- geometry / PCA axis-alignment (B04 H_geo) ---
   # max cosine similarity between top-2 PCA eigenvectors and nearest coord axis
   # 1.0 = perfectly axis-aligned, ~0.57 = random in 3D
@@ -45,6 +59,14 @@ metrics:
   # --- geometry / norms ---
   z_a_norm:          "geom/z_a_norm_mean"
   z_b_norm:          "geom/z_b_norm_mean"
+
+  # --- per-point-type alignment MSE (requires point_type in dataset) ---
+  # logged once point_type_a/b implemented in dataset.__getitem__
+  align_mse_a2b_manifold:       "val/align_mse_a2b_manifold"
+  align_mse_b2a_manifold:       "val/align_mse_b2a_manifold"
+  align_mse_a2b_asym_corrupt:   "val/align_mse_a2b_asym_corrupt"
+  align_mse_b2a_asym_corrupt:   "val/align_mse_b2a_asym_corrupt"
+  align_mse_a2b_external:       "val/align_mse_a2b_external"
 
   # --- train / val losses ---
   train_loss:        "train/loss"

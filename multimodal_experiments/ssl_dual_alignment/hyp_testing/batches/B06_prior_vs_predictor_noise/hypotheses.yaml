@@ -1,0 +1,302 @@
+batch_id: B06_prior_vs_predictor_noise
+description: >-
+  Two interleaved questions:
+  (1) What drives manifold flattening/unfolding — the prior (L1/L2), the
+      JEPA cross-modal predictor, or both? Tested via loss-term ablations
+      on a fixed affine-predictor, L1-prior baseline (C25):
+      A = no pred loss (prior + jac only), B = no prior (pred + jac only),
+      C = full (baseline C25). A 4th jac-only floor (C31) anchors the bottom.
+  (2) How does noise level and type (asymmetric vs mixed external) interact
+      with prior type (L1 vs L2) on geometry quality? Tested via C25-C30
+      (factorial: 2 priors x 3 noise configs).
+  New flatness metrics (flatness_ratio, orth_residual) added to eval to
+  directly measure manifold flattening, previously only visible by eye.
+  Prerequisite: point_type_a/b in dataset.__getitem__ for per-type metrics.
+
+configs:
+  # --- Ablation arm (A/B/C/floor) ---
+  - C25_affine_l1prior_l1pred_3D2f_asym15_ext0          # full baseline (C)
+  - C31_affine_l1prior_nopred_3D2f_asym15_ext0           # prior+jac only (A)
+  - C32_affine_noprior_l1pred_3D2f_asym15_ext0           # pred+jac only (B)
+  - C33_affine_noprior_nopred_3D2f_asym15_ext0           # jac only (floor)
+  # --- Noise factorial arm ---
+  - C26_affine_l1prior_l1pred_3D2f_asym10_ext10
+  - C27_affine_l1prior_l1pred_3D2f_asym25_ext0
+  - C28_affine_l2prior_l1pred_3D2f_asym15_ext0
+  - C29_affine_l2prior_l1pred_3D2f_asym10_ext10
+  - C30_affine_l2prior_l1pred_3D2f_asym25_ext0
+
+hypotheses:
+
+  # ------------------------------------------------------------------
+  # H1 — Predictor drives manifold flattening more than prior
+  #
+  # Mechanism: affine cross-modal predictor can only minimise pred_loss
+  # if z_A and z_B are related by a linear map. A curved (swiss roll /
+  # wave sheet) manifold makes this impossible — the gradient pressure
+  # is to unfold/flatten the manifold so that affine prediction becomes
+  # feasible. The prior (L1/L2) independently shrinks variance in unused
+  # dims (killing off-plane variance) but does not linearise the in-plane
+  # structure. Prediction is therefore the primary flattening driver.
+  #
+  # Assumption: affine predictor capacity is the bottleneck, not encoder
+  # capacity. If encoder is severely underpowered, neither term flattens.
+  # Falsification: if B (pred+jac) does NOT show higher flatness_ratio
+  # than A (prior+jac), the pred-drives-flattening mechanism is wrong.
+  # ------------------------------------------------------------------
+
+  - id: H1
+    claim: >-
+      pred+jac (C32, no prior) produces higher manifold flatness than
+      prior+jac (C31, no pred); predictor is primary flattening driver
+    configs_compared:
+      a: C31_affine_l1prior_nopred_3D2f_asym15_ext0
+      b: C32_affine_noprior_l1pred_3D2f_asym15_ext0
+    primary_metrics:
+      [flatness_ratio_a, flatness_ratio_b, orth_residual_a, orth_residual_b]
+    decision_rules:
+      - metric: flatness_ratio_a
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: PRED_DRIVES_FLATTENING
+        verdict_false: PRIOR_AS_EFFECTIVE_AS_PRED
+      - metric: orth_residual_a
+        condition: "{a} - {b} > {threshold}"
+        threshold: 0.05
+        verdict_true: PRED_REDUCES_CURVATURE
+        verdict_false: CURVATURE_REDUCTION_SIMILAR
+    check_plots:
+      - "3D latent scatter z_A: C31 vs C32 vs C25 (full) vs C33 (floor)"
+      - "3D latent scatter z_B: same 4-way"
+      - "flatness_ratio_a bar: C33 < C31 vs C32 < C25 (expected order)"
+      - "orth_residual_a bar: inverse order"
+      - "val_loss curves all 4 configs"
+
+  # ------------------------------------------------------------------
+  # H2 — Prior drives dimensionality suppression (dim2 compression)
+  #       independent of predictor
+  #
+  # Mechanism: L1 prior penalises all latent dims uniformly — unused dims
+  # (dim2 in 3D latent for a 2D manifold) are pushed to zero. This is
+  # dimensionality selection, not curvature reduction. Predictor has no
+  # direct penalty on off-signal dims. Therefore prior+jac (C31) should
+  # show lower r2_dim2_noise (dim2 not encoding any factor) and lower
+  # z_a_norm relative to pred+jac (C32).
+  # ------------------------------------------------------------------
+
+  - id: H2
+    claim: >-
+      prior+jac (C31) suppresses noise dimension (dim2) more than
+      pred+jac (C32); prior is primary dimensionality-selector
+    configs_compared:
+      a: C32_affine_noprior_l1pred_3D2f_asym15_ext0
+      b: C31_affine_l1prior_nopred_3D2f_asym15_ext0
+    primary_metrics: [r2_dim2_noise, z_a_norm, pca_axis_align_a]
+    decision_rules:
+      - metric: r2_dim2_noise
+        condition: "{b} < {a} - {threshold}"
+        threshold: 0.05
+        verdict_true: PRIOR_SUPPRESSES_NOISE_DIM
+        verdict_false: PRED_ALSO_SUPPRESSES_NOISE_DIM
+      - metric: z_a_norm
+        condition: "{b} < {a} - {threshold}"
+        threshold: 0.1
+        verdict_true: PRIOR_COMPRESSES_NORMS
+        verdict_false: NORM_SIMILAR
+    check_plots:
+      - "r2_dim2_noise bar: C31 vs C32 vs C25 vs C33"
+      - "z_a_norm bar: same 4-way"
+      - "pca_axis_align_a bar: same 4-way"
+      - "per-dim variance of z_A: bar chart dim0/1/2 for each config"
+
+  # ------------------------------------------------------------------
+  # H3 — Combined (full, C25) outperforms both ablations on all geometry
+  #       metrics; mechanisms are complementary, not redundant
+  #
+  # If H1 and H2 both hold (pred flattens, prior compresses dims), then
+  # the full loss does both simultaneously → flatness_ratio higher than
+  # either alone, AND r2_dim2_noise lower than either alone.
+  # This tests the central justification for the combined EBM-JEPA loss.
+  # Falsification: if full ≈ best ablation, one mechanism is redundant.
+  # ------------------------------------------------------------------
+
+  - id: H3
+    claim: >-
+      full loss (C25) outperforms both C31 and C32 on flatness_ratio,
+      r2_joint, and retrieval; mechanisms are complementary
+    configs_compared:
+      a: C31_affine_l1prior_nopred_3D2f_asym15_ext0
+      b: C32_affine_noprior_l1pred_3D2f_asym15_ext0
+      c: C25_affine_l1prior_l1pred_3D2f_asym15_ext0
+    primary_metrics:
+      [flatness_ratio_a, r2_joint, retrieval_cos@1, r2_dim2_noise]
+    decision_rules:
+      - metric: flatness_ratio_a
+        condition: "{c} > {a} and {c} > {b}"
+        threshold: 0.03
+        verdict_true: MECHANISMS_COMPLEMENTARY_FLATNESS
+        verdict_false: ONE_MECHANISM_SUFFICIENT_FLATNESS
+      - metric: r2_joint
+        condition: "{c} > {a} and {c} > {b}"
+        threshold: 0.03
+        verdict_true: MECHANISMS_COMPLEMENTARY_R2
+        verdict_false: ONE_MECHANISM_SUFFICIENT_R2
+      - metric: retrieval_cos@1
+        condition: "{c} > {a} and {c} > {b}"
+        threshold: 0.03
+        verdict_true: MECHANISMS_COMPLEMENTARY_RETRIEVAL
+        verdict_false: ONE_MECHANISM_SUFFICIENT_RETRIEVAL
+    notes: >-
+      If C25 ≈ C32 >> C31: predictor alone sufficient, prior redundant.
+      If C25 ≈ C31 >> C32: prior alone sufficient for this geometry,
+        predictor redundant (unlikely given mechanism analysis).
+      If C25 >> both: complementary (expected).
+      C33 (jac-only floor) should be worst on all metrics.
+    check_plots:
+      - "4-way bar chart: C33 < C31 < C32 < C25 (expected ranking)"
+      - "flatness_ratio_a and orth_residual_a: all 4 configs"
+      - "r2_joint + retrieval_cos@1: all 4 configs"
+      - "3D latent 4-panel scatter: C33 / C31 / C32 / C25"
+
+  # ------------------------------------------------------------------
+  # H4 — Jac-only floor (C33) has near-zero retrieval and low flatness
+  #
+  # Sanity check: with no alignment signal and no prior shaping, the
+  # encoder learns volume-preserving but arbitrary geometry. Cross-modal
+  # retrieval should be at chance. This anchors the metric scale for H1-H3.
+  # ------------------------------------------------------------------
+
+  - id: H4
+    claim: >-
+      jac-only (C33, no prior, no pred) shows retrieval_cos@1 near chance
+      and lowest flatness_ratio of all 4 ablation configs
+    configs_compared:
+      a: C33_affine_noprior_nopred_3D2f_asym15_ext0
+      b: C25_affine_l1prior_l1pred_3D2f_asym15_ext0
+    primary_metrics: [retrieval_cos@1, flatness_ratio_a, r2_joint]
+    decision_rules:
+      - metric: retrieval_cos@1
+        condition: "{a} < {threshold}"
+        threshold: 0.15
+        verdict_true: JAC_FLOOR_NO_ALIGNMENT
+        verdict_false: JAC_ALONE_PRODUCES_ALIGNMENT
+      - metric: flatness_ratio_a
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.10
+        verdict_true: JAC_FLOOR_UNFLAT
+        verdict_false: JAC_INCIDENTALLY_FLATTENS
+    check_plots:
+      - "retrieval_cos@1 bar: C33 vs all others"
+      - "3D latent scatter: C33 (expect curved/arbitrary structure)"
+
+  # ------------------------------------------------------------------
+  # H5 — L1 vs L2 prior under moderate asymmetric noise (C25 vs C28)
+  #
+  # Mechanism: L1 prior induces sparser codes (heavier tails penalised
+  # less → dims that are near-zero get pushed to exactly zero more
+  # aggressively). Under asymmetric noise, corrupt pairs land off-manifold
+  # — L1 sparsity may resist encoding noise structure in dim2 better
+  # than L2's smooth quadratic penalty.
+  # ------------------------------------------------------------------
+
+  - id: H5
+    claim: >-
+      L1 prior (C25) shows better noise-dim suppression (lower r2_dim2_noise)
+      and equal or better flatness vs L2 prior (C28) at 15%+15% asymmetric noise
+    configs_compared:
+      a: C28_affine_l2prior_l1pred_3D2f_asym15_ext0
+      b: C25_affine_l1prior_l1pred_3D2f_asym15_ext0
+    primary_metrics:
+      [r2_dim2_noise, flatness_ratio_a, r2_joint, pca_axis_align_a]
+    decision_rules:
+      - metric: r2_dim2_noise
+        condition: "{b} < {a} - {threshold}"
+        threshold: 0.05
+        verdict_true: L1_PRIOR_CLEANER_NOISE_DIM
+        verdict_false: L1_L2_PRIOR_SIMILAR_NOISE_DIM
+      - metric: flatness_ratio_a
+        condition: "abs({b} - {a}) < {threshold}"
+        threshold: 0.05
+        verdict_true: FLATNESS_SIMILAR_L1_L2
+        verdict_false: PRIOR_TYPE_AFFECTS_FLATNESS
+    check_plots:
+      - "r2_dim2_noise bar: C25 vs C28"
+      - "flatness_ratio_a + orth_residual_a: C25 vs C28"
+      - "per-dim variance z_A bar: C25 vs C28"
+      - "3D latent scatter: C25 vs C28"
+
+  # ------------------------------------------------------------------
+  # H6 — Mixed noise (ext 10%) degrades geometry more than pure asymmetric;
+  #       L1 prior more robust than L2 in mixed regime
+  #
+  # Mechanism: external noise (both sides uniform random, expanded +25%
+  # bbox) introduces OOD points with no manifold structure. The encoder
+  # either (a) learns to ignore them (robustness) or (b) maps them into
+  # the latent space, polluting z_norm and flatness. L1 prior's sparsity
+  # pressure acts as implicit OOD rejection.
+  # ------------------------------------------------------------------
+
+  - id: H6
+    claim: >-
+      mixed noise (C26, 10%+10%+10%ext) degrades flatness_ratio and r2_joint
+      vs pure asymmetric (C25, 15%+15%), more so for L2 prior (C29 vs C28)
+    configs_compared:
+      a: C25_affine_l1prior_l1pred_3D2f_asym15_ext0
+      b: C26_affine_l1prior_l1pred_3D2f_asym10_ext10
+      c: C28_affine_l2prior_l1pred_3D2f_asym15_ext0
+      d: C29_affine_l2prior_l1pred_3D2f_asym10_ext10
+    primary_metrics:
+      [flatness_ratio_a, r2_joint, z_a_norm, retrieval_cos@1]
+    decision_rules:
+      - metric: flatness_ratio_a
+        condition: "{a} - {b} > {threshold}"
+        threshold: 0.04
+        verdict_true: EXT_NOISE_DEGRADES_FLATNESS_L1
+        verdict_false: L1_ROBUST_TO_EXT_NOISE
+      - metric: flatness_ratio_a
+        condition: "({c} - {d}) > ({a} - {b}) + {threshold}"
+        threshold: 0.03
+        verdict_true: L2_MORE_VULNERABLE_TO_EXT_NOISE
+        verdict_false: PRIOR_TYPE_IRRELEVANT_FOR_EXT_NOISE
+    notes: >-
+      z_norm_external (once point_type implemented) is the cleanest signal
+      here — external points at higher norm = EBM pushes them off-manifold.
+      Until then, z_a_norm (mean over all points) is a noisier proxy.
+    check_plots:
+      - "flatness_ratio_a: C25/C26/C28/C29 grouped bar"
+      - "r2_joint + retrieval_cos@1: same grouping"
+      - "z_a_norm: same grouping (proxy for OOD push-off)"
+      - "val_loss curves: C25 vs C26, C28 vs C29"
+
+  # ------------------------------------------------------------------
+  # H7 — High asymmetric noise (25%+25%) degrades geometry; L1 more
+  #       graceful than L2 at this noise ceiling
+  # ------------------------------------------------------------------
+
+  - id: H7
+    claim: >-
+      at 25%+25% asymmetric noise, L1 prior (C27) maintains higher
+      flatness_ratio and r2_joint than L2 prior (C30)
+    configs_compared:
+      a: C27_affine_l1prior_l1pred_3D2f_asym25_ext0
+      b: C30_affine_l2prior_l1pred_3D2f_asym25_ext0
+    primary_metrics:
+      [flatness_ratio_a, r2_joint, align_mse_a2b_asym_corrupt, retrieval_cos@1]
+    decision_rules:
+      - metric: flatness_ratio_a
+        condition: "{a} - {b} > {threshold}"
+        threshold: 0.05
+        verdict_true: L1_MORE_ROBUST_HIGH_NOISE
+        verdict_false: L1_L2_DEGRADE_EQUALLY
+      - metric: r2_joint
+        condition: "{a} - {b} > {threshold}"
+        threshold: 0.05
+        verdict_true: L1_PRESERVES_R2_HIGH_NOISE
+        verdict_false: L1_L2_R2_SIMILAR_HIGH_NOISE
+    notes: >-
+      align_mse_a2b_asym_corrupt requires point_type_a/b in dataset;
+      treat as a stretch metric until that is implemented.
+    check_plots:
+      - "flatness_ratio_a + orth_residual_a: C25/C27 (L1 noise sweep) vs C28/C30 (L2)"
+      - "r2_joint noise-level curve: x=noise%, L1 vs L2"
+      - "3D latent scatter: C27 vs C30 at epoch 300"
