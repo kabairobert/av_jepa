@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.colors as mcolors
+import matplotlib.colors as mcolors
 import wandb
 
 # ---- Point color helpers ----
@@ -92,6 +93,11 @@ def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, 
 
     output_a = output_a.detach().cpu().numpy()
     output_b = output_b.detach().cpu().numpy()
+
+    if np.isnan(output_a).any() or np.isnan(output_b).any() or np.isinf(output_a).any() or np.isinf(output_b).any():
+        fig = plt.figure(figsize=(18, 4))
+        fig.suptitle('Self-Supervised Dual Geometry Reshaping (NaN/Inf detected in outputs)')
+        return fig
 
     # For 2D param_values (multi-factor case), extract first factor for coloring
     if isinstance(param_values, np.ndarray) and param_values.ndim == 2:

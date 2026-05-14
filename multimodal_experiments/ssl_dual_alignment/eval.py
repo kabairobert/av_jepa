@@ -344,6 +344,10 @@ def compute_geometry_metrics(
     z_a = out_a.cpu().numpy()
     z_b = out_b.cpu().numpy()
 
+    if np.isnan(z_a).any() or np.isnan(z_b).any() or np.isinf(z_a).any() or np.isinf(z_b).any():
+        logger.warning("NaN/Inf detected in latents! Skipping geometry metric computations.")
+        return {}
+
     metrics = {}
     u = param_values  # shape (N,) or (N, n_factors)
 
@@ -587,6 +591,10 @@ def evaluate_and_log_checkpoint(
                 out_b, _ = dual_model.model_b(torch.tensor(data_b, device=device, dtype=torch.float32))
             out_a = out_a.detach().cpu().numpy()
             out_b = out_b.detach().cpu().numpy()
+
+        if np.isnan(out_a).any() or np.isnan(out_b).any() or np.isinf(out_a).any() or np.isinf(out_b).any():
+            logger.warning("NaN/Inf detected in latents! Skipping interactive 3D plot.")
+            return metrics
 
             pt_a = getattr(eval_set, "point_type_a", None)
             pt_b = getattr(eval_set, "point_type_b", None)
