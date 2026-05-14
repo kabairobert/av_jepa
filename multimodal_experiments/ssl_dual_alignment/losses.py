@@ -56,6 +56,7 @@ class EBMJEPALoss(torch.nn.Module):
         predictor_b2a,
         lambda_jac: float = 1.0,
         lambda_prior: float = 0.5,
+        lambda_pred: float = 1.0,
         lambda_sparse: float = 0.1,
         prior_type: str = 'l1',
         pred_loss: str = 'l1',
@@ -100,6 +101,7 @@ class EBMJEPALoss(torch.nn.Module):
         self.predictor_b2a = predictor_b2a
         self.lambda_jac = lambda_jac
         self.lambda_prior = lambda_prior
+        self.lambda_pred = lambda_pred
         self.lambda_sparse = lambda_sparse
         self.prior_type = prior_type
         self.pred_loss = pred_loss
@@ -180,17 +182,17 @@ class EBMJEPALoss(torch.nn.Module):
         prior_term = prior_loss_per.mean()                       # uniform
 
         if self.congruence_mode == 'none':
-            pred_term   = pred_loss_per.mean()
+            pred_term   = self.lambda_pred * pred_loss_per.mean()
             total = pred_term + jac_term + prior_term + sparse_loss
 
         elif self.congruence_mode == 'pred_only':
             w = self._congruence_weights(pred_loss_per)          # (N,) sums to 1
-            pred_term = (w * pred_loss_per).sum()
+            pred_term = self.lambda_pred * (w * pred_loss_per).sum()
             total = pred_term + jac_term + prior_term + sparse_loss
 
         else:  # 'pred_and_sparse'
             w = self._congruence_weights(pred_loss_per)          # (N,) sums to 1
-            pred_term = (w * pred_loss_per).sum()
+            pred_term = self.lambda_pred * (w * pred_loss_per).sum()
             # sparse_loss is scalar — scale by mean weight (no-op for 'none')
             sparse_gated = sparse_loss * w.mean() * w.shape[0]   # restore scale
             total = pred_term + jac_term + prior_term + sparse_gated

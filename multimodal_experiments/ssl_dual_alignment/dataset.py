@@ -18,7 +18,7 @@ class DualDisentangleDataset(Dataset):
         asymmetric_noise_rate_a=None,
         asymmetric_noise_rate_b=None,
         external_noise_ratio=None,
-        noise_bbox_expansion: float = 0.25,
+        noise_bbox_expansion: float = 0.0,
         # Fractional expansion of the noise bounding box beyond manifold extents.
         # 0.0 = tight (manifold range only, original behaviour).
         # 0.25 = +25% total per axis: each edge pushed out by 12.5% of the range.
@@ -59,7 +59,7 @@ class DualDisentangleDataset(Dataset):
             self.asymmetric_noise_rate_b = asymmetric_noise_rate_b if asymmetric_noise_rate_b is not None else 0.0
             self.external_noise_ratio = external_noise_ratio if external_noise_ratio is not None else 0.0
             # Bounding box expansion factor for all noise regions.
-            self.noise_bbox_expansion = float(noise_bbox_expansion) if noise_bbox_expansion is not None else 0.25
+            self.noise_bbox_expansion = float(noise_bbox_expansion) if noise_bbox_expansion is not None else 0.0
 
             if data_type == '2d':
                 # 2D shapes from 1D u.

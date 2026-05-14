@@ -1,6 +1,6 @@
-# C27 — Affine + L2 prior, l1 pred, 10%+10% asymmetric, 10% external, bbox+25%
-# Hypothesis: Mixed noise, L2 prior — compare to C24 (L1 prior).
-# External points now OOD (bbox+25%) — does L2 prior cause more latent leakage than L1?
+# C34 — Affine + L2 prior, l1 pred, 15%+15% asymmetric, 0% external, bbox+25%
+# Hypothesis: L2 prior vs L1 prior under moderate asymmetric noise (pair with C31).
+# Batch: B06 H5 — L1 vs L2 prior noise-dim suppression comparison.
 meta:
   seed: 12345
   device: auto
@@ -14,9 +14,9 @@ data:
   manifold_noise_a: 0.02
   manifold_noise_b: 0.02
   asymmetric_noise_magnitude: 0.1
-  asymmetric_noise_rate_a: 0.10
-  asymmetric_noise_rate_b: 0.10
-  external_noise_ratio: 0.10
+  asymmetric_noise_rate_a: 0.15
+  asymmetric_noise_rate_b: 0.15
+  external_noise_ratio: 0.00
   noise_bbox_expansion: 0.25
 
 model:

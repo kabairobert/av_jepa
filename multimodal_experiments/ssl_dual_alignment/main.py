@@ -133,6 +133,7 @@ def run(
         asymmetric_noise_rate_a=cfg.data.get('asymmetric_noise_rate_a', None),
         asymmetric_noise_rate_b=cfg.data.get('asymmetric_noise_rate_b', None),
         external_noise_ratio=cfg.data.get('external_noise_ratio', None),
+        noise_bbox_expansion=cfg.data.get('noise_bbox_expansion', 0.0),
         seed=cfg.meta.seed,
     )
     train_loader = DataLoader(
@@ -155,6 +156,7 @@ def run(
             predictor_b2a,
             lambda_jac=cfg.loss.get("lambda_jac", 1.0),
             lambda_prior=cfg.loss.get("lambda_prior", 0.5),
+            lambda_pred=cfg.loss.get("lambda_pred", 1.0),
             lambda_sparse=cfg.loss.get("lambda_sparse", 0.1),
             prior_type=cfg.loss.get("prior_type", 'l1'),
             pred_loss=cfg.loss.get("pred_loss", 'l1'),

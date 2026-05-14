@@ -1,6 +1,5 @@
-# C26 — Affine + L2 prior, l1 pred, 15%+15% asymmetric, 0% external, bbox+25%
-# Hypothesis: L2 vs L1 prior under moderate asymmetric noise — compare to C23.
-# L2 prior: dense Gaussian codes; L1 prior: sparse codes. Which is more noise-robust?
+# C39 — Affine, NO prior, NO pred, 15%+15% asymmetric, 0% external, bbox+25%
+# Hypothesis: Jac-only floor. Ablation C for B06 H1-H4.
 meta:
   seed: 12345
   device: auto
@@ -28,9 +27,10 @@ model:
 loss:
   type: ebm
   lambda_jac: 1.0
-  lambda_prior: 0.5
-  lambda_sparse: 0.1
-  prior_type: l2
+  lambda_prior: 0.0
+  lambda_pred: 0.0
+  lambda_sparse: 0.0
+  prior_type: l1
   pred_loss: l1
   noise_reweighting: none
   reweighting_tau: 0.5

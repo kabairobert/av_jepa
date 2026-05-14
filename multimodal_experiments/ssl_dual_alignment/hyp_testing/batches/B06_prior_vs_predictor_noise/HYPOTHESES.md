@@ -16,10 +16,10 @@ Tested via 4-way ablation on a fixed setup (affine predictor, L1 prior,
 
 | Config | Prior | Pred loss | Role |
 |--------|-------|-----------|------|
-| C33 | ✗ | ✗ | jac-only floor |
-| C31 | ✅ | ✗ | prior + jac (A) |
-| C32 | ✗ | ✅ | pred + jac (B) |
-| C25 | ✅ | ✅ | full baseline (C) |
+| C39 | ✗ | ✗ | jac-only floor |
+| C37 | ✅ | ✗ | prior + jac (A) |
+| C38 | ✗ | ✅ | pred + jac (B) |
+| C31 | ✅ | ✅ | full baseline (C) |
 
 The jac term is **always on** — it is the anti-collapse mechanism and
 removing it makes any configuration ill-posed (trivial collapse to zero).
@@ -49,37 +49,36 @@ Mean distance of each point from its projection onto the top-2 PCA plane.
 Both computed in `compute_geometry_metrics` (eval.py) via `manifold_flatness(z, n_signal_dims=2)`.
 Registered in `metrics_registry.yaml` as `flatness_ratio_a/b` and `orth_residual_a/b`.
 
-**Note:** Until `point_type_a/b` is implemented in `dataset.__getitem__`,
-both metrics are computed over all points (manifold + noise). Noise points
-artificially inflate off-plane variance → flatness is *underestimated*.
-Priority: implement point_type first, then compute flatness on manifold-only subset.
+**Note:** `point_type_a/b` is now implemented in `dataset.__getitem__`, and per-type
+alignment MSE is logged in eval. Flatness is still computed over all points;
+filtering to manifold-only is a follow-up if needed.
 
 ## Hypotheses Summary
 
 | ID | Claim | Primary metric | Configs |
 |----|-------|----------------|---------|
-| H1 | Pred drives flattening more than prior | `flatness_ratio_a` | C31 vs C32 |
-| H2 | Prior drives dim suppression (dim2→0) | `r2_dim2_noise` | C32 vs C31 |
-| H3 | Full outperforms both ablations (complementary) | `flatness_ratio_a`, `r2_joint` | C31/C32/C25 |
-| H4 | Jac-only floor: near-zero retrieval, lowest flatness | `retrieval_cos@1` | C33 vs C25 |
-| H5 | L1 prior cleaner noise dim than L2 at 15%+15% | `r2_dim2_noise` | C25 vs C28 |
-| H6 | Mixed ext noise degrades more than pure asym; L1 more robust | `flatness_ratio_a` | C25/C26/C28/C29 |
-| H7 | L1 more graceful than L2 at high noise (25%+25%) | `flatness_ratio_a`, `r2_joint` | C27 vs C30 |
+| H1 | Pred drives flattening more than prior | `flatness_ratio_a` | C37 vs C38 |
+| H2 | Prior drives dim suppression (dim2→0) | `r2_dim2_noise` | C38 vs C37 |
+| H3 | Full outperforms both ablations (complementary) | `flatness_ratio_a`, `r2_joint` | C37/C38/C31 |
+| H4 | Jac-only floor: near-zero retrieval, lowest flatness | `retrieval_cos@1` | C39 vs C31 |
+| H5 | L1 prior cleaner noise dim than L2 at 15%+15% | `r2_dim2_noise` | C31 vs C34 |
+| H6 | Mixed ext noise degrades more than pure asym; L1 more robust | `flatness_ratio_a` | C31/C32/C34/C35 |
+| H7 | L1 more graceful than L2 at high noise (25%+25%) | `flatness_ratio_a`, `r2_joint` | C33 vs C36 |
 
 ## Configs Required
 
-Existing (from session 2025-05-13): C25–C30 in `cfgs/`
+Existing (from session 2025-05-13): C31–C36 in `cfgs/`
 
 New configs needed (add to cfgs/):
-- **C31** — affine, L1 prior, **λ_pred=0**, 15%+15% asym, 0% ext
-- **C32** — affine, **λ_prior=0, λ_sparse=0**, L1 pred, 15%+15% asym, 0% ext
-- **C33** — affine, **λ_prior=0, λ_sparse=0, λ_pred=0**, 15%+15% asym, 0% ext (jac only)
+- **C37** — affine, L1 prior, **λ_pred=0**, 15%+15% asym, 0% ext
+- **C38** — affine, **λ_prior=0, λ_sparse=0**, L1 pred, 15%+15% asym, 0% ext
+- **C39** — affine, **λ_prior=0, λ_sparse=0, λ_pred=0**, 15%+15% asym, 0% ext (jac only)
 
-## Implementation TODOs
+## Implementation Status
 
-1. Add `manifold_flatness()` to `eval.py` → `compute_geometry_metrics()`
-2. Register `flatness_ratio_a/b`, `orth_residual_a/b` in `metrics_registry.yaml`
-3. Add C31, C32, C33 YAML configs to `cfgs/`
-4. Add `lambda_pred` override support to `EBMJEPALoss` (set to 0.0 to ablate)
-5. Add `lambda_prior`/`lambda_sparse` = 0 path (already supported via config, verify)
-6. Implement `point_type_a/b` in `dataset.py` + `eval.py` (prerequisite for per-type metrics)
+- `manifold_flatness()` added and logged in `compute_geometry_metrics()`
+- `flatness_ratio_a/b`, `orth_residual_a/b` registered in `metrics_registry.yaml`
+- C37, C38, C39 configs added
+- `lambda_pred` override supported in `EBMJEPALoss`
+- `lambda_prior`/`lambda_sparse` overrides handled via config
+- `point_type_a/b` implemented in dataset + per-type alignment MSE logged in eval

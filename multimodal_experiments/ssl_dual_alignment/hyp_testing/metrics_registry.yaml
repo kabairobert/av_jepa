@@ -59,6 +59,12 @@ metrics:
   # --- geometry / norms ---
   z_a_norm:          "geom/z_a_norm_mean"
   z_b_norm:          "geom/z_b_norm_mean"
+  z_a_norm_manifold: "geom/z_a_norm_manifold"
+  z_a_norm_asym_corrupt: "geom/z_a_norm_asym_corrupt"
+  z_a_norm_external: "geom/z_a_norm_external"
+  z_b_norm_manifold: "geom/z_b_norm_manifold"
+  z_b_norm_asym_corrupt: "geom/z_b_norm_asym_corrupt"
+  z_b_norm_external: "geom/z_b_norm_external"
 
   # --- per-point-type alignment MSE (requires point_type in dataset) ---
   # logged once point_type_a/b implemented in dataset.__getitem__

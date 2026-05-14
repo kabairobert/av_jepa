@@ -1,5 +1,5 @@
-# C30 — Affine + L2 prior, l1 pred, 25%+25% asymmetric, 0% external, bbox+25%
-# Hypothesis: High asymmetric noise + L2 prior — compare to C27 (L1 prior). B06 H7.
+# C36 — Affine + L2 prior, l1 pred, 25%+25% asymmetric, 0% external, bbox+25%
+# Hypothesis: High asymmetric noise + L2 prior — compare to C33 (L1 prior). B06 H7.
 meta:
   seed: 12345
   device: auto

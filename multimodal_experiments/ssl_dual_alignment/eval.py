@@ -84,12 +84,39 @@ def _get_color_values(param_values: np.ndarray) -> np.ndarray:
         return color_list
 
 
+def _get_point_type_colors(param_values: np.ndarray, point_types: np.ndarray) -> list:
+    """Return Plotly color strings using point_type coloring.
+
+    Manifold points use Turbo by param value. Corrupted points are gray.
+    External points are near-black.
+    """
+    if param_values.ndim == 2:
+        param_values = param_values[:, 0]
+    vals = param_values.astype(float)
+    denom = (vals.max() - vals.min()) + 1e-8
+    normalized = (vals - vals.min()) / denom
+    from plotly.colors import sample_colorscale
+    base_colors = sample_colorscale("Turbo", normalized)
+
+    colors = []
+    for i, pt in enumerate(point_types):
+        if int(pt) == 5:
+            colors.append("rgb(26,26,26)")
+        elif int(pt) in (2, 4):
+            colors.append("rgb(128,128,128)")
+        else:
+            colors.append(base_colors[i])
+    return colors
+
+
 def _build_interactive_4way_html(
     data_a: np.ndarray,
     data_b: np.ndarray,
     out_a: np.ndarray,
     out_b: np.ndarray,
     param_values: np.ndarray,
+    point_type_a: Optional[np.ndarray] = None,
+    point_type_b: Optional[np.ndarray] = None,
     min_height_px: int = 420,
     axis_box: Optional[np.ndarray] = None,
 ) -> Optional[str]:
@@ -100,7 +127,14 @@ def _build_interactive_4way_html(
         logger.warning("Plotly not available; skipping interactive 3D plot: %s", exc)
         return None
 
-    color_vals = _get_color_values(param_values)
+    if point_type_a is not None:
+        color_vals_a = _get_point_type_colors(param_values, point_type_a)
+    else:
+        color_vals_a = _get_color_values(param_values)
+    if point_type_b is not None:
+        color_vals_b = _get_point_type_colors(param_values, point_type_b)
+    else:
+        color_vals_b = _get_color_values(param_values)
 
     fig = make_subplots(
         rows=1, cols=4,
@@ -108,18 +142,18 @@ def _build_interactive_4way_html(
         subplot_titles=("Input Space A", "Output Space A", "Output Space B", "Input Space B"),
     )
 
-    def _scatter(xyz, name):
+    def _scatter(xyz, name, colors):
         return go.Scatter3d(
             x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2],
             mode="markers",
-            marker=dict(size=3, color=color_vals, showscale=False),
+            marker=dict(size=3, color=colors, showscale=False),
             name=name,
         )
 
-    fig.add_trace(_scatter(data_a, "Input A"), row=1, col=1)
-    fig.add_trace(_scatter(out_a, "Output A"), row=1, col=2)
-    fig.add_trace(_scatter(out_b, "Output B"), row=1, col=3)
-    fig.add_trace(_scatter(data_b, "Input B"), row=1, col=4)
+    fig.add_trace(_scatter(data_a, "Input A", color_vals_a), row=1, col=1)
+    fig.add_trace(_scatter(out_a, "Output A", color_vals_a), row=1, col=2)
+    fig.add_trace(_scatter(out_b, "Output B", color_vals_b), row=1, col=3)
+    fig.add_trace(_scatter(data_b, "Input B", color_vals_b), row=1, col=4)
 
     scene_cube = dict(aspectmode="cube")
     fig.update_layout(
@@ -207,6 +241,30 @@ def pca_axis_alignment(z: np.ndarray, n_active: int = 2) -> float:
     return float(np.mean(scores))
 
 
+def manifold_flatness(z: np.ndarray, n_plane: int = 2) -> dict:
+    """PCA-based flatness of a latent manifold.
+
+    flatness_ratio: variance explained by top-n_plane PCs (1.0 = perfectly flat).
+    orth_residual_mean: mean distance to the top-n_plane PCA subspace (0 = flat).
+    """
+    z_centered = z - z.mean(axis=0)
+    _, svals, vt = np.linalg.svd(z_centered, full_matrices=False)
+    total_var = float(np.sum(svals**2))
+    top_var = float(np.sum(svals[:n_plane]**2))
+    flatness_ratio = top_var / total_var if total_var > 1e-12 else 0.0
+
+    basis = vt[:n_plane].T
+    proj = z_centered @ basis
+    recon = proj @ basis.T
+    residual = z_centered - recon
+    orth_residual_mean = float(np.linalg.norm(residual, axis=1).mean())
+
+    return {
+        'flatness_ratio': float(flatness_ratio),
+        'orth_residual_mean': orth_residual_mean,
+    }
+
+
 def retrieval_accuracy(z_a: np.ndarray, z_b: np.ndarray, ks=(1, 5)) -> dict:
     """For each z_A[i], find k-nearest z_B by L2 and cosine. Check if correct index in top-k."""
     from sklearn.metrics.pairwise import euclidean_distances, cosine_distances
@@ -272,6 +330,7 @@ def compute_geometry_metrics(
     data_a = dataset.data_a
     data_b = dataset.data_b
     param_values = np.asarray(dataset.param_values)
+    idxs = None
 
     if data_a.shape[0] > max_points:
         idxs = np.random.choice(data_a.shape[0], size=max_points, replace=False)
@@ -305,6 +364,15 @@ def compute_geometry_metrics(
     metrics['geom/pca_axis_align_a'] = pca_axis_alignment(z_a, n_active=n_active)
     metrics['geom/pca_axis_align_b'] = pca_axis_alignment(z_b, n_active=n_active)
 
+    # --- Manifold flatness ---
+    if param_values.ndim == 2 and z_a.shape[1] >= 2:
+        flat_a = manifold_flatness(z_a, n_plane=2)
+        flat_b = manifold_flatness(z_b, n_plane=2)
+        metrics['geom/za/flatness_ratio'] = flat_a['flatness_ratio']
+        metrics['geom/za/orth_residual_mean'] = flat_a['orth_residual_mean']
+        metrics['geom/zb/flatness_ratio'] = flat_b['flatness_ratio']
+        metrics['geom/zb/orth_residual_mean'] = flat_b['orth_residual_mean']
+
     # --- Retrieval ---
     ret = retrieval_accuracy(z_a, z_b)
     for k, v in ret.items():
@@ -316,8 +384,31 @@ def compute_geometry_metrics(
         metrics[f'geom/{k}'] = v
 
     # --- Norm diagnostics ---
-    metrics['geom/z_a_norm_mean'] = float(np.linalg.norm(z_a, axis=1).mean())
-    metrics['geom/z_b_norm_mean'] = float(np.linalg.norm(z_b, axis=1).mean())
+    norms_a = np.linalg.norm(z_a, axis=1)
+    norms_b = np.linalg.norm(z_b, axis=1)
+    metrics['geom/z_a_norm_mean'] = float(norms_a.mean())
+    metrics['geom/z_b_norm_mean'] = float(norms_b.mean())
+
+    # --- Norms by point type ---
+    pt_a = getattr(dataset, "point_type_a", None)
+    pt_b = getattr(dataset, "point_type_b", None)
+    if pt_a is not None and pt_b is not None:
+        pt_a = np.asarray(pt_a)
+        pt_b = np.asarray(pt_b)
+        if idxs is not None:
+            pt_a = pt_a[idxs]
+            pt_b = pt_b[idxs]
+
+        def _mean_or_nan(values, mask):
+            return float(values[mask].mean()) if mask.any() else float("nan")
+
+        metrics['geom/z_a_norm_manifold'] = _mean_or_nan(norms_a, pt_a == 0)
+        metrics['geom/z_a_norm_asym_corrupt'] = _mean_or_nan(norms_a, pt_a == 4)
+        metrics['geom/z_a_norm_external'] = _mean_or_nan(norms_a, pt_a == 5)
+
+        metrics['geom/z_b_norm_manifold'] = _mean_or_nan(norms_b, pt_b == 0)
+        metrics['geom/z_b_norm_asym_corrupt'] = _mean_or_nan(norms_b, pt_b == 2)
+        metrics['geom/z_b_norm_external'] = _mean_or_nan(norms_b, pt_b == 5)
 
     return metrics
 
@@ -336,7 +427,20 @@ def _eval_loop(
     max_batches: Optional[int] = None,
 ) -> Dict[str, float]:
     dual_model.eval()
-    metrics = {"loss": 0.0, "align_mse_a2b": 0.0, "align_mse_b2a": 0.0, "num_batches": 0}
+    metrics = {
+        "loss": 0.0,
+        "align_mse_a2b": 0.0,
+        "align_mse_b2a": 0.0,
+        "align_mse_a2b_manifold": 0.0,
+        "align_mse_b2a_manifold": 0.0,
+        "align_mse_a2b_asym_corrupt": 0.0,
+        "align_mse_b2a_asym_corrupt": 0.0,
+        "align_mse_a2b_external": 0.0,
+        "count_manifold": 0,
+        "count_asym": 0,
+        "count_external": 0,
+        "num_batches": 0,
+    }
 
     with torch.no_grad():
         for bi, batch in enumerate(tqdm(loader, desc="Eval", leave=False)):
@@ -353,10 +457,43 @@ def _eval_loop(
             d = (outputs.shape[1] - 2) // 2
             z_a, z_b = outputs[:, :d], outputs[:, d:2 * d]
             if predictors["a2b"] is not None and predictors["b2a"] is not None:
-                err_a2b = F.mse_loss(predictors["a2b"](z_a), z_b).item()
-                err_b2a = F.mse_loss(predictors["b2a"](z_b), z_a).item()
+                pred_a2b = predictors["a2b"](z_a)
+                pred_b2a = predictors["b2a"](z_b)
+                err_a2b = F.mse_loss(pred_a2b, z_b).item()
+                err_b2a = F.mse_loss(pred_b2a, z_a).item()
                 metrics["align_mse_a2b"] += err_a2b
                 metrics["align_mse_b2a"] += err_b2a
+
+                pt_a = batch.get("point_type_a", None)
+                pt_b = batch.get("point_type_b", None)
+                if pt_a is not None and pt_b is not None:
+                    pt_a = pt_a.to(device)
+                    pt_b = pt_b.to(device)
+                    external_mask = (pt_a == 5) | (pt_b == 5)
+                    manifold_mask = (pt_a == 0) & (pt_b == 0)
+                    asym_mask = (~external_mask) & (~manifold_mask)
+
+                    if manifold_mask.any():
+                        metrics["align_mse_a2b_manifold"] += F.mse_loss(
+                            pred_a2b[manifold_mask], z_b[manifold_mask], reduction="sum"
+                        ).item()
+                        metrics["align_mse_b2a_manifold"] += F.mse_loss(
+                            pred_b2a[manifold_mask], z_a[manifold_mask], reduction="sum"
+                        ).item()
+                        metrics["count_manifold"] += int(manifold_mask.sum().item())
+                    if asym_mask.any():
+                        metrics["align_mse_a2b_asym_corrupt"] += F.mse_loss(
+                            pred_a2b[asym_mask], z_b[asym_mask], reduction="sum"
+                        ).item()
+                        metrics["align_mse_b2a_asym_corrupt"] += F.mse_loss(
+                            pred_b2a[asym_mask], z_a[asym_mask], reduction="sum"
+                        ).item()
+                        metrics["count_asym"] += int(asym_mask.sum().item())
+                    if external_mask.any():
+                        metrics["align_mse_a2b_external"] += F.mse_loss(
+                            pred_a2b[external_mask], z_b[external_mask], reduction="sum"
+                        ).item()
+                        metrics["count_external"] += int(external_mask.sum().item())
 
             metrics["loss"] += float(loss.item())
             metrics["num_batches"] += 1
@@ -365,11 +502,20 @@ def _eval_loop(
                 break
 
     denom = max(metrics["num_batches"], 1)
-    return {
+    out = {
         "loss": metrics["loss"] / denom,
         "align_mse_a2b": metrics["align_mse_a2b"] / denom,
         "align_mse_b2a": metrics["align_mse_b2a"] / denom,
     }
+    if metrics["count_manifold"] > 0:
+        out["align_mse_a2b_manifold"] = metrics["align_mse_a2b_manifold"] / metrics["count_manifold"]
+        out["align_mse_b2a_manifold"] = metrics["align_mse_b2a_manifold"] / metrics["count_manifold"]
+    if metrics["count_asym"] > 0:
+        out["align_mse_a2b_asym_corrupt"] = metrics["align_mse_a2b_asym_corrupt"] / metrics["count_asym"]
+        out["align_mse_b2a_asym_corrupt"] = metrics["align_mse_b2a_asym_corrupt"] / metrics["count_asym"]
+    if metrics["count_external"] > 0:
+        out["align_mse_a2b_external"] = metrics["align_mse_a2b_external"] / metrics["count_external"]
+    return out
 
 
 def evaluate_and_log_checkpoint(
@@ -399,6 +545,14 @@ def evaluate_and_log_checkpoint(
         f"{log_prefix}/align_mse_a2b": metrics["align_mse_a2b"],
         f"{log_prefix}/align_mse_b2a": metrics["align_mse_b2a"],
     }
+    if "align_mse_a2b_manifold" in metrics:
+        logs[f"{log_prefix}/align_mse_a2b_manifold"] = metrics["align_mse_a2b_manifold"]
+        logs[f"{log_prefix}/align_mse_b2a_manifold"] = metrics["align_mse_b2a_manifold"]
+    if "align_mse_a2b_asym_corrupt" in metrics:
+        logs[f"{log_prefix}/align_mse_a2b_asym_corrupt"] = metrics["align_mse_a2b_asym_corrupt"]
+        logs[f"{log_prefix}/align_mse_b2a_asym_corrupt"] = metrics["align_mse_b2a_asym_corrupt"]
+    if "align_mse_a2b_external" in metrics:
+        logs[f"{log_prefix}/align_mse_a2b_external"] = metrics["align_mse_a2b_external"]
     if checkpoint_name is not None:
         logs["eval/checkpoint_name"] = checkpoint_name
     if checkpoint_path is not None:
@@ -434,8 +588,19 @@ def evaluate_and_log_checkpoint(
             out_a = out_a.detach().cpu().numpy()
             out_b = out_b.detach().cpu().numpy()
 
+            pt_a = getattr(eval_set, "point_type_a", None)
+            pt_b = getattr(eval_set, "point_type_b", None)
+            if pt_a is not None and data_a.shape[0] == eval_set.data_a.shape[0]:
+                pt_a = np.asarray(pt_a)
+                pt_b = np.asarray(pt_b)
+            if pt_a is not None and data_a.shape[0] < eval_set.data_a.shape[0]:
+                pt_a = np.asarray(pt_a)[idxs]
+                pt_b = np.asarray(pt_b)[idxs]
+
             html = _build_interactive_4way_html(
                 data_a, data_b, out_a, out_b, np.asarray(param_values),
+                point_type_a=pt_a,
+                point_type_b=pt_b,
                 min_height_px=int(interactive_min_height),
             )
             if html is not None:
@@ -505,6 +670,7 @@ def run(
         asymmetric_noise_rate_a=data_cfg.get("asymmetric_noise_rate_a", None),
         asymmetric_noise_rate_b=data_cfg.get("asymmetric_noise_rate_b", None),
         external_noise_ratio=data_cfg.get("external_noise_ratio", None),
+        noise_bbox_expansion=data_cfg.get("noise_bbox_expansion", 0.0),
         seed=cfg_obj.meta.seed,
     )
     effective_batch_size = int(batch_size) if batch_size is not None else int(data_cfg.get("batch_size", 128))
@@ -522,6 +688,7 @@ def run(
             predictor_a2b, predictor_b2a,
             lambda_jac=cfg_obj.loss.get("lambda_jac", 1.0),
             lambda_prior=cfg_obj.loss.get("lambda_prior", 0.5),
+            lambda_pred=cfg_obj.loss.get("lambda_pred", 1.0),
             lambda_sparse=cfg_obj.loss.get("lambda_sparse", 0.1),
             prior_type=cfg_obj.loss.get("prior_type", 'l1'),
             pred_loss=cfg_obj.loss.get("pred_loss", 'l1'),
