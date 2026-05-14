@@ -30,8 +30,8 @@ loss:
   lambda_sparse: 0.1
   prior_type: l1
   pred_loss: l1
-  noise_reweighting: full
-  reweighting_tau: 0.5
+  congruence_mode: full
+  congruence_tau: 0.5
 
 optim:
   epochs: 300
