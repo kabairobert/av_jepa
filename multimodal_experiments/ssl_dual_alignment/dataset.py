@@ -147,8 +147,8 @@ class DualDisentangleDataset(Dataset):
                     min_a, max_a = min_a - half * range_a, max_a + half * range_a
                     range_b = max_b - min_b
                     min_b, max_b = min_b - half * range_b, max_b + half * range_b
-                    ext_a = np.random.uniform(min_a, max_a, size=(n_external, temp_a.shape[1]))
-                    ext_b = np.random.uniform(min_b, max_b, size=(n_external, temp_b.shape[1]))
+                    ext_a = min_a + (max_a - min_a) * np.random.rand(n_external, temp_a.shape[1])
+                    ext_b = min_b + (max_b - min_b) * np.random.rand(n_external, temp_b.shape[1])
                     ext_u = np.random.uniform(0, 1, n_external)
                     parts_a.append(ext_a)
                     parts_b.append(ext_b)
@@ -276,8 +276,8 @@ class DualDisentangleDataset(Dataset):
                     min_a, max_a = min_a - half * range_a, max_a + half * range_a
                     range_b = max_b - min_b
                     min_b, max_b = min_b - half * range_b, max_b + half * range_b
-                    ext_a = np.random.uniform(min_a, max_a, size=(n_external, temp_a.shape[1]))
-                    ext_b = np.random.uniform(min_b, max_b, size=(n_external, temp_b.shape[1]))
+                    ext_a = min_a + (max_a - min_a) * np.random.rand(n_external, temp_a.shape[1])
+                    ext_b = min_b + (max_b - min_b) * np.random.rand(n_external, temp_b.shape[1])
                     ext_u = np.random.uniform(0, 1, n_external)
                     parts_a.append(ext_a)
                     parts_b.append(ext_b)
@@ -400,8 +400,8 @@ class DualDisentangleDataset(Dataset):
                     min_a, max_a = min_a - half * range_a, max_a + half * range_a
                     range_b = max_b - min_b
                     min_b, max_b = min_b - half * range_b, max_b + half * range_b
-                    ext_a = np.random.uniform(min_a, max_a, size=(n_external, temp_a.shape[1]))
-                    ext_b = np.random.uniform(min_b, max_b, size=(n_external, temp_b.shape[1]))
+                    ext_a = min_a + (max_a - min_a) * np.random.rand(n_external, temp_a.shape[1])
+                    ext_b = min_b + (max_b - min_b) * np.random.rand(n_external, temp_b.shape[1])
                     ext_u = np.column_stack([np.random.uniform(0, 1, n_external), np.random.uniform(0, 1, n_external)])
                     parts_a.append(ext_a)
                     parts_b.append(ext_b)
