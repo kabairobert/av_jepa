@@ -31,6 +31,14 @@ class DualDisentangleDataset(Dataset):
         self.data_type = data_type
         self.seed = seed
 
+        # Alias resolution for data_type
+        dt_upper = str(data_type).upper()
+        if dt_upper == '3D1F':
+            data_type = '3d-av-1f-common'
+        elif dt_upper == '3D2F':
+            data_type = '3d-2f-common'
+        self.data_type = data_type
+
         # Set global seed for reproducibility of noise generation
         if seed is not None:
             np.random.seed(seed)

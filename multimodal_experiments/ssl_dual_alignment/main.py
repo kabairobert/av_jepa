@@ -72,12 +72,23 @@ def run(
     two_stage = cfg.training.get('two_stage', False) if hasattr(cfg, 'training') else False
     loss_type = cfg.loss.get("type", "ebm")
 
-    data_type_str = str(cfg.data.get('type', '2d')).replace('3d-2f-common', '3D2F')
+    data_type_str = str(cfg.data.get('type', '2d')).replace('3d-2f-common', '3D2F').replace('3d-av-1f-common', '3D1F')
     pred_type_raw = str(cfg.model.get('predictor_type', 'none'))
     pred_type_str = "aff" if pred_type_raw == "affine" else pred_type_raw
 
-    cm_val = cfg.loss.get("congruence_mode", cfg.loss.get("noise_reweighting", "none"))
-    cm_str = "no" if cm_val == "none" else str(cm_val)
+    cm_val = str(cfg.loss.get("congruence_mode", cfg.loss.get("noise_reweighting", "none")))
+    if cm_val in ("none", "off"):
+        canon_cm = "none"
+        cm_str = "off"
+    elif cm_val in ("pred_only", "pred"):
+        canon_cm = "pred_only"
+        cm_str = "pred"
+    elif cm_val in ("pred_and_sparse", "pred_sparse", "full"):
+        canon_cm = "pred_and_sparse"
+        cm_str = "pred_sparse"
+    else:
+        canon_cm = cm_val
+        cm_str = cm_val
 
     # EBM-only naming tags are only meaningful when loss.type == "ebm"
     if loss_type == "ebm":
@@ -169,7 +180,7 @@ def run(
             lambda_sparse=cfg.loss.get("lambda_sparse", 0.1),
             prior_type=cfg.loss.get("prior_type", 'l1'),
             pred_loss=cfg.loss.get("pred_loss", 'l1'),
-            congruence_mode=cfg.loss.get("congruence_mode", cfg.loss.get("noise_reweighting", "none")),
+            congruence_mode=canon_cm,
             congruence_tau=cfg.loss.get("congruence_tau", cfg.loss.get("reweighting_tau", 0.5)),
         )
     else:

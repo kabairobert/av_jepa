@@ -690,6 +690,16 @@ def run(
     predictor_a2b = built["predictor_a2b"]
     predictor_b2a = built["predictor_b2a"]
 
+    cm_val = str(cfg_obj.loss.get("congruence_mode", cfg_obj.loss.get("noise_reweighting", "none")))
+    if cm_val in ("none", "off", "cm_off"):
+        canon_cm = "none"
+    elif cm_val in ("pred_only", "pred", "cm_pred"):
+        canon_cm = "pred_only"
+    elif cm_val in ("pred_and_sparse", "pred_sparse", "full", "cm_pred_sparse"):
+        canon_cm = "pred_and_sparse"
+    else:
+        canon_cm = cm_val
+
     loss_type = cfg_obj.loss.get("type", "ebm")
     if loss_type == "ebm":
         loss_fn = EBMJEPALoss(
@@ -700,7 +710,7 @@ def run(
             lambda_sparse=cfg_obj.loss.get("lambda_sparse", 0.1),
             prior_type=cfg_obj.loss.get("prior_type", 'l1'),
             pred_loss=cfg_obj.loss.get("pred_loss", 'l1'),
-            congruence_mode=cfg_obj.loss.get("congruence_mode", cfg_obj.loss.get("noise_reweighting", "none")),
+            congruence_mode=canon_cm,
             congruence_tau=cfg_obj.loss.get("congruence_tau", cfg_obj.loss.get("reweighting_tau", 0.5)),
         )
     else:

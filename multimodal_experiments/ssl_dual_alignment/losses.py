@@ -44,10 +44,17 @@ class EBMJEPALoss(torch.nn.Module):
         noise_reweighting (deprecated): old alias; mapped automatically.
     """
 
-    _REWEIGHTING_MAP = {
+    _CONGRUENCE_ALIAS_MAP = {
         'none':      'none',
+        'off':       'none',
+        'cm_off':    'none',
         'pred_only': 'pred_only',
+        'pred':      'pred_only',
+        'cm_pred':   'pred_only',
         'full':      'pred_and_sparse',   # old 'full' closest to pred_and_sparse
+        'pred_and_sparse': 'pred_and_sparse',
+        'pred_sparse': 'pred_and_sparse',
+        'cm_pred_sparse': 'pred_and_sparse'
     }
 
     def __init__(
@@ -69,7 +76,7 @@ class EBMJEPALoss(torch.nn.Module):
         super().__init__()
         # Backward-compat: map deprecated noise_reweighting -> congruence_mode
         if noise_reweighting is not None:
-            mapped = self._REWEIGHTING_MAP.get(noise_reweighting)
+            mapped = self._CONGRUENCE_ALIAS_MAP.get(noise_reweighting)
             if mapped is None:
                 raise ValueError(
                     f"noise_reweighting='{noise_reweighting}' unknown. "
@@ -89,6 +96,8 @@ class EBMJEPALoss(torch.nn.Module):
                 stacklevel=2,
             )
             congruence_tau = reweighting_tau
+
+        congruence_mode = self._CONGRUENCE_ALIAS_MAP.get(congruence_mode, congruence_mode)
 
         valid_modes = ('none', 'pred_only', 'pred_and_sparse')
         if congruence_mode not in valid_modes:
