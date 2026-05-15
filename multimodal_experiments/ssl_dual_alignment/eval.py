@@ -711,10 +711,15 @@ def run(
     log_wandb_override = _to_bool_or_none(log_wandb)
     enabled_wandb = bool(cfg_obj.logging.get("log_wandb", False)) if log_wandb_override is None else bool(log_wandb_override)
     run_dir = folder_path if folder_path is not None else (checkpoint_path.parent if checkpoint_path is not None else cfg_path.parent)
+
+    base_tags = ["sslda", "eval"]
+    if cfg_obj.logging.get("log_seed_tag", False):
+        base_tags.append(f"seed_{cfg_obj.meta.seed}")
+
     wandb_run = setup_wandb(
         project="eb_jepa", config=cfg_obj, run_dir=run_dir / "eval_wandb",
         run_name=f"{run_dir.name}_eval",
-        tags=["dual_disentangle", "eval", f"seed_{cfg_obj.meta.seed}"],
+        tags=base_tags,
         group=cfg_obj.logging.get("wandb_group"),
         enabled=enabled_wandb, resume=False,
     )

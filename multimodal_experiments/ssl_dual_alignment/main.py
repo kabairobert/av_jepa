@@ -101,7 +101,7 @@ def run(
     if folder is None:
         sweep_name = get_default_dev_name()
         exp_dir = get_unified_experiment_dir(
-            example_name="dual_disentangle",
+            example_name="sslda",
             sweep_name=sweep_name,
             exp_name=exp_name,
             seed=cfg.meta.seed,
@@ -114,7 +114,9 @@ def run(
     save_config(cfg, exp_dir)
 
     # --- 3. W&B Logging ---
-    base_tags = ["dual_disentangle", f"seed_{cfg.meta.seed}", "multimodal_initial"]
+    base_tags = ["sslda"]
+    if cfg.logging.get("log_seed_tag", False):
+        base_tags.append(f"seed_{cfg.meta.seed}")
     extra_tags = _parse_tags(wandb_tags)
     all_tags = base_tags + extra_tags
 
