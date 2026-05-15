@@ -72,23 +72,30 @@ def run(
     two_stage = cfg.training.get('two_stage', False) if hasattr(cfg, 'training') else False
     loss_type = cfg.loss.get("type", "ebm")
 
+    data_type_str = str(cfg.data.get('type', '2d')).replace('3d-2f-common', '3D2F')
+    pred_type_raw = str(cfg.model.get('predictor_type', 'none'))
+    pred_type_str = "aff" if pred_type_raw == "affine" else pred_type_raw
+
+    cm_val = cfg.loss.get("congruence_mode", cfg.loss.get("noise_reweighting", "none"))
+    cm_str = "no" if cm_val == "none" else str(cm_val)
+
     # EBM-only naming tags are only meaningful when loss.type == "ebm"
     if loss_type == "ebm":
+        pred_loss_str = str(cfg.loss.get('pred_loss', 'l1'))
         exp_name = (
-            f"dalign_{cfg.data.get('type', '2d')}_"
-            f"loss_{loss_type}_"
-            f"pred_{cfg.model.get('predictor_type', 'none')}_"
-            f"prior_{cfg.loss.get('prior_type', 'l1')}_"
-            f"pred_loss_{cfg.loss.get('pred_loss', 'l1')}_"
-            f"rw_{cfg.loss.get('noise_reweighting', 'none')}_"
-            f"sparse_{cfg.loss.get('lambda_sparse', 0.0)}_"
-            f"{'2stage' if two_stage else '1stage'}"
+            f"sslda-{data_type_str}-"
+            f"l_{loss_type}-"
+            f"pre_{pred_type_str}_{pred_loss_str}-"
+            f"pri_{cfg.loss.get('prior_type', 'l1')}-"
+            f"cm_{cm_str}-"
+            f"sp_{cfg.loss.get('lambda_sparse', 0.0)}-"
+            f"{'2stg' if two_stage else '1stg'}"
         )
     else:
         exp_name = (
-            f"dalign_{cfg.data.get('type', '2d')}_"
-            f"loss_{loss_type}_"
-            f"pred_{cfg.model.get('predictor_type', 'none')}"
+            f"sslda-{data_type_str}-"
+            f"l_{loss_type}-"
+            f"pre_{pred_type_str}"
         )
 
     if folder is None:
@@ -160,8 +167,8 @@ def run(
             lambda_sparse=cfg.loss.get("lambda_sparse", 0.1),
             prior_type=cfg.loss.get("prior_type", 'l1'),
             pred_loss=cfg.loss.get("pred_loss", 'l1'),
-            noise_reweighting=cfg.loss.get("noise_reweighting", 'none'),
-            reweighting_tau=cfg.loss.get("reweighting_tau", 0.5),
+            congruence_mode=cfg.loss.get("congruence_mode", cfg.loss.get("noise_reweighting", "none")),
+            congruence_tau=cfg.loss.get("congruence_tau", cfg.loss.get("reweighting_tau", 0.5)),
         )
     else:
         loss_fn = SupervisedFactorLoss(

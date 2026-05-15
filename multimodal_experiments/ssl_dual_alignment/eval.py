@@ -700,8 +700,8 @@ def run(
             lambda_sparse=cfg_obj.loss.get("lambda_sparse", 0.1),
             prior_type=cfg_obj.loss.get("prior_type", 'l1'),
             pred_loss=cfg_obj.loss.get("pred_loss", 'l1'),
-            noise_reweighting=cfg_obj.loss.get("noise_reweighting", 'none'),
-            reweighting_tau=cfg_obj.loss.get("reweighting_tau", 0.5),
+            congruence_mode=cfg_obj.loss.get("congruence_mode", cfg_obj.loss.get("noise_reweighting", "none")),
+            congruence_tau=cfg_obj.loss.get("congruence_tau", cfg_obj.loss.get("reweighting_tau", 0.5)),
         )
     else:
         loss_fn = SupervisedFactorLoss(
