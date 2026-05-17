@@ -125,8 +125,8 @@ class EBMJEPALoss(torch.nn.Module):
         """Per-sample prediction loss, summed over dims, shape (N,)."""
         if self.pred_loss == 'l1':
             return F.l1_loss(pred, target, reduction='none').sum(dim=-1)
-        else:  # l2 / smooth_l1
-            return F.smooth_l1_loss(pred, target, reduction='none').sum(dim=-1)
+        else:  # l2 / MSE
+            return F.mse_loss(pred, target, reduction='none').sum(dim=-1)
 
     def _prior_per_sample(self, z_a, z_b):
         """Per-sample prior loss, shape (N,)."""

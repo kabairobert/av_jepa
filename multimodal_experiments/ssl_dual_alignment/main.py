@@ -176,6 +176,7 @@ def run(
 
     # --- 5. Model Init ---
     built = build_model_and_predictors(cfg, device)
+    full_model = built["full_model"]
     dual_model = built["dual_model"]
     predictor_a2b = built["predictor_a2b"]
     predictor_b2a = built["predictor_b2a"]
@@ -222,9 +223,9 @@ def run(
     if cfg.meta.get("load_model"):
         ckpt_path = exp_dir / cfg.meta.get("load_checkpoint", "latest.pth.tar")
         if not two_stage:
-            ckpt_info = load_checkpoint(ckpt_path, dual_model, optimizer, device=device)
+            ckpt_info = load_checkpoint(ckpt_path, full_model, optimizer, device=device)
         else:
-            ckpt_info = load_checkpoint(ckpt_path, dual_model, opt_flow, device=device)
+            ckpt_info = load_checkpoint(ckpt_path, full_model, opt_flow, device=device)
             # If resuming into Stage 2, also restore opt_pred state if a separate
             # pred_optimizer checkpoint is available alongside the main checkpoint.
             # load_checkpoint returns epoch+1, so after saving at stage1_epochs-1 we
@@ -281,7 +282,9 @@ def run(
             d = (outputs.shape[1] - 2) // 2
             z_a, z_b = outputs[:, :d], outputs[:, d:2*d]
             with torch.no_grad():
-                if predictor_a2b is not None and predictor_b2a is not None:
+                # Only log MSE alignment if prediction task is actually enabled
+                has_pred = getattr(loss_fn, 'lambda_pred', 1.0) > 0
+                if has_pred and predictor_a2b is not None and predictor_b2a is not None:
                     epoch_align_a2b += torch.nn.functional.mse_loss(predictor_a2b(z_a), z_b).item()
                     epoch_align_b2a += torch.nn.functional.mse_loss(predictor_b2a(z_b), z_a).item()
             epoch_loss += loss.item()
@@ -296,7 +299,7 @@ def run(
     def _maybe_eval_and_save(epoch_idx, active_optimizer, current_stage=None):
         save_checkpoint(
             exp_dir / f"epoch_{epoch_idx+1}.pth.tar",
-            model=dual_model,
+            model=full_model,
             optimizer=active_optimizer,
             epoch=epoch_idx,
             step=global_step,
@@ -403,7 +406,7 @@ def run(
     # --- 10. Final checkpoint ---
     save_checkpoint(
         exp_dir / "latest.pth.tar",
-        model=dual_model,
+        model=full_model,
         optimizer=final_optimizer,
         epoch=epochs - 1,
         step=global_step,

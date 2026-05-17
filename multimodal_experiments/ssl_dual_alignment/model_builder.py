@@ -1,5 +1,5 @@
 from multimodal_experiments.ssl_dual_alignment.architectures import (
-    DualPairModel, DiagonalPredictor, AffinePredictor, BlockDiagonalPredictor, MLPPredictor
+    DualPairModel, EBMMJEPAModel, DiagonalPredictor, AffinePredictor, BlockDiagonalPredictor, MLPPredictor
 )
 from multimodal_experiments.initial_trials.ssl_disentangling import FlowModel, build_flow_layers
 
@@ -33,11 +33,20 @@ def build_model_and_predictors(cfg, device):
     else:
         predictor_a2b = None
         predictor_b2a = None
+
+    # 3. Register everything in EBMMJEPAModel for safe checkpointing
+    full_model = EBMMJEPAModel()
+    full_model['dual_model'] = dual_model
+    if predictor_a2b is not None:
+        full_model['predictor_a2b'] = predictor_a2b
+    if predictor_b2a is not None:
+        full_model['predictor_b2a'] = predictor_b2a
         
     return {
+        "full_model": full_model,
         "dual_model": dual_model,
-        "model_a": model_a,
-        "model_b": model_b,
         "predictor_a2b": predictor_a2b,
-        "predictor_b2a": predictor_b2a
+        "predictor_b2a": predictor_b2a,
+        "model_a": model_a,
+        "model_b": model_b
     }

@@ -15,6 +15,17 @@ class DualPairModel(torch.nn.Module):
         return torch.cat([output_a, output_b, jac_a.unsqueeze(-1), jac_b.unsqueeze(-1)], dim=1)
 
 
+class EBMMJEPAModel(torch.nn.ModuleDict):
+    """Flexible registry for Multi-Modal JEPA components.
+
+    Inherits from nn.ModuleDict to ensure all registered sub-modules (encoders,
+    adapters, predictors) are automatically captured in checkpoints.
+    """
+    def forward(self, *args, **kwargs):
+        # Primary task execution (e.g. encoders) is handled by 'dual_model'
+        return self['dual_model'](*args, **kwargs)
+
+
 class DiagonalPredictor(torch.nn.Module):
     """Scales input dimensions independently via learnable weights."""
     def __init__(self, dim):
@@ -50,6 +61,11 @@ class BlockDiagonalPredictor(torch.nn.Module):
             torch.nn.Linear(block_size, block_size, bias=True)
             for _ in range(n_blocks)
         ])
+        # Near-identity initialization
+        for b in self.blocks:
+            torch.nn.init.eye_(b.weight)
+            if b.bias is not None:
+                torch.nn.init.zeros_(b.bias)
 
     def forward(self, x):
         chunks = x.split(self.block_size, dim=-1)
@@ -71,6 +87,12 @@ class MLPPredictor(torch.nn.Module):
             torch.nn.GELU(),
             torch.nn.Linear(hidden_dim, dim)
         )
+        # Small weight initialization for neutral starting alignment
+        for m in self.modules():
+            if isinstance(m, torch.nn.Linear):
+                torch.nn.init.normal_(m.weight, mean=0, std=0.01)
+                if m.bias is not None:
+                    torch.nn.init.zeros_(m.bias)
 
     def forward(self, x):
         return self.net(x)

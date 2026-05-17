@@ -302,26 +302,32 @@ def reset_random_number_generators(seed: int):
     random.seed(seed)
 
 
-def add_noise(x_1, x_2, noise_standard_deviation):
+def add_noise(x_1, x_2, noise_standard_deviation, rng=None):
+    if rng is None:
+        rng = np.random
     return (
-        x_1 + np.random.normal(scale=noise_standard_deviation[0], size=x_1.shape),
-        x_2 + np.random.normal(scale=noise_standard_deviation[1], size=x_2.shape),
+        x_1 + rng.normal(scale=noise_standard_deviation[0], size=x_1.shape),
+        x_2 + rng.normal(scale=noise_standard_deviation[1], size=x_2.shape),
     )
 
 
-def create_data_set(S: np.ndarray, manifold_function: Callable, noise_standard_deviation: Tuple[float, float]) -> Tuple[np.ndarray, np.ndarray]:
-    data_function = lambda x: add_noise(*manifold_function(x), noise_standard_deviation=noise_standard_deviation)
-    Y = np.concatenate([np.random.standard_normal(size=[len(S), 1]), (S[:, np.newaxis] - np.mean(S)) / np.std(S)], axis=1)
+def create_data_set(S: np.ndarray, manifold_function: Callable, noise_standard_deviation: Tuple[float, float], rng=None) -> Tuple[np.ndarray, np.ndarray]:
+    if rng is None:
+        rng = np.random
+    data_function = lambda x: add_noise(*manifold_function(x), noise_standard_deviation=noise_standard_deviation, rng=rng)
+    Y = np.concatenate([rng.standard_normal(size=[len(S), 1]), (S[:, np.newaxis] - np.mean(S)) / np.std(S)], axis=1)
     Z_1, Z_2 = data_function(x=S)
     Z = np.concatenate([Z_1[:, np.newaxis], Z_2[:, np.newaxis]], axis=1)
     return Z.astype(np.float64), Y.astype(np.float64)
 
 
-def self_supervised_dual_generator(z1_data, z2_data, batch_size):
+def self_supervised_dual_generator(z1_data, z2_data, batch_size, rng=None):
+    if rng is None:
+        rng = np.random
     num_samples = len(z1_data)
     y_corr_target = np.tile([0.0, 0.9], (batch_size, 1))
     while True:
-        idx = np.random.choice(num_samples, batch_size, replace=False)
+        idx = rng.choice(num_samples, batch_size, replace=False)
         Z1_batch = z1_data[idx]
         Z2_batch = z2_data[idx]
         yield (Z1_batch, Z2_batch), y_corr_target
@@ -348,8 +354,8 @@ def set_global_seed(seed: int):
     reset_random_number_generators(seed=seed)
 
 
-def sample_curve_data(param_values: np.ndarray, curve_fn: Callable, noise_std: Tuple[float, float]) -> Tuple[np.ndarray, np.ndarray]:
-    return create_data_set(S=param_values, manifold_function=curve_fn, noise_standard_deviation=noise_std)
+def sample_curve_data(param_values: np.ndarray, curve_fn: Callable, noise_std: Tuple[float, float], rng=None) -> Tuple[np.ndarray, np.ndarray]:
+    return create_data_set(S=param_values, manifold_function=curve_fn, noise_standard_deviation=noise_std, rng=rng)
 
 
 def paired_batch_generator(data_a: np.ndarray, data_b: np.ndarray, batch_size: int):

@@ -188,9 +188,7 @@ def linear_probe_r2(z: np.ndarray, u: np.ndarray) -> dict:
 def per_dim_disentanglement(z_a: np.ndarray, u: np.ndarray) -> dict:
     """Per-dim linear R2: regress each dim of z_A independently onto each factor.
 
-    Returns:
-      r2_dim{i}_u{j}: R2 of z_A[:, i] -> u[:, j]
-      r2_dim2_noise:  max R2 of z_A[:, 2] onto any factor (should be ~0 if noise dim is clean)
+    Returns generic keys r2_dim{i}_u{j} for all pairs, plus canonical aliases.
     """
     from sklearn.linear_model import Ridge
     from sklearn.metrics import r2_score
@@ -210,13 +208,13 @@ def per_dim_disentanglement(z_a: np.ndarray, u: np.ndarray) -> dict:
             r2 = float(r2_score(uj, reg.predict(zi)))
             results[f'r2_dim{i}_u{j}'] = r2
 
-    # Canonical aliases used in hypotheses.yaml
-    # dim0 -> u1 (factor 0), dim1 -> u2 (factor 1), dim2 -> max(any factor) = noise purity
-    results['r2_dim0_u1'] = results.get('r2_dim0_u0', 0.0)   # u1 = factor index 0
-    results['r2_dim1_u2'] = results.get('r2_dim1_u1', 0.0)   # u2 = factor index 1
+    # --- Backward-compatible aliases ---
+    # Aliases used in historical hypotheses.yaml and wandb logs
+    results['r2_dim0_u1'] = results.get('r2_dim0_u0', 0.0)   # u1 maps to ground-truth index 0
+    results['r2_dim1_u2'] = results.get('r2_dim1_u1', 0.0)   # u2 maps to ground-truth index 1
     if n_dims > 2:
         noise_r2s = [results.get(f'r2_dim2_u{j}', 0.0) for j in range(n_factors)]
-        results['r2_dim2_noise'] = float(max(noise_r2s))      # high = noise dim is NOT clean
+        results['r2_dim2_noise'] = float(max(noise_r2s)) if noise_r2s else 0.0
     return results
 
 
@@ -686,6 +684,7 @@ def run(
                              num_workers=int(num_workers or data_cfg.get("num_workers", 0)))
 
     built = build_model_and_predictors(cfg_obj, device)
+    full_model = built["full_model"]
     dual_model = built["dual_model"]
     predictor_a2b = built["predictor_a2b"]
     predictor_b2a = built["predictor_b2a"]
@@ -742,7 +741,7 @@ def run(
 
     for idx, ckpt in enumerate(ckpts):
         is_last = (idx == (len(ckpts) - 1))
-        ckpt_meta = load_checkpoint(ckpt, dual_model, optimizer=None, device=device)
+        ckpt_meta = load_checkpoint(ckpt, full_model, optimizer=None, device=device)
         ckpt_step = int(ckpt_meta.get("step", None) or _checkpoint_epoch(ckpt))
 
         metrics = evaluate_and_log_checkpoint(
