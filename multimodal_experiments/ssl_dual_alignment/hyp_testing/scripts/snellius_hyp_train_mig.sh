@@ -29,6 +29,6 @@ cd ~/github/eb_jepa_private/multimodal_experiments/ssl_dual_alignment/hyp_testin
 export PATH="$HOME/.cargo/bin:$PATH"
 
 echo "Starting training B06_prior_vs_predictor_noise"
-uv run sweep.py --batch B06_prior_vs_predictor_noise 
+uv run scripts/sweep.py --batch B06_prior_vs_predictor_noise 
 
 echo "Training complete."
