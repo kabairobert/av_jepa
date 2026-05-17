@@ -46,7 +46,16 @@ def build_config_to_batches(batches: list[dict]) -> dict[str, list[str]]:
     return dict(cfg_to_batches)
 
 
-def launch_run(cfg_name: str, cfg_path: Path, batch_ids: list[str], dry_run: bool) -> None:
+def launch_run(
+    cfg_name: str,
+    cfg_path: Path,
+    batch_ids: list[str],
+    dry_run: bool,
+    epochs: int = None,
+    max_batches: int = None,
+    no_wandb: bool = False,
+    quickrun: bool = False
+) -> None:
     tags = batch_ids + [cfg_name]
     tags_str = ",".join(tags)
     cmd = [
@@ -54,6 +63,15 @@ def launch_run(cfg_name: str, cfg_path: Path, batch_ids: list[str], dry_run: boo
         "--config", str(cfg_path),
         "--wandb_tags", tags_str,
     ]
+    if quickrun:
+        cmd += ["--quickrun"]
+    if epochs is not None:
+        cmd += ["--optim.epochs", str(epochs)]
+    if max_batches is not None:
+        cmd += ["--training.max_train_batches", str(max_batches)]
+    if no_wandb:
+        cmd += ["--logging.log_wandb", "False"]
+
     if dry_run:
         print(f"[DRY RUN] Would launch: {' '.join(cmd)}")
         print(f"          Tags: {tags}")
@@ -76,6 +94,13 @@ def main():
         metavar="CFG_NAME",
         help="Skip all configs before CFG_NAME (inclusive start); useful to resume a stopped sweep"
     )
+
+    # Quickrun / Overrides
+    parser.add_argument("--epochs", type=int, default=None, help="Override optim.epochs")
+    parser.add_argument("--max_batches", type=int, default=None, help="Override training.max_train_batches")
+    parser.add_argument("--no_wandb", action="store_true", help="Disable W&B logging")
+    parser.add_argument("--quickrun", action="store_true", help="Shortcut for --epochs 1 --max_batches 1 --no_wandb")
+
     args = parser.parse_args()
 
     script_dir = Path(__file__).parent
@@ -107,7 +132,11 @@ def main():
             if not cfg_path.exists():
                 print(f"WARNING: Config file not found: {cfg_path}", file=sys.stderr)
                 continue
-            launch_run(cfg_name, cfg_path, batch_ids, dry_run=args.dry_run)
+            launch_run(
+                cfg_name, cfg_path, batch_ids, dry_run=args.dry_run,
+                epochs=args.epochs, max_batches=args.max_batches, no_wandb=args.no_wandb,
+                quickrun=args.quickrun
+            )
     else:
         batch_dir = batches_root / args.batch
         if not batch_dir.exists():
@@ -120,8 +149,7 @@ def main():
         # Apply --from within a single batch too
         if args.from_cfg is not None:
             if args.from_cfg not in cfgs:
-                print(f"ERROR: --from config '{args.from_cfg}' not found in batch {batch_id}.", file=sys.stderr)
-                sys.exit(1)
+                print(f"ERROR: --from config '{args.from_cfg}' not found in batch {batch_id}.", file=sys.exit(1))
             start_idx = cfgs.index(args.from_cfg)
             cfgs = cfgs[start_idx:]
 
@@ -131,7 +159,11 @@ def main():
             if not cfg_path.exists():
                 print(f"WARNING: Config file not found: {cfg_path}", file=sys.stderr)
                 continue
-            launch_run(cfg_name, cfg_path, [batch_id], dry_run=args.dry_run)
+            launch_run(
+                cfg_name, cfg_path, [batch_id], dry_run=args.dry_run,
+                epochs=args.epochs, max_batches=args.max_batches, no_wandb=args.no_wandb,
+                quickrun=args.quickrun
+            )
 
 
 if __name__ == "__main__":

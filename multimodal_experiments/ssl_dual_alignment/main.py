@@ -55,6 +55,7 @@ def run(
     cfg=None,
     folder=None,
     wandb_tags=None,
+    quickrun: bool = False,
     **overrides
 ):
     # --config is an alias for --fname (used by sweep.py)
@@ -64,6 +65,16 @@ def run(
     # --- 1. Config & Env ---
     if cfg is None:
         cfg = load_config(fname, overrides if overrides else None)
+
+    # Apply quickrun shortcut
+    if quickrun:
+        cfg.optim.epochs = 1
+        if not hasattr(cfg, "training"):
+            from omegaconf import OmegaConf
+            cfg.training = OmegaConf.create({})
+        cfg.training.max_train_batches = 1
+        cfg.logging.log_wandb = False
+
     device = setup_device(cfg.meta.device)
     setup_seed(cfg.meta.seed)
     torch.set_default_dtype(torch.float32)
@@ -234,6 +245,8 @@ def run(
         log_plots_to_wandb(dual_model, train_set, device, global_step, wandb_run)
 
     # --- 9. Training Loop ---
+    max_train_batches = cfg.training.get("max_train_batches") if hasattr(cfg, "training") else None
+
     def _train_epoch(epoch_idx, active_optimizer, stage=None):
         """Single training epoch, returns (avg_loss, avg_align_a2b, avg_align_b2a).
 
@@ -250,7 +263,7 @@ def run(
             desc=f"Epoch {epoch_idx+1}/{epochs}",
             disable=cfg.logging.get("tqdm_silent", False)
         )
-        for batch in pbar:
+        for batch_idx, batch in enumerate(pbar, start=1):
             data_a = batch["data_a"].to(device)
             data_b = batch["data_b"].to(device)
             corr_target = batch["corr_target"].to(device)
@@ -274,7 +287,10 @@ def run(
             epoch_loss += loss.item()
             global_step += 1
             pbar.set_postfix({"loss": f"{loss.item():.4f}"})
-        nb = len(train_loader)
+
+            if max_train_batches is not None and batch_idx >= max_train_batches:
+                break
+        nb = batch_idx
         return epoch_loss / nb, epoch_align_a2b / nb, epoch_align_b2a / nb
 
     def _maybe_eval_and_save(epoch_idx, active_optimizer, current_stage=None):
