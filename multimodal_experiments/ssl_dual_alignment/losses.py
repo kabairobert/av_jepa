@@ -143,10 +143,14 @@ class EBMJEPALoss(torch.nn.Module):
         """Sigmoid gate: w_i = σ(−pred_per_i / τ) ∈ (0, 1).
 
         High prediction error → low weight (noisy / incongruent sample).
-        Normalised so weights sum to 1 (expectation-equivalent to .mean()).
+        Returns:
+            w_norm   : normalised weights (sum to 1) for sample-wise terms
+            mean_raw : average sigmoid weight (0 to 1) for scalar terms
         """
         raw = torch.sigmoid(-pred_loss_per / self.congruence_tau)  # (N,)
-        return raw / (raw.sum() + 1e-8)                            # normalised
+        mean_raw = raw.mean()
+        w_norm = raw / (raw.sum() + 1e-8)                          # normalised
+        return w_norm, mean_raw
 
     # ------------------------------------------------------------------
     # Forward
@@ -179,14 +183,6 @@ class EBMJEPALoss(torch.nn.Module):
                 )
 
         # 4. Aggregate with congruence gate
-        #
-        # Design principle:
-        #   pred_loss   → congruence-gated (signal-quality proxy)
-        #   sparse_loss → optionally gated (structural, but scales with pred)
-        #   jac_loss    → UNIFORM mean (geometry regulariser; must not be
-        #                 suppressed where the model is uncertain)
-        #   prior_loss  → UNIFORM mean (magnitude prior; must be enforced
-        #                 uniformly to avoid prior collapse on easy samples)
         jac_term   = -self.lambda_jac * jac_per.mean()          # uniform
         prior_term = prior_loss_per.mean()                       # uniform
 
@@ -195,15 +191,15 @@ class EBMJEPALoss(torch.nn.Module):
             total = pred_term + jac_term + prior_term + sparse_loss
 
         elif self.congruence_mode == 'pred_only':
-            w = self._congruence_weights(pred_loss_per)          # (N,) sums to 1
-            pred_term = self.lambda_pred * (w * pred_loss_per).sum()
+            w_norm, _ = self._congruence_weights(pred_loss_per)
+            pred_term = self.lambda_pred * (w_norm * pred_loss_per).sum()
             total = pred_term + jac_term + prior_term + sparse_loss
 
         else:  # 'pred_and_sparse'
-            w = self._congruence_weights(pred_loss_per)          # (N,) sums to 1
-            pred_term = self.lambda_pred * (w * pred_loss_per).sum()
-            # sparse_loss is scalar — scale by mean weight (no-op for 'none')
-            sparse_gated = sparse_loss * w.mean() * w.shape[0]   # restore scale
+            w_norm, mean_raw = self._congruence_weights(pred_loss_per)
+            pred_term = self.lambda_pred * (w_norm * pred_loss_per).sum()
+            # Gate scalar sparsity by overall batch congruence
+            sparse_gated = sparse_loss * mean_raw
             total = pred_term + jac_term + prior_term + sparse_gated
 
         return total

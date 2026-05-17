@@ -323,6 +323,14 @@ def run(
     if two_stage:
         # Stage 1: train flows only
         print(f"=== Stage 1: flow training ({stage1_epochs} epochs) ===")
+
+        # --- TEMPORARY CHANGE FOR STAGE 1 ---
+        # Set lambda_pred to 0 to ensure encoders only learn from Jacobian/Prior.
+        # This prevents the cross-modal prediction task from influencing encoders in Stage 1.
+        original_lambda_pred = getattr(loss_fn, 'lambda_pred', 1.0)
+        if hasattr(loss_fn, 'lambda_pred'):
+            loss_fn.lambda_pred = 0.0
+
         for epoch_idx in range(start_epoch, stage1_epochs):
             avg_loss, avg_a2b, avg_b2a = _train_epoch(epoch_idx, opt_flow, stage=1)
             if wandb_run:
@@ -335,6 +343,11 @@ def run(
                 }, step=global_step)
             if (epoch_idx + 1) % save_every == 0:
                 _maybe_eval_and_save(epoch_idx, opt_flow, current_stage=1)
+
+        # --- RESTORE CHANGE FOR STAGE 2 ---
+        if hasattr(loss_fn, 'lambda_pred'):
+            loss_fn.lambda_pred = original_lambda_pred
+            print(f"Stage 1 complete. Restored loss_fn.lambda_pred to {original_lambda_pred}")
 
         # Freeze flows, unfreeze predictors for Stage 2
         dual_model.requires_grad_(False)
