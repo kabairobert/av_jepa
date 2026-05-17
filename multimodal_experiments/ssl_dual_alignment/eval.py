@@ -579,6 +579,7 @@ def evaluate_and_log_checkpoint(
             data_a = eval_set.data_a.numpy()
             data_b = eval_set.data_b.numpy()
             param_values = eval_set.param_values
+            idxs = None
             if data_a.shape[0] > max_interactive_points:
                 idxs = np.random.choice(data_a.shape[0], size=max_interactive_points, replace=False)
                 data_a = data_a[idxs]
@@ -592,27 +593,26 @@ def evaluate_and_log_checkpoint(
             out_a = out_a.detach().cpu().numpy()
             out_b = out_b.detach().cpu().numpy()
 
-        if np.isnan(out_a).any() or np.isnan(out_b).any() or np.isinf(out_a).any() or np.isinf(out_b).any():
-            logger.warning("NaN/Inf detected in latents! Skipping interactive 3D plot.")
-            return metrics
+            if np.isnan(out_a).any() or np.isnan(out_b).any() or np.isinf(out_a).any() or np.isinf(out_b).any():
+                logger.warning("NaN/Inf detected in latents! Skipping interactive 3D plot.")
+            else:
+                pt_a = getattr(eval_set, "point_type_a", None)
+                pt_b = getattr(eval_set, "point_type_b", None)
+                if pt_a is not None:
+                    pt_a = np.asarray(pt_a)
+                    pt_b = np.asarray(pt_b)
+                    if idxs is not None:
+                        pt_a = pt_a[idxs]
+                        pt_b = pt_b[idxs]
 
-            pt_a = getattr(eval_set, "point_type_a", None)
-            pt_b = getattr(eval_set, "point_type_b", None)
-            if pt_a is not None and data_a.shape[0] == eval_set.data_a.shape[0]:
-                pt_a = np.asarray(pt_a)
-                pt_b = np.asarray(pt_b)
-            if pt_a is not None and data_a.shape[0] < eval_set.data_a.shape[0]:
-                pt_a = np.asarray(pt_a)[idxs]
-                pt_b = np.asarray(pt_b)[idxs]
-
-            html = _build_interactive_4way_html(
-                data_a, data_b, out_a, out_b, np.asarray(param_values),
-                point_type_a=pt_a,
-                point_type_b=pt_b,
-                min_height_px=int(interactive_min_height),
-            )
-            if html is not None:
-                wandb.log({"interactive_3d_4way_html": wandb.Html(html)}, step=step)
+                html = _build_interactive_4way_html(
+                    data_a, data_b, out_a, out_b, np.asarray(param_values),
+                    point_type_a=pt_a,
+                    point_type_b=pt_b,
+                    min_height_px=int(interactive_min_height),
+                )
+                if html is not None:
+                    wandb.log({"interactive_3d_4way_html": wandb.Html(html)}, step=step)
 
     return metrics
 
