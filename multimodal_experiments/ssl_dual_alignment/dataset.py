@@ -89,9 +89,10 @@ class DualDisentangleDataset(Dataset):
 
                 # Split total num_samples into manifold / asymmetric / external according to rates
                 N = num_samples
-                n_external = int(round(N * self.external_noise_ratio))
-                n_asym_a = int(round(N * self.asymmetric_noise_rate_a))
-                n_asym_b = int(round(N * self.asymmetric_noise_rate_b))
+                # Use floor to ensure 0.0 ratio results in strictly 0 samples
+                n_external = int(np.floor(N * self.external_noise_ratio))
+                n_asym_a = int(np.floor(N * self.asymmetric_noise_rate_a))
+                n_asym_b = int(np.floor(N * self.asymmetric_noise_rate_b))
                 n_manifold = N - (n_external + n_asym_a + n_asym_b)
 
                 if n_manifold < 1:
@@ -145,8 +146,10 @@ class DualDisentangleDataset(Dataset):
 
                 # External random points (both sides random, independent)
                 if n_external > 0:
-                    temp_a, _ = sample_curve_data(np.linspace(0, 1, max(10, n_manifold)), curve_a_fn, (self.manifold_noise_a, self.manifold_noise_a))
-                    temp_b, _ = sample_curve_data(np.linspace(0, 1, max(10, n_manifold)), curve_b_fn, (self.manifold_noise_b, self.manifold_noise_b))
+                    # Robust bounds inference: always sample full manifold range
+                    u_bound = np.linspace(0, 1, 100)
+                    temp_a, _ = sample_curve_data(u_bound, curve_a_fn, (self.manifold_noise_a, self.manifold_noise_a))
+                    temp_b, _ = sample_curve_data(u_bound, curve_b_fn, (self.manifold_noise_b, self.manifold_noise_b))
                     min_a, max_a = temp_a.min(axis=0), temp_a.max(axis=0)
                     min_b, max_b = temp_b.min(axis=0), temp_b.max(axis=0)
                     # Expand bounding box: push each edge out by (expansion/2) * range
@@ -186,16 +189,17 @@ class DualDisentangleDataset(Dataset):
                 * F2: Dependent Noise. $u$ sets noise width. Information in variance, not value.
                 * F3: Independent Noise.
 
-                Summary:
-                A has more signal ($u$ + curve). B has signal + signal-dependent noise. Both rotated to hide source.
-                """
+                # Summary:
+                # A has more signal ($u$ + curve). B has signal + signal-dependent noise. Both rotated to hide source.
+                # """
                 N = num_samples
-                n_external = int(round(N * self.external_noise_ratio))
-                n_asym_a = int(round(N * self.asymmetric_noise_rate_a))
-                n_asym_b = int(round(N * self.asymmetric_noise_rate_b))
+                n_external = int(np.floor(N * self.external_noise_ratio))
+                n_asym_a = int(np.floor(N * self.asymmetric_noise_rate_a))
+                n_asym_b = int(np.floor(N * self.asymmetric_noise_rate_b))
                 n_manifold = N - (n_external + n_asym_a + n_asym_b)
                 if n_manifold < 1:
                     raise ValueError("num_samples too small for configured noise rates")
+
 
                 # Manifold samples
                 u_man = np.linspace(0, 1, n_manifold)
@@ -266,15 +270,16 @@ class DualDisentangleDataset(Dataset):
 
                 # External random points
                 if n_external > 0:
-                    temp_u = np.linspace(0, 1, max(10, n_manifold))
-                    pitch_t = 1.0 / (1.2 - temp_u)
-                    resonance_t = np.sin(temp_u * np.pi)
-                    splash_t = np.random.normal(0, self.manifold_noise_a, len(temp_u))
+                    # Robust bounds inference: always sample full manifold range
+                    u_bound = np.linspace(0, 1, 100)
+                    pitch_t = 1.0 / (1.2 - u_bound)
+                    resonance_t = np.sin(u_bound * np.pi)
+                    splash_t = np.random.normal(0, self.manifold_noise_a, len(u_bound))
                     temp_a_unrot = np.stack([pitch_t, resonance_t, splash_t], axis=1)
                     temp_a = (temp_a_unrot - temp_a_unrot.mean(axis=0)) / temp_a_unrot.std(axis=0)
-                    dim1_tb = temp_u
-                    dim2_tb = np.random.normal(0, 1, len(temp_u)) * (0.5 + temp_u)
-                    dim3_tb = np.random.normal(0, self.manifold_noise_b, len(temp_u))
+                    dim1_tb = u_bound
+                    dim2_tb = np.random.normal(0, 1, len(u_bound)) * (0.5 + u_bound)
+                    dim3_tb = np.random.normal(0, self.manifold_noise_b, len(u_bound))
                     temp_b_raw = np.column_stack((dim1_tb, dim2_tb, dim3_tb))
                     temp_b = (temp_b_raw - np.mean(temp_b_raw, axis=0)) / np.std(temp_b_raw, axis=0)
                     min_a, max_a = temp_a.min(axis=0), temp_a.max(axis=0)
@@ -320,9 +325,9 @@ class DualDisentangleDataset(Dataset):
                 4. Final: $(x, y, u_2) + \text{noise}$.
                 """
                 N = num_samples
-                n_external = int(round(N * self.external_noise_ratio))
-                n_asym_a = int(round(N * self.asymmetric_noise_rate_a))
-                n_asym_b = int(round(N * self.asymmetric_noise_rate_b))
+                n_external = int(np.floor(N * self.external_noise_ratio))
+                n_asym_a = int(np.floor(N * self.asymmetric_noise_rate_a))
+                n_asym_b = int(np.floor(N * self.asymmetric_noise_rate_b))
                 n_manifold = N - (n_external + n_asym_a + n_asym_b)
                 if n_manifold < 1:
                     raise ValueError("num_samples too small for configured noise rates")
@@ -393,14 +398,15 @@ class DualDisentangleDataset(Dataset):
 
                 # External random points
                 if n_external > 0:
-                    temp_u1 = np.linspace(0, 1, max(10, n_manifold))
-                    temp_u2 = np.random.uniform(0, 1, len(temp_u1))
+                    # Robust bounds inference: always sample full manifold range
+                    u1_bound = np.linspace(0, 1, 100)
+                    u2_bound = np.random.uniform(0, 1, 100)
 
-                    temp_xy_a, _ = sample_curve_data(temp_u1, curve_a_fn_3d, (self.manifold_noise_a, self.manifold_noise_a))
-                    temp_a = np.hstack([temp_xy_a, (2.0 * temp_u2).reshape(-1, 1)])
+                    temp_xy_a, _ = sample_curve_data(u1_bound, curve_a_fn_3d, (self.manifold_noise_a, self.manifold_noise_a))
+                    temp_a = np.hstack([temp_xy_a, (2.0 * u2_bound).reshape(-1, 1)])
 
-                    temp_xy_b, _ = sample_curve_data(temp_u1, curve_b_fn_3d, (self.manifold_noise_b, self.manifold_noise_b))
-                    temp_b = np.hstack([temp_xy_b, temp_u2.reshape(-1, 1)])
+                    temp_xy_b, _ = sample_curve_data(u1_bound, curve_b_fn_3d, (self.manifold_noise_b, self.manifold_noise_b))
+                    temp_b = np.hstack([temp_xy_b, u2_bound.reshape(-1, 1)])
                     min_a, max_a = temp_a.min(axis=0), temp_a.max(axis=0)
                     min_b, max_b = temp_b.min(axis=0), temp_b.max(axis=0)
                     half = self.noise_bbox_expansion / 2.0

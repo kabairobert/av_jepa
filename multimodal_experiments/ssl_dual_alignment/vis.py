@@ -17,7 +17,7 @@ import wandb
 #   5 = external (both sides)            -> near-black #1a1a1a (90% darkness)
 
 _GRAY_CORRUPT = '#808080'
-_BLACK_EXTERNAL = '#1a1a1a'   # ~90% darkness: RGB(26,26,26)
+_BLACK_EXTERNAL = '#000000'   # Pure black to distinguish from dark blue turbo(0)
 
 
 def _get_point_colors(param_values_1d, point_types, cmap='turbo'):
