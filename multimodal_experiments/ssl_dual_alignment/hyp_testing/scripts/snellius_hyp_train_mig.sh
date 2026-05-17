@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=9
 #SBATCH --gpus=1
 #SBATCH --mem=60G
-#SBATCH --time=01:30:00
+#SBATCH --time=02:30:00
 #SBATCH --output=%x_%j.out
 #SBATCH --error=%x_%j.err
 
@@ -28,11 +28,7 @@ cd ~/github/eb_jepa_private/multimodal_experiments/ssl_dual_alignment/hyp_testin
 
 export PATH="$HOME/.cargo/bin:$PATH"
 
-echo "Starting training B04_one_vs_two_stage_highnoise"
-uv run sweep.py --batch B04_one_vs_two_stage_highnoise 
-
-echo "Starting training B05_congruence_weighting"
-uv run sweep.py --batch B05_congruence_weighting 
-
+echo "Starting training B06_prior_vs_predictor_noise"
+uv run sweep.py --batch B06_prior_vs_predictor_noise 
 
 echo "Training complete."
