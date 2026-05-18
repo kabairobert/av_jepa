@@ -334,7 +334,11 @@ def compute_geometry_metrics(
     dual_model.eval()
     data_a = dataset.data_a
     data_b = dataset.data_b
-    param_values = np.asarray(dataset.param_values)
+    param_values = dataset.param_values
+    if hasattr(param_values, 'cpu'):
+        param_values = param_values.cpu().numpy()
+    else:
+        param_values = np.asarray(param_values)
     idxs = None
 
     if data_a.shape[0] > max_points:
