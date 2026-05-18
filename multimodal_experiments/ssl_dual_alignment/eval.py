@@ -406,8 +406,12 @@ def compute_geometry_metrics(
     pt_a = getattr(dataset, "point_type_a", None)
     pt_b = getattr(dataset, "point_type_b", None)
     if pt_a is not None and pt_b is not None:
-        pt_a = np.asarray(pt_a)
-        pt_b = np.asarray(pt_b)
+        if hasattr(pt_a, 'cpu'):
+            pt_a = pt_a.cpu().numpy()
+            pt_b = pt_b.cpu().numpy()
+        else:
+            pt_a = np.asarray(pt_a)
+            pt_b = np.asarray(pt_b)
         if idxs is not None:
             pt_a = pt_a[idxs]
             pt_b = pt_b[idxs]
