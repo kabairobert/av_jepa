@@ -24,6 +24,12 @@ def _get_point_colors(param_values_1d, point_types, cmap='turbo'):
     """Per-point color: manifold=turbo, corrupted=gray, external=near-black."""
     norm_p = (param_values_1d - param_values_1d.min()) / (
         param_values_1d.max() - param_values_1d.min() + 1e-12)
+    
+    if cmap == 'turbo':
+        # Compress range to avoid the extremely dark blue/brown at the extremes
+        # which can easily be mistaken for black noise points.
+        norm_p = norm_p * 0.8 + 0.1
+
     colormap = cm.get_cmap(cmap)
     gray_rgba = mcolors.to_rgba(_GRAY_CORRUPT)
     black_rgba = mcolors.to_rgba(_BLACK_EXTERNAL)

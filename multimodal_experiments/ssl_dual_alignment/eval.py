@@ -68,6 +68,8 @@ def _get_color_values(param_values: np.ndarray) -> np.ndarray:
         vals = param_values
         denom = (vals.max() - vals.min()) + 1e-8
         normalized = (vals - vals.min()) / denom
+        # Compress Turbo range to avoid extremely dark ends (which look black)
+        normalized = normalized * 0.8 + 0.1
         from plotly.colors import sample_colorscale
         return sample_colorscale("Turbo", normalized)
     else:
@@ -95,13 +97,15 @@ def _get_point_type_colors(param_values: np.ndarray, point_types: np.ndarray) ->
     vals = param_values.astype(float)
     denom = (vals.max() - vals.min()) + 1e-8
     normalized = (vals - vals.min()) / denom
+    # Compress Turbo range to avoid extremely dark ends (which look black)
+    normalized = normalized * 0.8 + 0.1
     from plotly.colors import sample_colorscale
     base_colors = sample_colorscale("Turbo", normalized)
 
     colors = []
     for i, pt in enumerate(point_types):
         if int(pt) == 5:
-            colors.append("rgb(26,26,26)")
+            colors.append("rgb(0,0,0)")
         elif int(pt) in (2, 4):
             colors.append("rgb(128,128,128)")
         else:
