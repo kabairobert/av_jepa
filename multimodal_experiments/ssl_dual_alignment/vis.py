@@ -151,11 +151,20 @@ def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, 
 
 def log_plots_to_wandb(dual_model, dataset, device, step, wandb_run):
     """Generates and logs visualizations to W&B."""
-    data_a = dataset.data_a.numpy()
-    data_b = dataset.data_b.numpy()
+    # Ensure all components are on CPU before converting to numpy for plotting
+    data_a = dataset.data_a.cpu().numpy()
+    data_b = dataset.data_b.cpu().numpy()
     param_values = dataset.param_values
+    if hasattr(param_values, 'cpu'):
+        param_values = param_values.cpu().numpy()
+    
     pt_a = getattr(dataset, 'point_type_a', None)
+    if hasattr(pt_a, 'cpu'):
+        pt_a = pt_a.cpu().numpy()
+        
     pt_b = getattr(dataset, 'point_type_b', None)
+    if hasattr(pt_b, 'cpu'):
+        pt_b = pt_b.cpu().numpy()
 
     fig_spaces = plot_original_spaces(data_a, data_b, param_values, pt_a, pt_b)
     fig_reshaping = plot_dual_geometry_reshaping_view(

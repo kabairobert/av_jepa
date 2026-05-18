@@ -61,7 +61,9 @@ def _get_color_values(param_values: np.ndarray) -> np.ndarray:
     For 1D param_values: use Rainbow colorscale.
     For 2D param_values: use HSV encoding (u1 -> Hue, u2 -> Saturation [0.2, 1]).
     """
-    if hasattr(param_values, 'numpy'):
+    if hasattr(param_values, 'cpu'):
+        param_values = param_values.cpu().numpy()
+    elif hasattr(param_values, 'numpy'):
         param_values = param_values.numpy()
 
     if param_values.ndim == 1:
@@ -92,7 +94,12 @@ def _get_point_type_colors(param_values: np.ndarray, point_types: np.ndarray) ->
     """
     if param_values.ndim == 2:
         param_values = param_values[:, 0]
-    vals = param_values.astype(float)
+    
+    if hasattr(param_values, 'cpu'):
+        vals = param_values.cpu().numpy().astype(float)
+    else:
+        vals = param_values.astype(float)
+        
     denom = (vals.max() - vals.min()) + 1e-8
     normalized = (vals - vals.min()) / denom
     from plotly.colors import sample_colorscale
@@ -574,9 +581,11 @@ def evaluate_and_log_checkpoint(
             is_3d = str(getattr(eval_set, "data_type", "")).startswith("3d")
 
         if is_3d and log_interactive_3d:
-            data_a = eval_set.data_a.numpy()
-            data_b = eval_set.data_b.numpy()
+            data_a = eval_set.data_a.cpu().numpy()
+            data_b = eval_set.data_b.cpu().numpy()
             param_values = eval_set.param_values
+            if hasattr(param_values, 'cpu'):
+                param_values = param_values.cpu().numpy()
             idxs = None
             if data_a.shape[0] > max_interactive_points:
                 idxs = np.random.choice(data_a.shape[0], size=max_interactive_points, replace=False)
@@ -597,8 +606,13 @@ def evaluate_and_log_checkpoint(
                 pt_a = getattr(eval_set, "point_type_a", None)
                 pt_b = getattr(eval_set, "point_type_b", None)
                 if pt_a is not None:
-                    pt_a = np.asarray(pt_a)
-                    pt_b = np.asarray(pt_b)
+                    if hasattr(pt_a, "cpu"):
+                        pt_a = pt_a.cpu().numpy()
+                        pt_b = pt_b.cpu().numpy()
+                    else:
+                        pt_a = np.asarray(pt_a)
+                        pt_b = np.asarray(pt_b)
+                    
                     if idxs is not None:
                         pt_a = pt_a[idxs]
                         pt_b = pt_b[idxs]
