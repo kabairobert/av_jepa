@@ -17,6 +17,7 @@ A comprehensive $3 \times 3 \times 5$ factorial sweep to investigate how Prior a
 - `3`: **Asymmetric 37.5%** (`asym37.5_ext0`, magnitude 0.1, bbox+25%)
 - `4`: **External 50%** (`asym0_ext50`, magnitude 0.1, bbox+25%)
 - `5`: **High Noise Mixture** (`asym9_ext75`, magnitude 0.1, bbox+25%)
+- `6`: **Increased Manifold Noise Mixture** (`asym25_ext0`, manifold_noise_a = manifold_noise_b = 0.04, bbox+25%)
 
 ### P1 - Prior Types (3 levels)
 - `0`: **None** (`lambda_prior: 0.0`, `lambda_sparse: 0.0`)
@@ -29,16 +30,16 @@ A comprehensive $3 \times 3 \times 5$ factorial sweep to investigate how Prior a
 - `2`: **L2** (`pred_loss: l2`, `lambda_pred: 1.0`, `predictor_type: affine`)
 
 ## Naming Convention
-Files follow the pattern `NPP[N][P1][P2].yaml`.
+Files follow the pattern `B07_NPP[N][P1][P2].yaml`.
 
 Examples:
-- `NPP111`: 15% Asym, L1 Prior, L1 Predictor (Baseline)
-- `NPP300`: 37.5% Asym, No Prior, No Predictor (Jacobian Floor)
-- `NPP521`: 75% Ext, L2 Prior, L1 Predictor
+- `B07_NPP111`: 15% Asym, L1 Prior, L1 Predictor (Baseline)
+- `B07_NPP300`: 37.5% Asym, No Prior, No Predictor (Jacobian Floor)
+- `B07_NPP521`: 75% Ext, L2 Prior, L1 Predictor
 
 ## Execution Workflow
 1. **Research & Bug Fixes**: Address reported bugs in `main.py` and `losses.py`.
-2. **Config Generation**: Scripted generation of all 45 `.yaml` files.
+2. **Config Generation**: Scripted generation of all 54 `.yaml` files.
 3. **Hypotheses Definition**: Define `hypotheses.yaml` focusing on interaction effects.
 4. **Execution**: Launch sweep using `sweep.py`.
 5. **WandB Migration**: (Optional) Retrospectively tag existing `B06` runs if they remain valid after bug fixes.
@@ -47,3 +48,5 @@ Examples:
 - Does the Predictor's flattening pressure (H1) hold up under extreme external noise?
 - Is L1 Prior significantly more robust than L2 as the noise-to-signal ratio increases?
 - Is there a "regime change" where L2 Predictor outperforms L1?
+- What is driving the common manifold (mutual information)'s extraction and alignment? Is it mainly the predictor, the prior, or the synergy of both?
+- Is the driving force behind common manifold extraction the same across all noise levels and scenarios?

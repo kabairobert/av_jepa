@@ -1,0 +1,162 @@
+batch_id: B07_loss_noise_interaction
+description: >-
+  A 6x3x3 factorial sweep to investigate the interaction between noise types/levels 
+  (Asymmetric, External, Manifold) and the Prior (None, L1, L2) and Predictor (None, L1, L2) 
+  choices. This batch specifically targets the robustness of manifold flattening and 
+  common manifold extraction under extreme noise regimes, comparing the L1 vs L2 variants 
+  and isolating the primary drivers (Prior vs Predictor) across differing noise conditions.
+
+configs:
+  # Base condition (N1: 15% Asym) ablations
+  - B07_NPP100
+  - B07_NPP110
+  - B07_NPP101
+  - B07_NPP111
+  
+  # External noise condition (N4: 50% Ext) ablations
+  - B07_NPP401
+  - B07_NPP410
+  - B07_NPP411
+
+  # High Mixed Noise (N5: 9% Asym, 75% Ext) ablations
+  - B07_NPP501
+  - B07_NPP510
+  - B07_NPP511
+
+  # Asymmetric Noise Scaling (N1 -> N3: 15% to 37.5%) with L1 vs L2 Prior
+  - B07_NPP111
+  - B07_NPP121
+  - B07_NPP311
+  - B07_NPP321
+
+  # Manifold Noise (N6: 25% Asym + 4% Dense Manifold) with L1 vs L2 Predictor
+  - B07_NPP611
+  - B07_NPP612
+
+hypotheses:
+
+  # ------------------------------------------------------------------
+  # H1 — Predictor's flattening pressure under extreme external noise
+  #
+  # Mechanism: The predictor was previously shown to be the main driver 
+  # of geometric flattening at low noise. Does this hold up under 50% 
+  # external noise (N4), where half the points have no manifold structure?
+  # ------------------------------------------------------------------
+  - id: H1
+    claim: >-
+      Even under 50% external noise (N4), the predictor alone (B07_NPP401) 
+      produces higher manifold flatness than the prior alone (B07_NPP410), 
+      confirming the predictor remains the primary flattening driver.
+    configs_compared:
+      a: B07_NPP410
+      b: B07_NPP401
+    primary_metrics:
+      [flatness_ratio_a, flatness_ratio_b, orth_residual_a]
+    decision_rules:
+      - metric: flatness_ratio_a
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.04
+        verdict_true: PRED_FLATTENS_UNDER_EXT_NOISE
+        verdict_false: PRED_FAILS_UNDER_EXT_NOISE
+
+  # ------------------------------------------------------------------
+  # H2 — L1 vs L2 Prior robustness to asymmetric noise scaling
+  #
+  # Mechanism: L1 induces sparsity and acts as implicit outlier rejection.
+  # As asymmetric noise scales to 37.5% (N3), L2's quadratic penalty 
+  # might be overwhelmed, whereas L1 maintains dimensionality suppression.
+  # ------------------------------------------------------------------
+  - id: H2
+    claim: >-
+      As asymmetric noise increases from 15% (N1) to 37.5% (N3), L1 Prior 
+      maintains dimensionality suppression (r2_dim2_noise) significantly better 
+      than L2 Prior.
+    configs_compared:
+      a: B07_NPP311 # N3, L1 Prior
+      b: B07_NPP321 # N3, L2 Prior
+    primary_metrics:
+      [r2_dim2_noise, flatness_ratio_a, r2_joint]
+    decision_rules:
+      - metric: r2_dim2_noise
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: L1_MORE_ROBUST_TO_ASYM_SCALING
+        verdict_false: L1_L2_SIMILAR_ROBUSTNESS
+
+  # ------------------------------------------------------------------
+  # H3 — Regime change for Predictors: Dense manifold noise
+  #
+  # Mechanism: L1 Predictor is robust to sparse/asymmetric outliers. 
+  # However, for dense Gaussian noise spread across the manifold (N6), 
+  # L2 Predictor (which models Gaussian errors) might outperform L1 in 
+  # cross-modal alignment.
+  # ------------------------------------------------------------------
+  - id: H3
+    claim: >-
+      Under increased dense manifold noise (N6), L2 Predictor achieves 
+      better cross-modal alignment and mutual information extraction than 
+      L1 Predictor.
+    configs_compared:
+      a: B07_NPP611 # N6, L1 Pred
+      b: B07_NPP612 # N6, L2 Pred
+    primary_metrics:
+      [retrieval_cos@1, r2_joint]
+    decision_rules:
+      - metric: retrieval_cos@1
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.02
+        verdict_true: L2_PRED_BETTER_FOR_DENSE_NOISE
+        verdict_false: L1_PRED_REMAINS_SUPERIOR
+
+  # ------------------------------------------------------------------
+  # H4 — Drivers of common manifold extraction (Low Noise)
+  #
+  # Mechanism: Alignment relies on mapping corresponding views together.
+  # The Predictor forces structural alignment, while the Prior only shapes 
+  # the latent space. Thus, Pred alone should extract far more mutual 
+  # information than Prior alone at baseline (N1).
+  # ------------------------------------------------------------------
+  - id: H4
+    claim: >-
+      At baseline noise (N1), the Predictor is the primary driver of common 
+      manifold extraction; Pred alone significantly outperforms Prior alone 
+      on cross-modal retrieval, while synergy (Full) is best.
+    configs_compared:
+      a: B07_NPP110 # Prior only
+      b: B07_NPP101 # Pred only
+      c: B07_NPP111 # Full Synergy
+    primary_metrics:
+      [retrieval_cos@1, r2_joint]
+    decision_rules:
+      - metric: retrieval_cos@1
+        condition: "{b} - {a} > {threshold} and {c} > {b}"
+        threshold: 0.10
+        verdict_true: PRED_DRIVES_EXTRACTION
+        verdict_false: PRIOR_DRIVES_OR_EQUAL
+
+  # ------------------------------------------------------------------
+  # H5 — Synergy dependency shifts under Extreme Mixed Noise
+  #
+  # Mechanism: At massive noise levels (N5: 75% Ext), the predictor might 
+  # collapse if it tries to align uncorrelated points. The Prior's filtering 
+  # becomes strictly necessary for the Predictor to function, shifting the 
+  # regime from "Predictor-driven" to "Synergy-dependent".
+  # ------------------------------------------------------------------
+  - id: H5
+    claim: >-
+      Under extreme mixed noise (N5), neither Predictor alone (B07_NPP501) 
+      nor Prior alone (B07_NPP510) can effectively extract the common manifold. 
+      Only their synergy (B07_NPP511) yields meaningful retrieval, showing a 
+      regime shift in alignment dependency.
+    configs_compared:
+      a: B07_NPP501 # Pred only
+      b: B07_NPP510 # Prior only
+      c: B07_NPP511 # Full
+    primary_metrics:
+      [retrieval_cos@1, r2_joint]
+    decision_rules:
+      - metric: retrieval_cos@1
+        condition: "{c} - max({a}, {b}) > {threshold}"
+        threshold: 0.15
+        verdict_true: SYNERGY_DEPENDENT_UNDER_EXTREME_NOISE
+        verdict_false: PRED_STILL_DRIVES_ALONE
