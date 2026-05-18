@@ -9,7 +9,7 @@ We execute a $6 \times 3 \times 3$ factorial sweep across 6 noise regimes:
 2. **N2:** 25% Asymmetric
 3. **N3:** 37.5% Asymmetric
 4. **N4:** 50% External
-5. **N5:** 75% External + 9% Asymmetric (High Mixed Noise)
+5. **N5:** 75% External + 0% Asymmetric (High Mixed Noise)
 6. **N6:** 25% Asymmetric + Increased Dense Manifold Noise (4%)
 
 ## Hypotheses

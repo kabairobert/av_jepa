@@ -9,7 +9,7 @@ noise_levels = {
     2: {"asymmetric_noise_rate_a": 0.25, "asymmetric_noise_rate_b": 0.25, "external_noise_ratio": 0.00, "manifold_noise_a": 0.02, "manifold_noise_b": 0.02},
     3: {"asymmetric_noise_rate_a": 0.375, "asymmetric_noise_rate_b": 0.375, "external_noise_ratio": 0.00, "manifold_noise_a": 0.02, "manifold_noise_b": 0.02},
     4: {"asymmetric_noise_rate_a": 0.00, "asymmetric_noise_rate_b": 0.00, "external_noise_ratio": 0.50, "manifold_noise_a": 0.02, "manifold_noise_b": 0.02},
-    5: {"asymmetric_noise_rate_a": 0.09, "asymmetric_noise_rate_b": 0.09, "external_noise_ratio": 0.75, "manifold_noise_a": 0.02, "manifold_noise_b": 0.02},
+    5: {"asymmetric_noise_rate_a": 0.00, "asymmetric_noise_rate_b": 0.00, "external_noise_ratio": 0.75, "manifold_noise_a": 0.02, "manifold_noise_b": 0.02},
     6: {"asymmetric_noise_rate_a": 0.25, "asymmetric_noise_rate_b": 0.25, "external_noise_ratio": 0.00, "manifold_noise_a": 0.04, "manifold_noise_b": 0.04},
 }
 
@@ -58,7 +58,7 @@ def get_base_cfg():
         },
         "logging": {
             "log_wandb": True,
-            "save_every": 50,
+            "save_every": 200,
             "tqdm_silent": False
         }
     }

@@ -16,7 +16,7 @@ A comprehensive $3 \times 3 \times 5$ factorial sweep to investigate how Prior a
 - `2`: **Asymmetric 25%** (`asym25_ext0`, magnitude 0.1, bbox+25%)
 - `3`: **Asymmetric 37.5%** (`asym37.5_ext0`, magnitude 0.1, bbox+25%)
 - `4`: **External 50%** (`asym0_ext50`, magnitude 0.1, bbox+25%)
-- `5`: **High Noise Mixture** (`asym9_ext75`, magnitude 0.1, bbox+25%)
+- `5`: **High Noise Mixture** (`asym0_ext75`, magnitude 0.1, bbox+25%)
 - `6`: **Increased Manifold Noise Mixture** (`asym25_ext0`, manifold_noise_a = manifold_noise_b = 0.04, bbox+25%)
 
 ### P1 - Prior Types (3 levels)

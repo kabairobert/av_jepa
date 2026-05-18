@@ -18,7 +18,7 @@ configs:
   - B07_NPP410
   - B07_NPP411
 
-  # High Mixed Noise (N5: 9% Asym, 75% Ext) ablations
+  # High Mixed Noise (N5: 0% Asym, 75% Ext) ablations
   - B07_NPP501
   - B07_NPP510
   - B07_NPP511

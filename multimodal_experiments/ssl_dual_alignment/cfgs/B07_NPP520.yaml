@@ -9,8 +9,8 @@ data:
   num_workers: 0
   asymmetric_noise_magnitude: 0.1
   noise_bbox_expansion: 0.25
-  asymmetric_noise_rate_a: 0.09
-  asymmetric_noise_rate_b: 0.09
+  asymmetric_noise_rate_a: 0.0
+  asymmetric_noise_rate_b: 0.0
   external_noise_ratio: 0.75
   manifold_noise_a: 0.02
   manifold_noise_b: 0.02
@@ -34,5 +34,5 @@ optim:
   lr: 0.001
 logging:
   log_wandb: true
-  save_every: 50
+  save_every: 200
   tqdm_silent: false

@@ -34,5 +34,5 @@ optim:
   lr: 0.001
 logging:
   log_wandb: true
-  save_every: 50
+  save_every: 200
   tqdm_silent: false
