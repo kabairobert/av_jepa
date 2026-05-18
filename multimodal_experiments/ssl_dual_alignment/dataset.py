@@ -307,10 +307,23 @@ class DualDisentangleDataset(Dataset):
                 self.axis_box = None
 
         # Final conversion to tensors
-        self.data_a, self.data_b = torch.tensor(data_a, dtype=torch.float32), torch.tensor(data_b, dtype=torch.float32)
-        self.param_values = param_values
+        self.data_a = torch.tensor(data_a, dtype=torch.float32)
+        self.data_b = torch.tensor(data_b, dtype=torch.float32)
+        self.param_values = torch.tensor(param_values, dtype=torch.float32)
+        self.point_type_a = torch.tensor(self.point_type_a, dtype=torch.long)
+        self.point_type_b = torch.tensor(self.point_type_b, dtype=torch.long)
         self.corr_target = torch.tensor(np.tile([0.0, 0.9], (self.data_a.shape[0], 1)), dtype=torch.float32)
         self.num_samples = self.data_a.shape[0]
+
+    def to(self, device):
+        """Move the entire dataset to the specified device (GPU speedup)."""
+        self.data_a = self.data_a.to(device)
+        self.data_b = self.data_b.to(device)
+        self.param_values = self.param_values.to(device)
+        self.point_type_a = self.point_type_a.to(device)
+        self.point_type_b = self.point_type_b.to(device)
+        self.corr_target = self.corr_target.to(device)
+        return self
 
     def _apply_random_rotation(self, data, seed_offset=0):
         if self.seed is None: return data
@@ -326,9 +339,11 @@ class DualDisentangleDataset(Dataset):
     def __len__(self): return self.num_samples
 
     def __getitem__(self, idx):
-        pv = self.param_values[idx]
         return {
-            "data_a": self.data_a[idx], "data_b": self.data_b[idx], "corr_target": self.corr_target[idx],
-            "param_values": torch.tensor(pv, dtype=torch.float32),
-            "point_type_a": int(self.point_type_a[idx]), "point_type_b": int(self.point_type_b[idx]),
+            "data_a": self.data_a[idx],
+            "data_b": self.data_b[idx],
+            "corr_target": self.corr_target[idx],
+            "param_values": self.param_values[idx],
+            "point_type_a": self.point_type_a[idx],
+            "point_type_b": self.point_type_b[idx],
         }
