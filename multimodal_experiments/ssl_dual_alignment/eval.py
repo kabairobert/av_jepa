@@ -58,7 +58,7 @@ def _discover_checkpoints(run_dir: Path) -> list[Path]:
 def _get_color_values(param_values: np.ndarray) -> np.ndarray:
     """Convert param values to RGB colors.
 
-    For 1D param_values: use Turbo colorscale.
+    For 1D param_values: use Rainbow colorscale.
     For 2D param_values: use HSV encoding (u1 -> Hue, u2 -> Saturation [0.2, 1]).
     """
     if hasattr(param_values, 'numpy'):
@@ -68,10 +68,8 @@ def _get_color_values(param_values: np.ndarray) -> np.ndarray:
         vals = param_values
         denom = (vals.max() - vals.min()) + 1e-8
         normalized = (vals - vals.min()) / denom
-        # Compress Turbo range to avoid extremely dark ends (which look black)
-        normalized = normalized * 0.8 + 0.1
         from plotly.colors import sample_colorscale
-        return sample_colorscale("Turbo", normalized)
+        return sample_colorscale("Rainbow", normalized)
     else:
         u1 = param_values[:, 0]
         u2 = param_values[:, 1]
@@ -89,7 +87,7 @@ def _get_color_values(param_values: np.ndarray) -> np.ndarray:
 def _get_point_type_colors(param_values: np.ndarray, point_types: np.ndarray) -> list:
     """Return Plotly color strings using point_type coloring.
 
-    Manifold points use Turbo by param value. Corrupted points are gray.
+    Manifold points use Rainbow by param value. Corrupted points are gray.
     External points are near-black.
     """
     if param_values.ndim == 2:
@@ -97,10 +95,8 @@ def _get_point_type_colors(param_values: np.ndarray, point_types: np.ndarray) ->
     vals = param_values.astype(float)
     denom = (vals.max() - vals.min()) + 1e-8
     normalized = (vals - vals.min()) / denom
-    # Compress Turbo range to avoid extremely dark ends (which look black)
-    normalized = normalized * 0.8 + 0.1
     from plotly.colors import sample_colorscale
-    base_colors = sample_colorscale("Turbo", normalized)
+    base_colors = sample_colorscale("Rainbow", normalized)
 
     colors = []
     for i, pt in enumerate(point_types):
