@@ -700,6 +700,10 @@ def run(
         external_noise_ratio=data_cfg.get("external_noise_ratio", None),
         noise_bbox_expansion=data_cfg.get("noise_bbox_expansion", 0.0),
         seed=cfg_obj.meta.seed,
+        u3a_scale=data_cfg.get("u3a_scale", 0.2),
+        u3b_scale=data_cfg.get("u3b_scale", 0.3),
+        turns=data_cfg.get("turns", 1.0),
+        wave_amplitude=data_cfg.get("wave_amplitude", 1.0),
     )
     effective_batch_size = int(batch_size) if batch_size is not None else int(data_cfg.get("batch_size", 128))
     eval_loader = DataLoader(eval_set, batch_size=effective_batch_size, shuffle=False,

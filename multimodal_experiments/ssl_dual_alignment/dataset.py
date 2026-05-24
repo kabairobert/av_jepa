@@ -34,12 +34,21 @@ class DualDisentangleDataset(Dataset):
         # For ND-KF-MLP mode
         k_shared: int = 2,
         m_unique: int = 2,
-        d_out: int = 16
+        d_out: int = 16,
+        # New 3D3F2C shape parameters
+        u3a_scale: float = 0.2,
+        u3b_scale: float = 0.3,
+        turns: float = 1.0,
+        wave_amplitude: float = 1.0
     ):
         self.num_samples = num_samples
         self.seed = seed
         self.external_noise_ratio = float(external_noise_ratio)
         self.noise_bbox_expansion = float(noise_bbox_expansion)
+        self.u3a_scale = float(u3a_scale)
+        self.u3b_scale = float(u3b_scale)
+        self.turns = float(turns)
+        self.wave_amplitude = float(wave_amplitude)
         
         # Backward compatibility for old configs using "asymmetric_noise_rate" (defaulting to corrupt behavior)
         self.asym_corrupt_rate_a = max(float(asym_corrupt_rate_a), float(asymmetric_noise_rate_a))
@@ -74,7 +83,7 @@ class DualDisentangleDataset(Dataset):
             self.manifold_noise_b = 0.02 if manifold_noise_b is None else manifold_noise_b
             self.asymmetric_noise_magnitude = asymmetric_noise_magnitude
             
-            turns = 1
+            turns = self.turns
 
             # 1. Calculate sample counts for each segment
             N = num_samples
@@ -159,8 +168,8 @@ class DualDisentangleDataset(Dataset):
                 def gen_3d3f2c(u1, u2, u3a, u3b):
                     # Base clean shapes without unstructured noise
                     # Mod A: Volumetric Spiral
-                    r = u1 + 0.2 * u3a
-                    theta = 2 * np.pi * turns * u1
+                    r = u1 + self.u3a_scale * u3a
+                    theta = 2 * np.pi * self.turns * u1
                     x_a = r * np.cos(theta)
                     y_a = r * np.sin(theta)
                     z_a = u2
@@ -170,7 +179,7 @@ class DualDisentangleDataset(Dataset):
                     x_b = u1
                     y_b = u2
                     v = 2 * u1 - 1
-                    z_b = (v**3 - 0.5 * v) + 0.3 * u3b
+                    z_b = self.wave_amplitude * (v**3 - 0.5 * v) + self.u3b_scale * u3b
                     b_clean = np.column_stack([x_b, y_b, z_b])
                     return a_clean, b_clean
 
