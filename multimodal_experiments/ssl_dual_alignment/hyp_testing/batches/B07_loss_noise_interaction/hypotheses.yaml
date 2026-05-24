@@ -58,6 +58,16 @@ hypotheses:
         threshold: 0.04
         verdict_true: PRED_FLATTENS_UNDER_EXT_NOISE
         verdict_false: PRED_FAILS_UNDER_EXT_NOISE
+      - metric: flatness_ratio_b
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.04
+        verdict_true: PRED_FLATTENS_UNDER_EXT_NOISE_B
+        verdict_false: PRED_FAILS_UNDER_EXT_NOISE_B
+      - metric: orth_residual_a
+        condition: "{a} - {b} > {threshold}"
+        threshold: 0.1
+        verdict_true: PRED_LESS_RESIDUAL_UNDER_EXT_NOISE
+        verdict_false: PRED_MORE_RESIDUAL_UNDER_EXT_NOISE
 
   # ------------------------------------------------------------------
   # H2 — L1 vs L2 Prior robustness to asymmetric noise scaling
@@ -82,6 +92,16 @@ hypotheses:
         threshold: 0.05
         verdict_true: L1_MORE_ROBUST_TO_ASYM_SCALING
         verdict_false: L1_L2_SIMILAR_ROBUSTNESS
+      - metric: flatness_ratio_a
+        condition: "{a} - {b} > {threshold}"
+        threshold: 0.03
+        verdict_true: L1_MAINTAINS_FLATNESS_BETTER
+        verdict_false: L1_L2_SIMILAR_FLATNESS
+      - metric: r2_joint
+        condition: "{a} - {b} > {threshold}"
+        threshold: 0.02
+        verdict_true: L1_PRESERVES_JOINT_GEOMETRY_BETTER
+        verdict_false: L1_L2_SIMILAR_JOINT_GEOMETRY
 
   # ------------------------------------------------------------------
   # H3 — Regime change for Predictors: Dense manifold noise
@@ -107,6 +127,11 @@ hypotheses:
         threshold: 0.02
         verdict_true: L2_PRED_BETTER_FOR_DENSE_NOISE
         verdict_false: L1_PRED_REMAINS_SUPERIOR
+      - metric: r2_joint
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.02
+        verdict_true: L2_PRED_BETTER_JOINT_GEOMETRY
+        verdict_false: L1_PRED_SUPERIOR_OR_EQUAL_JOINT_GEOMETRY
 
   # ------------------------------------------------------------------
   # H4 — Drivers of common manifold extraction (Low Noise)
@@ -133,6 +158,11 @@ hypotheses:
         threshold: 0.10
         verdict_true: PRED_DRIVES_EXTRACTION
         verdict_false: PRIOR_DRIVES_OR_EQUAL
+      - metric: r2_joint
+        condition: "{b} - {a} > {threshold} and {c} > {b}"
+        threshold: 0.02
+        verdict_true: PRED_DRIVES_JOINT_GEOMETRY
+        verdict_false: PRIOR_DRIVES_OR_EQUAL_JOINT_GEOMETRY
 
   # ------------------------------------------------------------------
   # H5 — Synergy dependency shifts under Extreme Mixed Noise
@@ -160,3 +190,8 @@ hypotheses:
         threshold: 0.15
         verdict_true: SYNERGY_DEPENDENT_UNDER_EXTREME_NOISE
         verdict_false: PRED_STILL_DRIVES_ALONE
+      - metric: r2_joint
+        condition: "{c} - max({a}, {b}) > {threshold}"
+        threshold: 0.05
+        verdict_true: SYNERGY_DEPENDENT_JOINT_GEOMETRY
+        verdict_false: PRED_STILL_DRIVES_JOINT_GEOMETRY

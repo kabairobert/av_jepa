@@ -163,8 +163,11 @@ def collect_metrics(batch: dict, wandb_project: str, do_eval: bool, rerun_eval: 
 # Decision rule evaluation
 # ---------------------------------------------------------------------------
 
-def evaluate_condition(condition: str, a_val: float, b_val: float, threshold: float) -> bool:
-    expr = condition.replace("{a}", str(a_val)).replace("{b}", str(b_val)).replace("{threshold}", str(threshold))
+def evaluate_condition(condition: str, val_dict: dict[str, float], threshold: float) -> bool:
+    expr = condition
+    for name, val in val_dict.items():
+        expr = expr.replace(f"{{{name}}}", str(val))
+    expr = expr.replace("{threshold}", str(threshold))
     expr = re.sub(r"abs\(([^)]+)\)", lambda m: str(abs(eval(m.group(1)))), expr)
     try:
         # Use simple eval; we trust our hypotheses.yaml
@@ -175,52 +178,95 @@ def evaluate_condition(condition: str, a_val: float, b_val: float, threshold: fl
 
 
 def evaluate_hypothesis(hyp: dict, metrics: dict[str, dict], registry: dict[str, str]) -> dict:
-    cfg_a = hyp["configs_compared"]["a"]
-    cfg_b = hyp["configs_compared"]["b"]
-    m_a = metrics.get(cfg_a) or {}
-    m_b = metrics.get(cfg_b) or {}
+    configs = hyp["configs_compared"]
+    m_configs = {name: metrics.get(cfg_name, {}) for name, cfg_name in configs.items()}
 
     rule_results = []
+    handled_metrics = set()
+    
+    # 1. Evaluate decision rules
     for rule in hyp["decision_rules"]:
         alias = rule["metric"]
+        handled_metrics.add(alias)
         wandb_key = resolve_metric(alias, registry)
         threshold = rule.get("threshold")
-        a_val = m_a.get(wandb_key)
-        b_val = m_b.get(wandb_key)
+        
+        val_dict = {name: m_configs[name].get(wandb_key) for name in configs}
+
+        # Check if any values needed for condition are missing
+        tokens = re.findall(r"\{([^}]+)\}", rule["condition"])
+        missing = any(val_dict.get(tok) is None for tok in tokens if tok != "threshold")
 
         if threshold is None:
             rule_results.append({
-                "metric": alias, "verdict": "⚠️ THRESHOLD_NOT_SET",
-                "a_val": a_val, "b_val": b_val, "delta": None
+                "metric": alias,
+                "verdict": "⚠️ THRESHOLD_NOT_SET",
+                "a_val": val_dict.get("a"),
+                "b_val": val_dict.get("b"),
+                **{f"{name}_val": val_dict.get(name) for name in configs},
+                "delta": None
             })
             continue
 
-        if a_val is None or b_val is None:
+        if missing:
             rule_results.append({
-                "metric": alias, "verdict": "❓ MISSING_DATA",
-                "a_val": a_val, "b_val": b_val, "delta": None
+                "metric": alias,
+                "verdict": "❓ MISSING_DATA",
+                "a_val": val_dict.get("a"),
+                "b_val": val_dict.get("b"),
+                **{f"{name}_val": val_dict.get(name) for name in configs},
+                "delta": None
             })
             continue
 
-        passed = evaluate_condition(rule["condition"], a_val, b_val, threshold)
+        passed = evaluate_condition(rule["condition"], val_dict, threshold)
         verdict = rule["verdict_true"] if passed else rule["verdict_false"]
-        delta = b_val - a_val
+        
+        a_val = val_dict.get("a")
+        b_val = val_dict.get("b")
+        delta = b_val - a_val if (a_val is not None and b_val is not None) else None
+        
         rule_results.append({
             "metric": alias,
-            "verdict": f"✅ {verdict}" if any(x in verdict for x in ["SUPPORTED", "OUTPERFORMS", "PRESERVED", "IMPROVED", "CLEAN", "BETTER"])
+            "verdict": f"✅ {verdict}" if any(x in verdict for x in ["SUPPORTED", "OUTPERFORMS", "PRESERVED", "IMPROVED", "CLEAN", "BETTER", "DRIVES", "DEPENDENT"])
                        else (f"❌ {verdict}" if any(x in verdict for x in ["REFUTED", "COMPRESSED", "DIRTY", "INSUFFICIENT"])
                              else f"⚠️ {verdict}"),
-            "a_val": round(a_val, 4),
-            "b_val": round(b_val, 4),
-            "delta": round(delta, 4)
+            "a_val": round(a_val, 4) if a_val is not None else None,
+            "b_val": round(b_val, 4) if b_val is not None else None,
+            **{f"{name}_val": round(val, 4) if val is not None else None for name, val in val_dict.items()},
+            "delta": round(delta, 4) if delta is not None else None
         })
 
+    # 2. Add remaining primary metrics
+    primary_metrics = hyp.get("primary_metrics", [])
+    for alias in primary_metrics:
+        if alias in handled_metrics:
+            continue
+        wandb_key = resolve_metric(alias, registry)
+        val_dict = {name: m_configs[name].get(wandb_key) for name in configs}
+        
+        a_val = val_dict.get("a")
+        b_val = val_dict.get("b")
+        delta = b_val - a_val if (a_val is not None and b_val is not None) else None
+        
+        rule_results.append({
+            "metric": alias,
+            "verdict": "\u2014",
+            "a_val": round(a_val, 4) if a_val is not None else None,
+            "b_val": round(b_val, 4) if b_val is not None else None,
+            **{f"{name}_val": round(val, 4) if val is not None else None for name, val in val_dict.items()},
+            "delta": round(delta, 4) if delta is not None else None
+        })
+
+    cfg_a = configs["a"]
+    cfg_b = configs["b"]
     narrative = generate_narrative(hyp, cfg_a, cfg_b, rule_results)
     return {
         "id": hyp["id"],
         "claim": hyp["claim"],
         "cfg_a": cfg_a,
         "cfg_b": cfg_b,
+        "configs_compared": configs,
         "rule_results": rule_results,
         "check_plots": hyp.get("check_plots", []),
         "narrative": narrative,
@@ -230,6 +276,8 @@ def evaluate_hypothesis(hyp: dict, metrics: dict[str, dict], registry: dict[str,
 def generate_narrative(hyp: dict, cfg_a: str, cfg_b: str, rule_results: list) -> str:
     lines = []
     for r in rule_results:
+        if r["verdict"] == "\u2014":
+            continue
         metric = r["metric"]
         verdict = r["verdict"]
         a_val = r["a_val"]
@@ -263,15 +311,29 @@ def write_results_md(batch: dict, hyp_results: list, output_path: Path) -> None:
     ]
     for r in hyp_results:
         lines.append(f"## {r['id']}: {r['claim']}\n")
-        cfg_a_short = r['cfg_a'].split('_')[0]
-        cfg_b_short = r['cfg_b'].split('_')[0]
-        lines.append(f"| Metric | {r['cfg_a']} ({cfg_a_short}) | {r['cfg_b']} ({cfg_b_short}) | \u0394 | Verdict |")
-        lines.append("|---|---|---|---|---|")
+        
+        cfg_keys = sorted(r["configs_compared"].keys())
+        headers = ["Metric"]
+        for key in cfg_keys:
+            cfg_name = r["configs_compared"][key]
+            short_name = cfg_name.split('_')[0]
+            headers.append(f"{cfg_name} ({short_name})")
+        headers.append("Δ")
+        headers.append("Verdict")
+        
+        lines.append("| " + " | ".join(headers) + " |")
+        lines.append("|" + "|".join(["---"] * len(headers)) + "|")
+        
         for rr in r["rule_results"]:
-            a = rr['a_val'] if rr['a_val'] is not None else 'N/A'
-            b = rr['b_val'] if rr['b_val'] is not None else 'N/A'
+            row = [rr['metric']]
+            for key in cfg_keys:
+                val = rr.get(f"{key}_val")
+                row.append(str(val) if val is not None else 'N/A')
             d = f"{rr['delta']:+.4f}" if rr['delta'] is not None else 'N/A'
-            lines.append(f"| {rr['metric']} | {a} | {b} | {d} | {rr['verdict']} |")
+            row.append(d)
+            row.append(rr['verdict'])
+            lines.append("| " + " | ".join(row) + " |")
+            
         lines.append("")
         lines.append(f"**Summary:** {r['narrative']}\n")
         if r["check_plots"]:
