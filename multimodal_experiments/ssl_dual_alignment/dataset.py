@@ -85,7 +85,7 @@ class DualDisentangleDataset(Dataset):
             
             turns = self.turns
 
-            # 1. Calculate sample counts for each segment
+            # 1. Calculate sample counts for each segment (completely disjoint partitions of N, no index overlap)
             N = num_samples
             n_ext = int(np.floor(N * self.external_noise_ratio))
             n_ac_a = int(np.floor(N * self.asym_corrupt_rate_a))
