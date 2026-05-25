@@ -41,12 +41,13 @@ cfg_to_run = {}
 for run in runs:
     cfg_tag = next((tag for tag in run.tags if tag.startswith("B09_")), None)
     if cfg_tag:
-        cfg_to_run[cfg_tag] = {
-            "id": run.id,
-            "state": run.state,
-            "url": run.url,
-            "html": run_id_to_latest_html.get(run.id)
-        }
+        if cfg_tag not in cfg_to_run:
+            cfg_to_run[cfg_tag] = {
+                "id": run.id,
+                "state": run.state,
+                "url": run.url,
+                "html": run_id_to_latest_html.get(run.id)
+            }
 
 status_file = SCRIPT_DIR / "STATUS.md"
 status_dir = status_file.parent

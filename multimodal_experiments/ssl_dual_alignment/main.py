@@ -104,18 +104,33 @@ def run(
     # EBM-only naming tags are only meaningful when loss.type == "ebm"
     if loss_type == "ebm":
         pred_loss_str = str(cfg.loss.get('pred_loss', 'l1'))
+        if cfg.loss.get('lambda_pred', 1.0) == 0.0:
+            pred_loss_str = "none"
+
+        ds_dims = ""
+        if data_type_str == "nd-kf-mlp":
+            ds_dims = f"-k{cfg.data.get('k_shared')}_m{cfg.data.get('m_unique')}_d{cfg.data.get('d_out')}"
+
+        asy_a = cfg.data.get('asymmetric_noise_rate_a', 0.0)
+        ext = cfg.data.get('external_noise_ratio', 0.0)
+        noise_str = f"-nz_a{asy_a}_e{ext}"
+
         exp_name = (
-            f"sslda-{data_type_str}-"
+            f"sslda-{data_type_str}{ds_dims}-"
             f"l_{loss_type}-"
             f"pre_{pred_type_str}_{pred_loss_str}-"
             f"pri_{cfg.loss.get('prior_type', 'l1')}-"
             f"cm_{cm_str}-"
-            f"sp_{cfg.loss.get('lambda_sparse', 0.0)}-"
+            f"sp_{cfg.loss.get('lambda_sparse', 0.0)}"
+            f"{noise_str}-"
             f"{'2stg' if two_stage else '1stg'}"
         )
     else:
+        ds_dims = ""
+        if data_type_str == "nd-kf-mlp":
+            ds_dims = f"-k{cfg.data.get('k_shared')}_m{cfg.data.get('m_unique')}_d{cfg.data.get('d_out')}"
         exp_name = (
-            f"sslda-{data_type_str}-"
+            f"sslda-{data_type_str}{ds_dims}-"
             f"l_{loss_type}-"
             f"pre_{pred_type_str}"
         )
