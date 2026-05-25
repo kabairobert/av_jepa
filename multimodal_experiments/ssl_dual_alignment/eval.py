@@ -371,6 +371,28 @@ def compute_geometry_metrics(
         pdis = per_dim_disentanglement(z_a, u)
         for k, v in pdis.items():
             metrics[f'geom/za/{k}'] = v
+            
+        # --- Type 2 Axis Alignment (Permutation-Invariant Diagonality Ratio) ---
+        sums = []
+        for i in range(z_a.shape[1]):
+            sums.append((pdis.get(f'r2_dim{i}_u0', 0.0) + pdis.get(f'r2_dim{i}_u1', 0.0), i))
+        sums.sort(reverse=True, key=lambda x: x[0])
+        s0, s1 = sums[0][1], sums[1][1]
+        
+        r2_s0_u0 = pdis.get(f'r2_dim{s0}_u0', 0.0)
+        r2_s0_u1 = pdis.get(f'r2_dim{s0}_u1', 0.0)
+        r2_s1_u0 = pdis.get(f'r2_dim{s1}_u0', 0.0)
+        r2_s1_u1 = pdis.get(f'r2_dim{s1}_u1', 0.0)
+        
+        if r2_s0_u0 >= r2_s0_u1:
+            j0, j1 = 0, 1
+        else:
+            j0, j1 = 1, 0
+            
+        numerator = pdis.get(f'r2_dim{s0}_u{j0}', 0.0) + pdis.get(f'r2_dim{s1}_u{j1}', 0.0)
+        denominator = r2_s0_u0 + r2_s0_u1 + r2_s1_u0 + r2_s1_u1
+        diagonality_ratio = numerator / denominator if denominator > 1e-12 else 0.5
+        metrics['geom/za/diagonality_ratio'] = float(diagonality_ratio)
 
     # --- PCA axis-alignment ---
     n_active = 2 if param_values.ndim == 2 else 1
@@ -385,6 +407,33 @@ def compute_geometry_metrics(
         metrics['geom/za/orth_residual_mean'] = flat_a['orth_residual_mean']
         metrics['geom/zb/flatness_ratio'] = flat_b['flatness_ratio']
         metrics['geom/zb/orth_residual_mean'] = flat_b['orth_residual_mean']
+        
+        # --- Clean Manifold Flatness & Curvature ---
+        pt_a = getattr(dataset, "point_type_a", None)
+        pt_b = getattr(dataset, "point_type_b", None)
+        if pt_a is not None and pt_b is not None:
+            if hasattr(pt_a, 'cpu'):
+                pt_a_np = pt_a.cpu().numpy()
+                pt_b_np = pt_b.cpu().numpy()
+            else:
+                pt_a_np = np.asarray(pt_a)
+                pt_b_np = np.asarray(pt_b)
+                
+            if idxs is not None:
+                pt_a_np = pt_a_np[idxs]
+                pt_b_np = pt_b_np[idxs]
+                
+            clean_mask = (pt_a_np == 0) & (pt_b_np == 0)
+            if clean_mask.any():
+                z_a_clean = z_a[clean_mask]
+                z_b_clean = z_b[clean_mask]
+                if z_a_clean.shape[0] >= 2 and z_a_clean.shape[1] >= 2:
+                    flat_a_clean = manifold_flatness(z_a_clean, n_plane=2)
+                    flat_b_clean = manifold_flatness(z_b_clean, n_plane=2)
+                    metrics['geom/za/clean_flatness_ratio'] = flat_a_clean['flatness_ratio']
+                    metrics['geom/za/clean_orth_residual_mean'] = flat_a_clean['orth_residual_mean']
+                    metrics['geom/zb/clean_flatness_ratio'] = flat_b_clean['flatness_ratio']
+                    metrics['geom/zb/clean_orth_residual_mean'] = flat_b_clean['orth_residual_mean']
 
     # --- Retrieval ---
     ret = retrieval_accuracy(z_a, z_b)

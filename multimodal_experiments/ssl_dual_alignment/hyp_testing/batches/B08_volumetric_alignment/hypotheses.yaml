@@ -1,0 +1,154 @@
+batch_id: B08_volumetric_alignment
+description: >-
+  A 6x8 sweep using the volumetric 3d-3f-2c shape engine to investigate 
+  representation flattening, subspace isolation, and strict axis alignment under various noise regimes.
+
+configs:
+  # N1: 5% Asymmetric
+  - B08_NPP101
+  - B08_NPP102
+  - B08_NPP110
+  - B08_NPP111
+  - B08_NPP112
+  - B08_NPP120
+  - B08_NPP121
+  - B08_NPP122
+  
+  # N2: 15% Asymmetric
+  - B08_NPP201
+  - B08_NPP202
+  - B08_NPP210
+  - B08_NPP211
+  - B08_NPP212
+  - B08_NPP220
+  - B08_NPP221
+  - B08_NPP222
+
+  # N3: 25% Asymmetric
+  - B08_NPP301
+  - B08_NPP302
+  - B08_NPP310
+  - B08_NPP311
+  - B08_NPP312
+  - B08_NPP320
+  - B08_NPP321
+  - B08_NPP322
+
+  # N4: 10% External
+  - B08_NPP401
+  - B08_NPP402
+  - B08_NPP410
+  - B08_NPP411
+  - B08_NPP412
+  - B08_NPP420
+  - B08_NPP421
+  - B08_NPP422
+
+  # N5: 30% External
+  - B08_NPP501
+  - B08_NPP502
+  - B08_NPP510
+  - B08_NPP511
+  - B08_NPP512
+  - B08_NPP520
+  - B08_NPP521
+  - B08_NPP522
+
+  # N6: 50% External
+  - B08_NPP601
+  - B08_NPP602
+  - B08_NPP610
+  - B08_NPP611
+  - B08_NPP612
+  - B08_NPP620
+  - B08_NPP621
+  - B08_NPP622
+
+hypotheses:
+
+  # ------------------------------------------------------------------
+  # H1 — Predictor's flattening pressure under significant external noise
+  # ------------------------------------------------------------------
+  - id: H1
+    claim: >-
+      Even under 30% external noise (N5), the predictor alone (B08_NPP501)
+      produces higher clean manifold flatness than the prior alone (B08_NPP510).
+    configs_compared:
+      a: B08_NPP510 # Prior-only
+      b: B08_NPP501 # Predictor-only (L1)
+    primary_metrics:
+      [clean_flatness_ratio_a, clean_orth_residual_a]
+    decision_rules:
+      - metric: clean_flatness_ratio_a
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: PRED_FLATTENS_CLEAN_MANIFOLD_UNDER_EXT_NOISE
+        verdict_false: PRED_FAILS_TO_FLATTEN_UNDER_EXT_NOISE
+      - metric: clean_orth_residual_a
+        condition: "{a} - {b} > {threshold}"
+        threshold: 0.05
+        verdict_true: PRED_LESS_RESIDUAL_UNDER_EXT_NOISE
+        verdict_false: PRED_MORE_RESIDUAL_UNDER_EXT_NOISE
+
+  # ------------------------------------------------------------------
+  # H2 — Sparsity Prior + Predictor weight decay drives Subspace Isolation (Type 1)
+  # ------------------------------------------------------------------
+  - id: H2
+    claim: >-
+      Under low baseline noise (N1), the optimal synergy run (B08_NPP111)
+      successfully separates the shared 2D manifold from the unique dimension (leakage < 0.15).
+    configs_compared:
+      a: B08_NPP110 # Prior-only (baseline for comparison)
+      b: B08_NPP111 # Optimal Synergy (L1 Prior + L1 Predictor)
+    primary_metrics:
+      [r2_dim2_noise]
+    decision_rules:
+      - metric: r2_dim2_noise
+        condition: "{b} < {threshold}"
+        threshold: 0.15
+        verdict_true: SUBSPACE_ISOLATION_SUPPORTED
+        verdict_false: SUBSPACE_ISOLATION_REFUTED
+
+  # ------------------------------------------------------------------
+  # H3 — L1 vs L2 Prior on Type 2 Axis Alignment
+  # ------------------------------------------------------------------
+  - id: H3
+    claim: >-
+      Across all noise regimes, representations trained with L1 Prior (B08_NPP111)
+      will achieve a significantly higher diagonality ratio than L2 Prior (B08_NPP121)
+      within the shared 2D subspace.
+    configs_compared:
+      a: B08_NPP121 # L2 Prior, L1 Predictor
+      b: B08_NPP111 # L1 Prior, L1 Predictor
+    primary_metrics:
+      [diagonality_ratio]
+    decision_rules:
+      - metric: diagonality_ratio
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.08
+        verdict_true: L1_PRIOR_IMPROVES_TYPE2_AXIS_ALIGNMENT
+        verdict_false: L1_L2_PRIORS_SIMILAR_AXIS_ALIGNMENT
+
+  # ------------------------------------------------------------------
+  # H4 — L1 vs L2 Predictor Robustness to Asymmetric Corruptions
+  # ------------------------------------------------------------------
+  - id: H4
+    claim: >-
+      Under high asymmetric noise (N3: 25% Asym), L1 Predictor (B08_NPP311)
+      achieves significantly higher cross-modal retrieval accuracy than L2 Predictor (B08_NPP312).
+    configs_compared:
+      a: B08_NPP312 # L1 Prior, L2 Predictor
+      b: B08_NPP311 # L1 Prior, L1 Predictor
+    primary_metrics:
+      [retrieval_cos@1, r2_joint]
+    decision_rules:
+      - metric: retrieval_cos@1
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.08
+        verdict_true: L1_PRED_MORE_ROBUST_TO_ASYM_CORRUPTIONS
+        verdict_false: L1_L2_PREDICTORS_SIMILAR_ROBUSTNESS
+      - metric: r2_joint
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.02
+        verdict_true: L1_PRED_PRESERVES_JOINT_GEOMETRY_BETTER
+        verdict_false: L1_L2_PRED_SIMILAR_JOINT_GEOMETRY

@@ -34,6 +34,13 @@ metrics:
   flatness_ratio_b:  "geom/zb/flatness_ratio"
   orth_residual_a:   "geom/za/orth_residual_mean"
   orth_residual_b:   "geom/zb/orth_residual_mean"
+  
+  # --- geometry / B08 clean manifold flatness and diagonality ---
+  diagonality_ratio:      "geom/za/diagonality_ratio"
+  clean_flatness_ratio_a: "geom/za/clean_flatness_ratio"
+  clean_flatness_ratio_b: "geom/zb/clean_flatness_ratio"
+  clean_orth_residual_a:  "geom/za/clean_orth_residual_mean"
+  clean_orth_residual_b:  "geom/zb/clean_orth_residual_mean"
 
   # --- geometry / PCA axis-alignment (B04 H_geo) ---
   # max cosine similarity between top-2 PCA eigenvectors and nearest coord axis
