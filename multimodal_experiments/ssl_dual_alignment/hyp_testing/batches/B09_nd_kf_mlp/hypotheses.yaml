@@ -1,0 +1,216 @@
+batch_id: B09_nd_kf_mlp
+description: >-
+  A 4x3x8 sweep using the nd-kf-mlp dataset mode across four ambient
+  dimension/factor configs, three noise levels, and eight (prior, predictor)
+  combinations. Tests whether dual-alignment methodology generalizes from
+  analytical manifolds to high-dimensional random MLP embeddings.
+
+dataset_configs:
+  D0: {d_out: 3,  k_shared: 2, m_unique: 1,  num_dims: 3,  hidden_units: 128}
+  D1: {d_out: 10, k_shared: 2, m_unique: 8,  num_dims: 10, hidden_units: 256}
+  D2: {d_out: 10, k_shared: 5, m_unique: 5,  num_dims: 10, hidden_units: 256}
+  D3: {d_out: 20, k_shared: 5, m_unique: 15, num_dims: 20, hidden_units: 512}
+
+configs:
+  # D0: 3d, k=2, m=1 (MLP baseline, apples-to-apples with B08)
+  # N1: Asym 5%
+  - B09_D0_N1P01
+  - B09_D0_N1P02
+  - B09_D0_N1P10
+  - B09_D0_N1P11
+  - B09_D0_N1P12
+  - B09_D0_N1P20
+  - B09_D0_N1P21
+  - B09_D0_N1P22
+  # N2: Asym 15%
+  - B09_D0_N2P01
+  - B09_D0_N2P02
+  - B09_D0_N2P10
+  - B09_D0_N2P11
+  - B09_D0_N2P12
+  - B09_D0_N2P20
+  - B09_D0_N2P21
+  - B09_D0_N2P22
+  # N3: External 30%
+  - B09_D0_N3P01
+  - B09_D0_N3P02
+  - B09_D0_N3P10
+  - B09_D0_N3P11
+  - B09_D0_N3P12
+  - B09_D0_N3P20
+  - B09_D0_N3P21
+  - B09_D0_N3P22
+
+  # D1: 10d, k=2, m=8 (2D shared in 10D ambient)
+  # N1: Asym 5%
+  - B09_D1_N1P01
+  - B09_D1_N1P02
+  - B09_D1_N1P10
+  - B09_D1_N1P11
+  - B09_D1_N1P12
+  - B09_D1_N1P20
+  - B09_D1_N1P21
+  - B09_D1_N1P22
+  # N2: Asym 15%
+  - B09_D1_N2P01
+  - B09_D1_N2P02
+  - B09_D1_N2P10
+  - B09_D1_N2P11
+  - B09_D1_N2P12
+  - B09_D1_N2P20
+  - B09_D1_N2P21
+  - B09_D1_N2P22
+  # N3: External 30%
+  - B09_D1_N3P01
+  - B09_D1_N3P02
+  - B09_D1_N3P10
+  - B09_D1_N3P11
+  - B09_D1_N3P12
+  - B09_D1_N3P20
+  - B09_D1_N3P21
+  - B09_D1_N3P22
+
+  # D2: 10d, k=5, m=5 (5D shared in 10D ambient)
+  # N1: Asym 5%
+  - B09_D2_N1P01
+  - B09_D2_N1P02
+  - B09_D2_N1P10
+  - B09_D2_N1P11
+  - B09_D2_N1P12
+  - B09_D2_N1P20
+  - B09_D2_N1P21
+  - B09_D2_N1P22
+  # N2: Asym 15%
+  - B09_D2_N2P01
+  - B09_D2_N2P02
+  - B09_D2_N2P10
+  - B09_D2_N2P11
+  - B09_D2_N2P12
+  - B09_D2_N2P20
+  - B09_D2_N2P21
+  - B09_D2_N2P22
+  # N3: External 30%
+  - B09_D2_N3P01
+  - B09_D2_N3P02
+  - B09_D2_N3P10
+  - B09_D2_N3P11
+  - B09_D2_N3P12
+  - B09_D2_N3P20
+  - B09_D2_N3P21
+  - B09_D2_N3P22
+
+  # D3: 20d, k=5, m=15 (5D shared in 20D ambient)
+  # N1: Asym 5%
+  - B09_D3_N1P01
+  - B09_D3_N1P02
+  - B09_D3_N1P10
+  - B09_D3_N1P11
+  - B09_D3_N1P12
+  - B09_D3_N1P20
+  - B09_D3_N1P21
+  - B09_D3_N1P22
+  # N2: Asym 15%
+  - B09_D3_N2P01
+  - B09_D3_N2P02
+  - B09_D3_N2P10
+  - B09_D3_N2P11
+  - B09_D3_N2P12
+  - B09_D3_N2P20
+  - B09_D3_N2P21
+  - B09_D3_N2P22
+  # N3: External 30%
+  - B09_D3_N3P01
+  - B09_D3_N3P02
+  - B09_D3_N3P10
+  - B09_D3_N3P11
+  - B09_D3_N3P12
+  - B09_D3_N3P20
+  - B09_D3_N3P21
+  - B09_D3_N3P22
+
+hypotheses:
+
+  # ------------------------------------------------------------------
+  # H1 — Predictor Flattening Robustness on MLP Manifold
+  # ------------------------------------------------------------------
+  - id: H1
+    claim: >-
+      Under 30% external noise (N3) on the MLP baseline (D0), Predictor-only
+      (B09_D0_N3P01) achieves higher clean_flatness_ratio than Prior-only
+      (B09_D0_N3P10). Tests whether predictor's flattening survives on random MLP manifolds.
+    configs_compared:
+      a: B09_D0_N3P10  # Prior-only
+      b: B09_D0_N3P01  # Predictor-only (L1)
+    primary_metrics:
+      [clean_flatness_ratio_a, clean_orth_residual_a]
+    decision_rules:
+      - metric: clean_flatness_ratio_a
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: PRED_FLATTENS_MLP_MANIFOLD_UNDER_EXT_NOISE
+        verdict_false: PRED_FAILS_TO_FLATTEN_MLP_MANIFOLD_UNDER_EXT_NOISE
+      - metric: clean_orth_residual_a
+        condition: "{a} - {b} > {threshold}"
+        threshold: 0.05
+        verdict_true: PRED_LESS_RESIDUAL_ON_MLP_MANIFOLD
+        verdict_false: PRED_MORE_RESIDUAL_ON_MLP_MANIFOLD
+
+  # ------------------------------------------------------------------
+  # H2 — Subspace Isolation Degrades with Ambient Dimension
+  # ------------------------------------------------------------------
+  - id: H2
+    claim: >-
+      Under L1+L1 synergy (P11) and Asym 5% noise (N1), unique-factor leakage
+      (r2_dim_noise) increases significantly as ambient dimension grows: D3 shows
+      leakage >= 0.05 above D0.
+    configs_compared:
+      a: B09_D0_N1P11  # 3D baseline (low leakage expected)
+      b: B09_D3_N1P11  # 20D high-ambient (high leakage expected)
+    primary_metrics:
+      [r2_dim_noise]
+    decision_rules:
+      - metric: r2_dim_noise
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: ISOLATION_DEGRADES_WITH_AMBIENT_DIMENSION
+        verdict_false: ISOLATION_ROBUST_TO_AMBIENT_DIMENSION
+
+  # ------------------------------------------------------------------
+  # H3 — L1 vs L2 Prior Axis Alignment Persists at Scale
+  # ------------------------------------------------------------------
+  - id: H3
+    claim: >-
+      Across all dataset configs (D0-D3) and noise levels, runs with L1 Prior (P1=1)
+      achieve higher diagonality_ratio within the shared subspace than L2 Prior (P1=2).
+      Comparing D3 synergy runs as the hardest test case.
+    configs_compared:
+      a: B09_D3_N1P21  # D3, L2 Prior + L1 Pred
+      b: B09_D3_N1P11  # D3, L1 Prior + L1 Pred
+    primary_metrics:
+      [diagonality_ratio]
+    decision_rules:
+      - metric: diagonality_ratio
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.08
+        verdict_true: L1_PRIOR_IMPROVES_AXIS_ALIGNMENT_AT_SCALE
+        verdict_false: L1_L2_PRIORS_SIMILAR_AT_HIGH_AMBIENT_DIM
+
+  # ------------------------------------------------------------------
+  # H4 — MLP Manifold vs Structured Manifold Generalization
+  # ------------------------------------------------------------------
+  - id: H4
+    claim: >-
+      The L1+L1 synergy run on the MLP baseline (B09_D0_N1P11) achieves
+      retrieval_cos@1 within 5% absolute of the matched B08 run (B08_NPP111).
+      Methodology is not brittle to manifold shape.
+    configs_compared:
+      a: B09_D0_N1P11  # MLP baseline synergy
+      b: B08_NPP111    # Analytical manifold synergy (B08 cross-batch reference)
+    primary_metrics:
+      [retrieval_cos@1]
+    decision_rules:
+      - metric: "retrieval_cos@1"
+        condition: "abs({b} - {a}) < {threshold}"
+        threshold: 0.05
+        verdict_true: MLP_MANIFOLD_MATCHES_ANALYTICAL_WITHIN_5PCT
+        verdict_false: MLP_MANIFOLD_WORSE_THAN_ANALYTICAL_BY_MORE_THAN_5PCT

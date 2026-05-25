@@ -166,11 +166,16 @@ def run(
         external_noise_ratio=cfg.data.get('external_noise_ratio', None),
         noise_bbox_expansion=cfg.data.get('noise_bbox_expansion', 0.0),
         seed=cfg.meta.seed,
+        # nd-kf-mlp dataset shape params (ignored for other data_types)
+        k_shared=cfg.data.get('k_shared', 2),
+        m_unique=cfg.data.get('m_unique', 2),
+        d_out=cfg.data.get('d_out', 16),
         u3a_scale=cfg.data.get('u3a_scale', 0.2),
         u3b_scale=cfg.data.get('u3b_scale', 0.3),
         turns=cfg.data.get('turns', 1.0),
         wave_amplitude=cfg.data.get('wave_amplitude', 1.0),
     )
+
     # Move entire dataset to GPU for significant training speedup (if using CUDA)
     train_set.to(device)
     

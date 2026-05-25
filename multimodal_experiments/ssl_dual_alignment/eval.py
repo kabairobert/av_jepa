@@ -325,9 +325,13 @@ def compute_geometry_metrics(
     dataset: DualDisentangleDataset,
     device: torch.device,
     max_points: int = 4096,
+    predictor_a2b=None,
 ) -> dict:
     """Collect z_A, z_B from model; compute R2, per-dim disentanglement,
-    PCA axis-alignment, retrieval, CCA, and norm diagnostics.
+    PCA axis-alignment, retrieval, CCA, norm diagnostics, and found-common-rank suite.
+
+    predictor_a2b: optional AffinePredictor/DiagonalPredictor — used to compute
+        per-dim predictor R2 and weight spectra for the found-rank suite.
 
     Returns flat dict suitable for wandb.log.
     """
@@ -359,6 +363,27 @@ def compute_geometry_metrics(
 
     metrics = {}
     u = param_values  # shape (N,) or (N, n_factors)
+    # k_shared: number of shared latent factors, inferred from param_values which stores u_s
+    k_shared = u.shape[1] if u.ndim == 2 else 1
+    num_zdims = z_a.shape[1]
+
+    # --- Pre-compute clean mask once (reused by flatness, predictor blocks) ---
+    # Unique dims have non-zero variance in both modalities by design (full-rank nd-kf-mlp);
+    # 'clean' here means paired manifold points only (no asymmetric corruptions / external noise).
+    z_a_clean: np.ndarray | None = None
+    z_b_clean: np.ndarray | None = None
+    _pt_a_attr = getattr(dataset, "point_type_a", None)
+    _pt_b_attr = getattr(dataset, "point_type_b", None)
+    if _pt_a_attr is not None and _pt_b_attr is not None:
+        _pt_a_np = _pt_a_attr.cpu().numpy() if hasattr(_pt_a_attr, 'cpu') else np.asarray(_pt_a_attr)
+        _pt_b_np = _pt_b_attr.cpu().numpy() if hasattr(_pt_b_attr, 'cpu') else np.asarray(_pt_b_attr)
+        if idxs is not None:
+            _pt_a_np = _pt_a_np[idxs]
+            _pt_b_np = _pt_b_np[idxs]
+        _clean_mask = (_pt_a_np == 0) & (_pt_b_np == 0)
+        if _clean_mask.any():
+            z_a_clean = z_a[_clean_mask]
+            z_b_clean = z_b[_clean_mask]
 
     # --- Joint + per-modality linear probe R2 ---
     for prefix, z in [('za', z_a), ('zb', z_b), ('zjoint', np.concatenate([z_a, z_b], axis=1))]:
@@ -367,83 +392,144 @@ def compute_geometry_metrics(
             metrics[f'geom/{prefix}/{k}'] = v
 
     # --- Per-dim disentanglement (z_A only — primary geometry space) ---
-    if param_values.ndim == 2 and z_a.shape[1] >= 3:
+    pdis = {}
+    if param_values.ndim == 2 and num_zdims >= 2:
         pdis = per_dim_disentanglement(z_a, u)
         for k, v in pdis.items():
             metrics[f'geom/za/{k}'] = v
-            
-        # --- Type 2 Axis Alignment (Permutation-Invariant Diagonality Ratio) ---
-        sums = []
-        for i in range(z_a.shape[1]):
-            sums.append((pdis.get(f'r2_dim{i}_u0', 0.0) + pdis.get(f'r2_dim{i}_u1', 0.0), i))
-        sums.sort(reverse=True, key=lambda x: x[0])
-        s0, s1 = sums[0][1], sums[1][1]
-        
-        r2_s0_u0 = pdis.get(f'r2_dim{s0}_u0', 0.0)
-        r2_s0_u1 = pdis.get(f'r2_dim{s0}_u1', 0.0)
-        r2_s1_u0 = pdis.get(f'r2_dim{s1}_u0', 0.0)
-        r2_s1_u1 = pdis.get(f'r2_dim{s1}_u1', 0.0)
-        
-        if r2_s0_u0 >= r2_s0_u1:
-            j0, j1 = 0, 1
-        else:
-            j0, j1 = 1, 0
-            
-        numerator = pdis.get(f'r2_dim{s0}_u{j0}', 0.0) + pdis.get(f'r2_dim{s1}_u{j1}', 0.0)
-        denominator = r2_s0_u0 + r2_s0_u1 + r2_s1_u0 + r2_s1_u1
-        diagonality_ratio = numerator / denominator if denominator > 1e-12 else 0.5
+
+        # --- Generalised Axis-Alignment / Diagonality Ratio (permutation-invariant, supports any k_shared) ---
+        # Build R2 matrix: M[i, j] = R2(z_dim_i predicts u_j) for all (dim, factor) pairs.
+        # Find the k_shared latent dims that together best explain the k_shared shared factors,
+        # then score how "diagonal" the assignment is (each dim captures exactly one factor).
+        # Mechanism: the L1 sparse_loss on predictor weights (not the L1 prior) drives w[i]->0
+        # for non-shared dims; the prior shapes marginals but doesn't suppress full-rank dims.
+        n_factors = u.shape[1]
+        r2_matrix = np.array([
+            [pdis.get(f'r2_dim{i}_u{j}', 0.0) for j in range(n_factors)]
+            for i in range(num_zdims)
+        ])  # shape: (num_zdims, n_factors)
+        # Select top-k_shared z-dims by total R2 summed across all shared factors
+        top_dim_idxs = np.argsort(r2_matrix.sum(axis=1))[::-1][:k_shared]
+        sub = r2_matrix[top_dim_idxs, :]  # (k_shared, n_factors)
+        # Greedy optimal assignment: maximise sum of selected (dim, factor) R2 pairs
+        # (permutation-invariant: dims don't need to be ordered)
+        assigned_rows, assigned_cols = set(), set()
+        diag_sum = 0.0
+        for val, r, c in sorted(
+            [(sub[r, c], r, c) for r in range(k_shared) for c in range(n_factors)],
+            key=lambda x: -x[0]
+        ):
+            if r not in assigned_rows and c not in assigned_cols:
+                diag_sum += val
+                assigned_rows.add(r)
+                assigned_cols.add(c)
+                if len(assigned_rows) == k_shared:
+                    break
+        total_sub = sub.sum()
+        diagonality_ratio = diag_sum / total_sub if total_sub > 1e-12 else 0.5
         metrics['geom/za/diagonality_ratio'] = float(diagonality_ratio)
 
-    # --- PCA axis-alignment ---
-    n_active = 2 if param_values.ndim == 2 else 1
+    # --- PCA axis-alignment (uses k_shared active components, not hardcoded 2) ---
+    n_active = k_shared if param_values.ndim == 2 else 1
     metrics['geom/pca_axis_align_a'] = pca_axis_alignment(z_a, n_active=n_active)
     metrics['geom/pca_axis_align_b'] = pca_axis_alignment(z_b, n_active=n_active)
 
-    # --- Manifold flatness ---
-    if param_values.ndim == 2 and z_a.shape[1] >= 2:
-        flat_a = manifold_flatness(z_a, n_plane=2)
-        flat_b = manifold_flatness(z_b, n_plane=2)
+    # --- Manifold flatness (n_plane = k_shared, not hardcoded 2) ---
+    if param_values.ndim == 2 and num_zdims >= 2:
+        flat_a = manifold_flatness(z_a, n_plane=k_shared)
+        flat_b = manifold_flatness(z_b, n_plane=k_shared)
         metrics['geom/za/flatness_ratio'] = flat_a['flatness_ratio']
         metrics['geom/za/orth_residual_mean'] = flat_a['orth_residual_mean']
         metrics['geom/zb/flatness_ratio'] = flat_b['flatness_ratio']
         metrics['geom/zb/orth_residual_mean'] = flat_b['orth_residual_mean']
-        
-        # --- Clean Manifold Flatness & Curvature ---
-        pt_a = getattr(dataset, "point_type_a", None)
-        pt_b = getattr(dataset, "point_type_b", None)
-        if pt_a is not None and pt_b is not None:
-            if hasattr(pt_a, 'cpu'):
-                pt_a_np = pt_a.cpu().numpy()
-                pt_b_np = pt_b.cpu().numpy()
-            else:
-                pt_a_np = np.asarray(pt_a)
-                pt_b_np = np.asarray(pt_b)
-                
-            if idxs is not None:
-                pt_a_np = pt_a_np[idxs]
-                pt_b_np = pt_b_np[idxs]
-                
-            clean_mask = (pt_a_np == 0) & (pt_b_np == 0)
-            if clean_mask.any():
-                z_a_clean = z_a[clean_mask]
-                z_b_clean = z_b[clean_mask]
-                if z_a_clean.shape[0] >= 2 and z_a_clean.shape[1] >= 2:
-                    flat_a_clean = manifold_flatness(z_a_clean, n_plane=2)
-                    flat_b_clean = manifold_flatness(z_b_clean, n_plane=2)
-                    metrics['geom/za/clean_flatness_ratio'] = flat_a_clean['flatness_ratio']
-                    metrics['geom/za/clean_orth_residual_mean'] = flat_a_clean['orth_residual_mean']
-                    metrics['geom/zb/clean_flatness_ratio'] = flat_b_clean['flatness_ratio']
-                    metrics['geom/zb/clean_orth_residual_mean'] = flat_b_clean['orth_residual_mean']
+        # --- Clean Manifold Flatness (reuses pre-computed z_a_clean / z_b_clean) ---
+        if z_a_clean is not None and z_a_clean.shape[0] >= 2 and z_a_clean.shape[1] >= 2:
+            flat_a_clean = manifold_flatness(z_a_clean, n_plane=k_shared)
+            flat_b_clean = manifold_flatness(z_b_clean, n_plane=k_shared)
+            metrics['geom/za/clean_flatness_ratio'] = flat_a_clean['flatness_ratio']
+            metrics['geom/za/clean_orth_residual_mean'] = flat_a_clean['orth_residual_mean']
+            metrics['geom/zb/clean_flatness_ratio'] = flat_b_clean['flatness_ratio']
+            metrics['geom/zb/clean_orth_residual_mean'] = flat_b_clean['orth_residual_mean']
 
     # --- Retrieval ---
     ret = retrieval_accuracy(z_a, z_b)
     for k, v in ret.items():
         metrics[f'geom/{k}'] = v
 
-    # --- CCA (includes cca_diag_score) ---
+    # --- CCA (includes cca_diag_score and per-dim cca_corr_dim{i}) ---
     cca = cca_score(z_a, z_b)
     for k, v in cca.items():
         metrics[f'geom/{k}'] = v
+    # Save correlation spectrum for found-rank thresholding below
+    cca_corr_spectrum = [cca.get(f'cca_corr_dim{i}', 0.0) for i in range(num_zdims)]
+
+    # ---------------------------------------------------------------------------
+    # Found Common Rank Suite
+    # Goal: estimate how many latent dims the model allocated to the mutual-
+    # information (shared-factor) subspace.  Ground truth = k_shared.
+    # Four independent estimators, each with multiple thresholds, so we can
+    # compare consistency across experiments and pick the best one.
+    # All estimators are permutation-invariant: they *count* active dims, they
+    # don't require the shared dims to be the first k_shared coordinates.
+    # ---------------------------------------------------------------------------
+
+    # 1. Per-dim z_A vs z_B Pearson correlation (model-free, no predictor needed).
+    #    Shared dims should show high |corr|; unique dims should be near 0 because
+    #    the unique factors are independent across modalities.
+    pearson_spectrum = []
+    for i in range(num_zdims):
+        c = float(np.corrcoef(z_a[:, i], z_b[:, i])[0, 1])
+        c = 0.0 if np.isnan(c) else c
+        pearson_spectrum.append(c)
+        metrics[f'geom/za_zb_pearson_dim{i}'] = c
+    for thresh, tag in [(0.1, '1'), (0.3, '3'), (0.5, '5')]:
+        metrics[f'geom/found_rank_pearson_{tag}'] = int(
+            np.sum(np.abs(pearson_spectrum) > thresh)
+        )
+
+    # 2. CCA effective rank at multiple thresholds (upgrade of the existing
+    #    cca_effective_rank which only used threshold=0.5).
+    for thresh, tag in [(0.1, '1'), (0.3, '3'), (0.5, '5')]:
+        metrics[f'geom/found_rank_cca_{tag}'] = int(
+            np.sum(np.array(cca_corr_spectrum) > thresh)
+        )
+
+    # 3. Predictor weight spectrum + threshold counts.
+    #    Only meaningful for AffinePredictor / DiagonalPredictor whose .weight
+    #    parameter is a per-dim scale applied to z_A when predicting z_B.
+    #    The L1 sparse_loss (lambda_sparse * |w_i|) is what drives non-shared
+    #    weights toward 0 — not the L1 prior, which shapes marginal distributions
+    #    and helps axis-alignment but doesn't suppress full-rank unique dims.
+    if predictor_a2b is not None and hasattr(predictor_a2b, 'weight'):
+        w_np = predictor_a2b.weight.detach().cpu().numpy()
+        abs_w = np.abs(w_np)
+        for i, wi in enumerate(abs_w):
+            metrics[f'geom/pred_w_dim{i}'] = float(wi)
+        for thresh, tag in [(0.3, '3'), (0.5, '5'), (0.7, '7')]:
+            metrics[f'geom/found_rank_pred_w_{tag}'] = int(np.sum(abs_w > thresh))
+
+        # 4. Per-dim predictor R2 on *clean* manifold points only.
+        #    For each dim i: R2(z_B_clean[:, i], predictor(z_A_clean)[:, i]).
+        #    Dims with high R2 are those the predictor actively maps; dims with
+        #    low R2 are the unique / unpredictable ones.
+        if z_a_clean is not None and z_b_clean is not None and z_a_clean.shape[0] >= 10:
+            from sklearn.metrics import r2_score as _r2_score
+            _pred_device = next(predictor_a2b.parameters()).device
+            with torch.no_grad():
+                _pred_zb = predictor_a2b(
+                    torch.tensor(z_a_clean, dtype=torch.float32).to(_pred_device)
+                ).cpu().numpy()
+            pred_r2_spectrum = []
+            for i in range(num_zdims):
+                r2 = float(_r2_score(z_b_clean[:, i], _pred_zb[:, i]))
+                r2 = max(0.0, r2)  # clamp: negative R2 = worse than mean; treat as 0
+                pred_r2_spectrum.append(r2)
+                metrics[f'geom/pred_r2_dim{i}'] = r2
+            for thresh, tag in [(0.1, '1'), (0.3, '3'), (0.5, '5')]:
+                metrics[f'geom/found_rank_pred_r2_{tag}'] = int(
+                    np.sum(np.array(pred_r2_spectrum) > thresh)
+                )
 
     # --- Norm diagnostics ---
     norms_a = np.linalg.norm(z_a, axis=1)
@@ -631,7 +717,10 @@ def evaluate_and_log_checkpoint(
         log_plots_to_wandb(dual_model, eval_set, device, step, wandb_run)
 
         # Geometry metrics: R2, per-dim disentanglement, PCA axis-align, retrieval, CCA, norms
-        geom_metrics = compute_geometry_metrics(dual_model, eval_set, device)
+        geom_metrics = compute_geometry_metrics(
+                dual_model, eval_set, device,
+                predictor_a2b=predictors.get("a2b"),
+            )
         wandb.log(geom_metrics, step=step)
 
         if is_3d is None:
