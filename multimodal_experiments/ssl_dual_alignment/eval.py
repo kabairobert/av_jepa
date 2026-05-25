@@ -116,6 +116,13 @@ def _get_point_type_colors(param_values: np.ndarray, point_types: np.ndarray) ->
     return colors
 
 
+def _project_to_3d(data):
+    if data.shape[1] <= 3:
+        return data
+    from sklearn.decomposition import PCA
+    return PCA(n_components=3).fit_transform(data)
+
+
 def _build_interactive_4way_html(
     data_a: np.ndarray,
     data_b: np.ndarray,
@@ -133,6 +140,11 @@ def _build_interactive_4way_html(
     except Exception as exc:
         logger.warning("Plotly not available; skipping interactive 3D plot: %s", exc)
         return None
+
+    data_a_proj = _project_to_3d(data_a)
+    data_b_proj = _project_to_3d(data_b)
+    out_a_proj = _project_to_3d(out_a)
+    out_b_proj = _project_to_3d(out_b)
 
     if point_type_a is not None:
         color_vals_a = _get_point_type_colors(param_values, point_type_a)
@@ -157,10 +169,10 @@ def _build_interactive_4way_html(
             name=name,
         )
 
-    fig.add_trace(_scatter(data_a, "Input A", color_vals_a), row=1, col=1)
-    fig.add_trace(_scatter(out_a, "Output A", color_vals_a), row=1, col=2)
-    fig.add_trace(_scatter(out_b, "Output B", color_vals_b), row=1, col=3)
-    fig.add_trace(_scatter(data_b, "Input B", color_vals_b), row=1, col=4)
+    fig.add_trace(_scatter(data_a_proj, "Input A", color_vals_a), row=1, col=1)
+    fig.add_trace(_scatter(out_a_proj, "Output A", color_vals_a), row=1, col=2)
+    fig.add_trace(_scatter(out_b_proj, "Output B", color_vals_b), row=1, col=3)
+    fig.add_trace(_scatter(data_b_proj, "Input B", color_vals_b), row=1, col=4)
 
     scene_cube = dict(aspectmode="cube")
     fig.update_layout(
@@ -838,6 +850,9 @@ def run(
         external_noise_ratio=data_cfg.get("external_noise_ratio", None),
         noise_bbox_expansion=data_cfg.get("noise_bbox_expansion", 0.0),
         seed=cfg_obj.meta.seed,
+        k_shared=data_cfg.get("k_shared", 2),
+        m_unique=data_cfg.get("m_unique", 2),
+        d_out=data_cfg.get("d_out", 16),
         u3a_scale=data_cfg.get("u3a_scale", 0.2),
         u3b_scale=data_cfg.get("u3b_scale", 0.3),
         turns=data_cfg.get("turns", 1.0),

@@ -41,20 +41,23 @@ class DualDisentangleDataset(Dataset):
         turns: float = 1.0,
         wave_amplitude: float = 1.0
     ):
+        def safe_float(val, default=0.0):
+            return default if val is None else float(val)
+
         self.num_samples = num_samples
         self.seed = seed
-        self.external_noise_ratio = float(external_noise_ratio)
-        self.noise_bbox_expansion = float(noise_bbox_expansion)
-        self.u3a_scale = float(u3a_scale)
-        self.u3b_scale = float(u3b_scale)
-        self.turns = float(turns)
-        self.wave_amplitude = float(wave_amplitude)
+        self.external_noise_ratio = safe_float(external_noise_ratio, 0.0)
+        self.noise_bbox_expansion = safe_float(noise_bbox_expansion, 0.0)
+        self.u3a_scale = safe_float(u3a_scale, 0.2)
+        self.u3b_scale = safe_float(u3b_scale, 0.3)
+        self.turns = safe_float(turns, 1.0)
+        self.wave_amplitude = safe_float(wave_amplitude, 1.0)
         
         # Backward compatibility for old configs using "asymmetric_noise_rate" (defaulting to corrupt behavior)
-        self.asym_corrupt_rate_a = max(float(asym_corrupt_rate_a), float(asymmetric_noise_rate_a))
-        self.asym_corrupt_rate_b = max(float(asym_corrupt_rate_b), float(asymmetric_noise_rate_b))
-        self.asym_mismatch_rate_a = float(asym_mismatch_rate_a)
-        self.asym_mismatch_rate_b = float(asym_mismatch_rate_b)
+        self.asym_corrupt_rate_a = max(safe_float(asym_corrupt_rate_a, 0.0), safe_float(asymmetric_noise_rate_a, 0.0))
+        self.asym_corrupt_rate_b = max(safe_float(asym_corrupt_rate_b, 0.0), safe_float(asymmetric_noise_rate_b, 0.0))
+        self.asym_mismatch_rate_a = safe_float(asym_mismatch_rate_a, 0.0)
+        self.asym_mismatch_rate_b = safe_float(asym_mismatch_rate_b, 0.0)
 
         # Alias resolution for data_type
         dt_upper = str(data_type).upper()

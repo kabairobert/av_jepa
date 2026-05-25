@@ -174,7 +174,7 @@ class EBMJEPALoss(torch.nn.Module):
 
         # 3. Sparsity penalty (scalar; predictor weights only, not biases)
         sparse_loss = pred_loss_per.new_zeros(())
-        if self.lambda_sparse > 0 and self.predictor_a2b is not None:
+        if self.lambda_sparse > 0 and self.lambda_pred > 0 and self.predictor_a2b is not None:
             for predictor in [self.predictor_a2b, self.predictor_b2a]:
                 sparse_loss = sparse_loss + self.lambda_sparse * sum(
                     p.abs().sum()

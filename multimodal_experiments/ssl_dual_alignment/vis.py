@@ -20,6 +20,13 @@ _GRAY_CORRUPT = '#808080'
 _BLACK_EXTERNAL = '#000000'   # Pure black to distinguish from dark blue turbo(0)
 
 
+def _project_to_3d(data):
+    if data.shape[1] <= 3:
+        return data
+    from sklearn.decomposition import PCA
+    return PCA(n_components=3).fit_transform(data)
+
+
 def _get_point_colors(param_values_1d, point_types, cmap='rainbow'):
     """Per-point color: manifold=rainbow, corrupted=gray, external=near-black."""
     norm_p = (param_values_1d - param_values_1d.min()) / (
@@ -45,6 +52,9 @@ def plot_original_spaces(data_a, data_b, param_values,
     is_3d = data_a.shape[1] >= 3
     fig = plt.figure(figsize=(12, 6))
 
+    data_a_proj = _project_to_3d(data_a)
+    data_b_proj = _project_to_3d(data_b)
+
     # For 2D param_values (multi-factor case), extract first factor for coloring
     if isinstance(param_values, np.ndarray) and param_values.ndim == 2:
         param_values_1d = param_values[:, 0]
@@ -59,15 +69,19 @@ def plot_original_spaces(data_a, data_b, param_values,
 
     if is_3d:
         ax1 = fig.add_subplot(121, projection='3d')
-        ax1.scatter(data_a[:, 0], data_a[:, 1], data_a[:, 2],
+        ax1.scatter(data_a_proj[:, 0], data_a_proj[:, 1], data_a_proj[:, 2],
                     c=c_a, s=5, alpha=0.5)
         ax1.set_title('Modality A')
-        ax1.set_xlabel('Dim 1'); ax1.set_ylabel('Dim 2'); ax1.set_zlabel('Dim 3')
+        ax1.set_xlabel('PC 1' if data_a.shape[1] > 3 else 'Dim 1')
+        ax1.set_ylabel('PC 2' if data_a.shape[1] > 3 else 'Dim 2')
+        ax1.set_zlabel('PC 3' if data_a.shape[1] > 3 else 'Dim 3')
         ax2 = fig.add_subplot(122, projection='3d')
-        ax2.scatter(data_b[:, 0], data_b[:, 1], data_b[:, 2],
+        ax2.scatter(data_b_proj[:, 0], data_b_proj[:, 1], data_b_proj[:, 2],
                     c=c_b, s=5, alpha=0.5)
         ax2.set_title('Modality B')
-        ax2.set_xlabel('Dim 1'); ax2.set_ylabel('Dim 2'); ax2.set_zlabel('Dim 3')
+        ax2.set_xlabel('PC 1' if data_b.shape[1] > 3 else 'Dim 1')
+        ax2.set_ylabel('PC 2' if data_b.shape[1] > 3 else 'Dim 2')
+        ax2.set_zlabel('PC 3' if data_b.shape[1] > 3 else 'Dim 3')
     else:
         ax1 = fig.add_subplot(121)
         ax1.scatter(data_a[:, 0], data_a[:, 1], c=c_a, alpha=0.5)
@@ -100,6 +114,11 @@ def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, 
         fig.suptitle('Self-Supervised Dual Geometry Reshaping (NaN/Inf detected in outputs)')
         return fig
 
+    data_a_proj = _project_to_3d(data_a)
+    output_a_proj = _project_to_3d(output_a)
+    output_b_proj = _project_to_3d(output_b)
+    data_b_proj = _project_to_3d(data_b)
+
     # For 2D param_values (multi-factor case), extract first factor for coloring
     if isinstance(param_values, np.ndarray) and param_values.ndim == 2:
         param_values_1d = param_values[:, 0]
@@ -125,12 +144,15 @@ def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, 
 
     if is_3d:
         axs = [fig.add_subplot(1, 4, i+1, projection='3d') for i in range(4)]
-        axs[0].scatter(data_a[:, 0], data_a[:, 1], data_a[:, 2], c=c_in_a, s=10, alpha=0.85)
-        axs[1].scatter(output_a[:, 0], output_a[:, 1], output_a[:, 2], c=c_out_a, s=10, alpha=0.85)
-        axs[2].scatter(output_b[:, 0], output_b[:, 1], output_b[:, 2], c=c_out_b, s=10, alpha=0.85)
-        axs[3].scatter(data_b[:, 0], data_b[:, 1], data_b[:, 2], c=c_in_b, s=10, alpha=0.85)
+        axs[0].scatter(data_a_proj[:, 0], data_a_proj[:, 1], data_a_proj[:, 2], c=c_in_a, s=10, alpha=0.85)
+        axs[1].scatter(output_a_proj[:, 0], output_a_proj[:, 1], output_a_proj[:, 2], c=c_out_a, s=10, alpha=0.85)
+        axs[2].scatter(output_b_proj[:, 0], output_b_proj[:, 1], output_b_proj[:, 2], c=c_out_b, s=10, alpha=0.85)
+        axs[3].scatter(data_b_proj[:, 0], data_b_proj[:, 1], data_b_proj[:, 2], c=c_in_b, s=10, alpha=0.85)
         for i in range(4):
-            axs[i].set_xlabel('Dim 1'); axs[i].set_ylabel('Dim 2'); axs[i].set_zlabel('Dim 3')
+            dim_str = "PC" if data_a.shape[1] > 3 else "Dim"
+            axs[i].set_xlabel(f'{dim_str} 1')
+            axs[i].set_ylabel(f'{dim_str} 2')
+            axs[i].set_zlabel(f'{dim_str} 3')
     else:
         axs = [fig.add_subplot(1, 4, i+1) for i in range(4)]
         axs[0].scatter(data_a[:, 0], data_a[:, 1], c=c_in_a, s=10, alpha=0.85)
