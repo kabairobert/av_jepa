@@ -98,18 +98,24 @@ def resolve_metric(alias: str, registry: dict[str, str]) -> str:
 # ---------------------------------------------------------------------------
 
 def collect_metrics(batch: dict, wandb_project: str, do_eval: bool, rerun_eval: bool) -> dict[str, dict]:
-    """Fetch and merge metrics for all configs in batch."""
+    """Fetch and merge metrics for all configs in batch and hypotheses."""
     batch_id = batch["batch_id"]
     api = wandb.Api()
     results = {}
 
-    for cfg_name in batch["configs"]:
+    # Gather all configs to fetch (including cross-batch reference runs in hypotheses)
+    configs_to_fetch = set(batch["configs"])
+    for hyp in batch.get("hypotheses", []):
+        for cfg_name in hyp.get("configs_compared", {}).values():
+            configs_to_fetch.add(cfg_name)
+
+    for cfg_name in sorted(configs_to_fetch):
         print(f"  Processing {cfg_name}...")
         
-        # 1. Fetch all runs for this config + batch
-        runs = list(api.runs(wandb_project, filters={"tags": {"$all": [batch_id, cfg_name]}}))
+        # 1. Fetch all runs for this config (robust to cross-batch references)
+        runs = list(api.runs(wandb_project, filters={"tags": cfg_name}))
         if not runs:
-            print(f"    NOT FOUND: No runs tagged with [{batch_id}, {cfg_name}]")
+            print(f"    NOT FOUND: No runs tagged with [{cfg_name}]")
             continue
 
         # 2. Group into Train (no 'eval' tag) and Eval (has 'eval' tag)
@@ -127,10 +133,10 @@ def collect_metrics(batch: dict, wandb_project: str, do_eval: bool, rerun_eval: 
             print(f"    WARNING: No main training run found for {cfg_name} (only eval runs?)")
             continue
 
-        # 3. Determine if we need to run a new eval
+        # 3. Determine if we need to run a new eval (only for configs belonging to the current batch)
         latest_eval = sorted(eval_runs, key=lambda r: r.created_at)[-1] if eval_runs else None
         
-        needs_eval = rerun_eval or (do_eval and latest_eval is None)
+        needs_eval = (rerun_eval or (do_eval and latest_eval is None)) and (cfg_name in batch["configs"])
         if needs_eval:
             # Get checkpoint path from Train run
             ckpt_path = train_run.summary.get("eval/checkpoint_path")
@@ -139,7 +145,7 @@ def collect_metrics(batch: dict, wandb_project: str, do_eval: bool, rerun_eval: 
                 if local_dir:
                     run_local_eval(local_dir)
                     # Re-fetch runs to get the new eval output
-                    runs = list(api.runs(wandb_project, filters={"tags": {"$all": [batch_id, cfg_name]}}))
+                    runs = list(api.runs(wandb_project, filters={"tags": cfg_name}))
                     eval_runs = [r for r in runs if "eval" in r.tags]
                     latest_eval = sorted(eval_runs, key=lambda r: r.created_at)[-1] if eval_runs else None
                 else:

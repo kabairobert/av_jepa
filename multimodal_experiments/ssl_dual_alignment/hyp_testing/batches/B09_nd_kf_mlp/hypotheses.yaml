@@ -150,7 +150,7 @@ hypotheses:
         verdict_true: PRED_FLATTENS_MLP_MANIFOLD_UNDER_EXT_NOISE
         verdict_false: PRED_FAILS_TO_FLATTEN_MLP_MANIFOLD_UNDER_EXT_NOISE
       - metric: clean_orth_residual_a
-        condition: "{a} - {b} > {threshold}"
+        condition: "{b} - {a} < -{threshold}"
         threshold: 0.05
         verdict_true: PRED_LESS_RESIDUAL_ON_MLP_MANIFOLD
         verdict_false: PRED_MORE_RESIDUAL_ON_MLP_MANIFOLD
@@ -167,9 +167,9 @@ hypotheses:
       a: B09_D0_N1P11  # 3D baseline (low leakage expected)
       b: B09_D3_N1P11  # 20D high-ambient (high leakage expected)
     primary_metrics:
-      [r2_dim_noise]
+      [r2_dim2_noise]
     decision_rules:
-      - metric: r2_dim_noise
+      - metric: r2_dim2_noise
         condition: "{b} - {a} > {threshold}"
         threshold: 0.05
         verdict_true: ISOLATION_DEGRADES_WITH_AMBIENT_DIMENSION
