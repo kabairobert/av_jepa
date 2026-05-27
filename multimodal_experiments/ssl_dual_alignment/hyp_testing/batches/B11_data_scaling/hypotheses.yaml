@@ -1,0 +1,108 @@
+batch_id: B11_data_scaling
+description: >-
+  A 24-config sweep testing the hypothesis that increasing dataset size prevents the model from overfitting 
+  to coincidental noise alignments and forces it to learn the true shared 2D manifold, closing the performance 
+  gap for MLP embeddings and high-dimensional spaces.
+
+configs:
+  # 1x Scale (4,096 points)
+  - B11_1x_R10_N1P21
+  - B11_1x_R20_N1P21
+  - B11_1x_M10_N1P21
+  - B11_1x_M20_N1P21
+
+  # 2x Scale (8,192 points)
+  - B11_2x_R10_N1P21
+  - B11_2x_R20_N1P21
+  - B11_2x_M10_N1P21
+  - B11_2x_M20_N1P21
+
+  # 4x Scale (16,384 points)
+  - B11_4x_R10_N1P21
+  - B11_4x_R20_N1P21
+  - B11_4x_M10_N1P21
+  - B11_4x_M20_N1P21
+
+  # 8x Scale (32,768 points)
+  - B11_8x_R10_N1P21
+  - B11_8x_R20_N1P21
+  - B11_8x_M10_N1P21
+  - B11_8x_M20_N1P21
+
+  # 16x Scale (65,536 points)
+  - B11_16x_R10_N1P21
+  - B11_16x_R20_N1P21
+  - B11_16x_M10_N1P21
+  - B11_16x_M20_N1P21
+
+  # 32x Scale (131,072 points)
+  - B11_32x_R10_N1P21
+  - B11_32x_R20_N1P21
+  - B11_32x_M10_N1P21
+  - B11_32x_M20_N1P21
+
+hypotheses:
+
+  # ------------------------------------------------------------------
+  # H1 — Data Scaling Overcomes Noise Overfitting
+  # ------------------------------------------------------------------
+  - id: H1
+    claim: >-
+      At low data scales (1x), the model overfits to coincidental correlations in the external noise, 
+      failing to perfectly isolate the 2D manifold. Increasing data scale (to 32x) breaks these 
+      spurious correlations, resulting in significantly higher retrieval accuracy.
+    configs_compared:
+      a: B11_1x_M20_N1P21
+      b: B11_32x_M20_N1P21
+    primary_metrics:
+      [retrieval_cos@1]
+    decision_rules:
+      - metric: retrieval_cos@1
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.10
+        verdict_true: SCALING_OVERCOMES_NOISE_OVERFIT
+        verdict_false: NO_SIGNIFICANT_SCALING_BENEFIT
+
+  # ------------------------------------------------------------------
+  # H2 — The MLP Bottleneck Diminishes with Scale
+  # ------------------------------------------------------------------
+  - id: H2
+    claim: >-
+      At 1x scale, the MLP distortion causes much worse performance than linear Rotation. 
+      At 32x scale, the abundance of data provides enough consistent gradient signal to unroll 
+      the MLP, significantly closing the performance gap between Rotation and MLP embeddings.
+    configs_compared:
+      a: B11_1x_M20_N1P21 # 1x MLP
+      b: B11_1x_R20_N1P21 # 1x Rot
+      c: B11_32x_M20_N1P21 # 32x MLP
+      d: B11_32x_R20_N1P21 # 32x Rot
+    primary_metrics:
+      [retrieval_cos@1]
+    decision_rules:
+      - metric: retrieval_cos@1
+        condition: "({b} - {a}) - ({d} - {c}) > {threshold}" # Gap at 1x is larger than gap at 32x
+        threshold: 0.05
+        verdict_true: SCALING_CLOSES_MLP_GAP
+        verdict_false: SCALING_DOES_NOT_CLOSE_GAP
+
+  # ------------------------------------------------------------------
+  # H3 — Dimensionality Robustness via Data
+  # ------------------------------------------------------------------
+  - id: H3
+    claim: >-
+      At low data scales (1x), increasing ambient space from 10D to 20D degrades performance severely 
+      due to the curse of dimensionality. At high data scales (32x), the model becomes robust to 
+      ambient dimensionality, showing minimal degradation from 10D to 20D.
+    configs_compared:
+      a: B11_1x_M20_N1P21 # 1x 20D
+      b: B11_1x_M10_N1P21 # 1x 10D
+      c: B11_32x_M20_N1P21 # 32x 20D
+      d: B11_32x_M10_N1P21 # 32x 10D
+    primary_metrics:
+      [retrieval_cos@1]
+    decision_rules:
+      - metric: retrieval_cos@1
+        condition: "({b} - {a}) - ({d} - {c}) > {threshold}" # Degradation at 1x is larger than at 32x
+        threshold: 0.05
+        verdict_true: SCALING_PROVIDES_DIM_ROBUSTNESS
+        verdict_false: SCALING_DOES_NOT_PREVENT_DIM_DEGRADATION

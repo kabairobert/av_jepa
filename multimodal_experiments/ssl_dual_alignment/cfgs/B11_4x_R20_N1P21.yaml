@@ -1,0 +1,44 @@
+meta:
+  seed: 12345
+  device: auto
+  checkpoint_dir: checkpoints
+data:
+  type: 3d-3f-2c-rot
+  embed_dim: 20
+  num_samples: 16384
+  batch_size: 512
+  num_workers: 0
+  asymmetric_noise_magnitude: 0.1
+  noise_bbox_expansion: 0.25
+  u3a_scale: 0.12
+  u3b_scale: 0.12
+  turns: 1.0
+  wave_amplitude: 1.0
+  manifold_noise_a: 0.02
+  manifold_noise_b: 0.02
+  asymmetric_noise_rate_a: 0.0
+  asymmetric_noise_rate_b: 0.0
+  external_noise_ratio: 0.1
+model:
+  stage_count: 6
+  num_dims: 20
+  hidden_units: 128
+  predictor_type: affine
+loss:
+  type: ebm
+  lambda_jac: 1.0
+  congruence_mode: none
+  congruence_tau: 0.5
+  lambda_prior: 0.5
+  lambda_sparse: 0.1
+  prior_type: l2
+  lambda_pred: 1.0
+  pred_loss: l1
+optim:
+  epochs: 320
+  lr: 0.001
+logging:
+  log_wandb: true
+  save_every: 320
+  tqdm_silent: false
+  wandb_group: B11_data_scaling
