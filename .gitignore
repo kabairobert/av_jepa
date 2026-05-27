@@ -232,3 +232,7 @@ eb_jepa_private_gdrive.code-workspace
 uv uninstalled.txt
 .github/copilot-instructions.md
 .github/skills/
+
+*.mp4
+*.wav
+*.mp3
