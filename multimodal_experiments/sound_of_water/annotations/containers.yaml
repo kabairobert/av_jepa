@@ -1,0 +1,651 @@
+# All (one-time) annotations for containers
+
+# NOTES
+# 1. All measurements are in centimeters
+# 2. All measurements are from the bottom of the container
+# 3. All measurements are approximate
+# 4. The property of opaque vs transparent is called as visibility
+
+
+container_1:
+  shape: cylindrical
+  material: plastic
+  visibility: transparent
+  example_video_id: VID_20240116_230040
+  measurements:
+    diameter_bottom: 5.7
+    diameter_top: 6.3
+    net_height: 19.7
+    thickness: 0.32
+  hyperparameters:
+    beta: 0.00
+
+
+container_2:
+  # Making an approximation here 
+  # shape: parabolic
+  shape: cylindrical
+  material: plastic
+  visibility: translucent
+  example_video_id: VID_20240118_100817
+  measurements:
+    diameter_bottom: 8
+    diameter_top: 11.5
+    net_height: 13
+
+container_3:
+  # Fair to approximate as a cylinder
+  # shape: freeform
+  shape: cylindrical
+  material: glass
+  visibility: transparent
+  example_video_id: VID_20240118_192450
+  measurements:
+    diameter_top: 6.5
+    diameter_bottom: 5.5
+    net_height: 12
+
+container_4:
+  shape: semiconical
+  material: glass
+  visibility: transparent
+  example_video_id: VID_20240118_192534
+  measurements:
+    diameter_top: 8
+    diameter_bottom: 5.5
+    net_height: 6
+
+container_5:
+  shape: semiconical
+  material: glass
+  visibility: transparent
+  example_video_id: VID_20240118_192657
+  measurements:
+    diameter_top: 8
+    diameter_bottom: 5
+    net_height: 9
+
+container_6:
+  shape: cylindrical
+  material: glass
+  visibility: transparent
+  example_video_id: VID_20240118_192737
+  measurements:
+    diameter_top: 7.0
+    diameter_bottom: 7.0
+    net_height: 7.0
+    thickness: 0.24
+  hyperparameters:
+    beta: 0.08
+
+container_7:
+  # shape: semiconical
+  shape: cylindrical
+  material: glass
+  visibility: transparent
+  example_video_id: VID_20240118_192827
+  measurements:
+    diameter_top: 6.5
+    diameter_bottom: 5
+    net_height: 9.5
+
+container_8:
+  shape: hemispherical
+  material: ceramic
+  visibility: opaque
+  example_video_id: VID_20240118_192939
+  measurements:
+    diameter_top: 12
+    diameter_bottom: 6
+    net_height: 6
+
+container_9:
+  shape: semiconical
+  material: plastic
+  visibility: translucent
+  example_video_id: VID_20240118_193103
+  measurements:
+    diameter_top: 8.5
+    diameter_bottom: 5.5
+    net_height: 15.5
+
+container_10:
+  shape: cylindrical
+  material: glass
+  visibility: transparent
+  example_video_id: VID_20240118_221233
+  measurements:
+    diameter_top: 16
+    diameter_bottom: 14
+    net_height: 7.5
+
+container_11:
+  shape: cylindrical
+  material: plastic
+  visibility: translucent
+  example_video_id: VID_20240118_221340
+  measurements:
+    diameter_top: 10
+    diameter_bottom: 9
+    net_height: 10
+
+container_12:
+  shape: hemispherical
+  material: ceramic
+  visibility: opaque
+  example_video_id: VID_20240118_221422
+  measurements:
+    diameter_top: 15.5
+    diameter_bottom: 7
+    net_height: 6
+
+container_13:
+  # Making an approximation here
+  # shape: parabolic
+  shape: semiconical
+  material: plastic
+  visibility: translucent
+  example_video_id: VID_20240118_221516
+  measurements:
+    diameter_top: 12
+    diameter_bottom: 8.5
+    net_height: 6
+
+container_14:
+  # Making an approximation here
+  # shape: square
+  shape: cylindrical
+  material: plastic_pp
+  # visibility: translucent
+  visibility: transparent
+  example_video_id: VID_20240118_221603
+  measurements:
+    # side_top: 8
+    diameter_top: 11.28 # 8*sqrt(2)
+    # side_bottom: 7.5
+    diameter_bottom: 10.6 # 7.5*sqrt(2)
+    net_height: 14.5
+
+container_15:
+  # Making an approximation here
+  shape: semiconical
+  # shape: parabolic
+  material: glass
+  visibility: transparent
+  example_video_id: VID_20240122_001417
+  measurements:
+    diameter_top: 6.3
+    diameter_bottom: 0.
+    net_height: 9.8
+
+
+container_16:
+  shape: semiconical
+  material: glass
+  visibility: transparent
+  example_video_id: VID_20240131_200157
+  measurements:
+    diameter_top: 8.
+    diameter_bottom: 5.5
+    net_height: 8.
+
+
+container_17:
+  shape: cylindrical
+  material: glass
+  visibility: transparent
+  example_video_id: VID_20240131_200305
+  measurements:
+    diameter_top: 7.
+    diameter_bottom: 7.
+    net_height: 8.
+    thickness: 0.18
+  hyperparameters:
+    beta: 0.62
+
+container_18:
+  shape: cylindrical
+  material: glass
+  visibility: transparent
+  example_video_id: VID_20240131_200405
+  measurements:
+    diameter_top: 6.4
+    diameter_bottom: 5.4
+    net_height: 12.
+    thickness: 0.14
+  hyperparameters:
+    beta: 0.08
+
+
+container_19:
+  shape: bottleneck
+  material: plastic
+  visibility: transparent
+  example_video_id: VID_20240201_113742
+  measurements:
+    # These are approximate: need to be measured
+    diameter_neck: 2.
+    neck_height: 1.5
+    diameter_top: 6.0
+    diameter_bottom: 6.0
+    net_height: 32.
+
+container_20:
+  shape: cylindrical
+  material: ceramic
+  visibility: opaque
+  example_video_id: VID_20240211_191844
+  comment: cup with a handle, white-black
+  measurements:
+    diameter_top: 7.5
+    diameter_bottom: 7.0
+    net_height: 10.2
+    # This is obtained by optimising radial resonance frequency,
+    # so may not be 100% accurate + guesstimate (cm)
+    thickness: 0.22
+  hyperparameters:
+    beta: 0.08
+
+container_21:
+  shape: cylindrical
+  material: ceramic
+  visibility: opaque
+  example_video_id: VID_20240211_192101
+  comment: cup with a handle, gray
+  measurements:
+    diameter_top: 8.0
+    diameter_bottom: 7.7
+    net_height: 9.0
+    thickness: 0.28
+  hyperparameters:
+    beta: 0.08
+
+
+container_22:
+  shape: cylindrical
+  material: ceramic
+  visibility: opaque
+  example_video_id: VID_20240211_192312
+  comment: cup with a handle, white-red
+  measurements:
+    diameter_top: 8.0
+    diameter_bottom: 8.0
+    net_height: 9.5
+    thickness: 0.29
+  hyperparameters:
+    beta: 0.08
+
+
+container_23:
+  shape: cylindrical
+  material: glass
+  visibility: transparent
+  example_video_id: VID_20240211_192841
+  comment: large mug with a handle
+  measurements:
+    diameter_top: 9.0
+    diameter_bottom: 9.0
+    net_height: 13.0
+    thickness: 0.35
+  hyperparameters:
+    beta: 0.01
+
+
+container_24:
+  # Fair to approximate as a cylinder
+  # shape: freeform
+  shape: cylindrical
+  material: glass
+  visibility: transparent
+  example_video_id: VID_20240211_193048
+  measurements:
+    diameter_top: 6.5
+    diameter_bottom: 5.0
+    net_height: 8.5
+
+
+container_25:
+  shape: semiconical
+  material: glass
+  visibility: transparent
+  example_video_id: VID_20240211_193410
+  measurements:
+    diameter_top: 8.0
+    diameter_bottom: 5.0
+    net_height: 9.0
+
+
+container_26:
+  shape: bottleneck
+  material: steel
+  visibility: opaque
+  example_video_id: VID_20240211_193558
+  measurements:
+    diameter_top: 3.1
+    diameter_bottom: 6.5
+    net_height: 24.0
+    neck_height: 3.5
+
+
+container_27:
+  shape: cylindrical
+  material: ceramic
+  visibility: opaque
+  example_video_id: VID_20240211_203739
+  comment: cup with a handle, red-white
+  measurements:
+    diameter_top: 8.5
+    diameter_bottom: 7.0
+    net_height: 9.0
+    thickness: 0.29
+  hyperparameters:
+    beta: 0.08
+
+
+container_28:
+  shape: semiconical
+  material: steel
+  visibility: opaque
+  example_video_id: VID_20240211_203920
+  comment: drinking water glass
+  measurements:
+    diameter_top: 8.0
+    diameter_bottom: 5.5
+    net_height: 9.0
+
+
+container_29:
+  shape: cylindrical
+  material: plastic
+  visibility: transparent
+  example_video_id: VID_20240211_204048
+  comment: small chutney container
+  measurements:
+    diameter_top: 9.6
+    diameter_bottom: 8.0
+    net_height: 4.5
+
+container_30:
+  shape: semiconical
+  material: plastic_pet
+  visibility: transparent
+  example_video_id: VID_20240211_204153
+  measurements:
+    diameter_top: 7.5
+    diameter_bottom: 5.0
+    net_height: 8.0
+
+container_31:
+  shape: semiconical
+  material: plastic_pet
+  visibility: transparent
+  example_video_id: VID_20240211_204307
+  measurements:
+    diameter_top: 9.5
+    diameter_bottom: 6.0
+    net_height: 11.5
+
+
+container_32:
+  shape: bottleneck
+  material: plastic
+  visibility: transparent
+  example_video_id: VID_20240221_005847
+  comment: sprite bottle
+  measurements:
+    diameter_top: 2.2
+    diameter_bottom: 6.8
+    net_height: 23.0
+    neck_height: 1.3
+
+
+container_33:
+  # Making an approximation here
+  # shape: parabolic
+  shape: bottleneck
+  material: glass
+  visibility: transparent
+  example_video_id: VID_20240221_010407
+  comment: hajmola container
+  measurements:
+    diameter_top: 3.3
+    diameter_bottom: 4.1
+    net_height: 9.0
+    # Added later
+    neck_height: 1.3
+
+
+container_34:
+  shape: bottleneck
+  material: plastic_pet
+  visibility: transparent
+  example_video_id: VID_20240221_010753
+  comment: small cylindrical bottleneck (pachak awla)
+  measurements:
+    diameter_top: 2.1
+    diameter_bottom: 3.5
+    net_height: 14.0
+    neck_height: 1.5
+
+
+container_35:
+  shape: cylindrical
+  material: glass
+  visibility: transparent
+  example_video_id: VID_20240221_011011
+  comment: small cylindrical drinking glass
+  measurements:
+    diameter_top: 7.0
+    diameter_bottom: 7.0
+    net_height: 9.0
+    thickness: 0.28
+  hyperparameters:
+    beta: 0.08
+
+
+container_36:
+  shape: cylindrical
+  material: paperboard
+  visibility: opaque
+  example_video_id: VID_20240323_001443
+  comment: pringles wafers container
+  measurements:
+    diameter_top: 7.5
+    diameter_bottom: 7.5
+    net_height: 25.5
+  physical_parameters:
+    Y: 2.e9 
+    rho_g: '900.'
+    a: '0.003'
+    beta: '0.62'
+
+
+container_37:
+  shape: semiconical
+  material: plastic_pp
+  visibility: translucent
+  example_video_id: VID_20240323_001933
+  comment: custard container (tesco)
+  measurements:
+    diameter_top: 9.3
+    diameter_bottom: 5.5
+    net_height: 11.0
+
+
+container_38:
+  shape: semiconical
+  material: plastic_pp
+  visibility: translucent
+  example_video_id: VID_20240323_002820
+  comment: custard container (coop)
+  measurements:
+    diameter_top: 9.3
+    diameter_bottom: 6.5
+    net_height: 12.0
+
+
+container_39:
+  shape: cylindrical
+  # material: plastic_pvc
+  material: plastic_pet
+  visibility: transparent
+  example_video_id: VID_20240323_002126
+  comment: jeera container (with a lid)
+  measurements:
+    diameter_top: 5.0
+    diameter_bottom: 6.0
+    net_height: 11.0
+    thickness: 0.23
+  hyperparameters:
+    beta: 0.62
+
+
+container_40:
+  shape: semiconical
+  material: plastic_pp
+  visibility: transparent
+  example_video_id: VID_20240331_160952
+  comment: glass of water
+  measurements:
+    diameter_top: 7.5
+    diameter_bottom: 5.0
+    net_height: 10.0
+
+
+container_41:
+  shape: bottleneck
+  material: plastic_pet
+  visibility: transparent
+  example_video_id: VID_20240331_163111
+  comment: mini bottle of water
+  measurements:
+    diameter_top: 3.5
+    diameter_bottom: 6.5
+    net_height: 16.0
+    neck_height: 2.0
+
+
+container_42:
+  shape: semiconical
+  material: paperboard
+  visibility: opaque
+  example_video_id: VID_20240331_163743
+  comment: knoop coffee cup
+  measurements:
+    diameter_top: 9.0
+    diameter_bottom: 6.0
+    net_height: 11.0
+
+
+container_43:
+  shape: semiconical
+  material: plastic_pet
+  visibility: transparent
+  example_video_id: VID_20240331_170822
+  comment: mini bottle of water
+  measurements:
+    diameter_top: 6.8
+    diameter_bottom: 5.0
+    net_height: 7.
+
+
+container_44:
+  shape: hemispherical
+  material: ceramic
+  visibility: opaque
+  example_video_id: VID_20240403_235048
+  comment: light green colored porridge bowl
+  measurements:
+    diameter_top: 14.0
+    diameter_bottom: 7.
+    net_height: 5.
+
+
+container_45:
+  shape: semiconical
+  material: paperboard
+  visibility: opaque
+  example_video_id: VID_20240403_232803
+  comment: white colored cup of shake shack
+  measurements:
+    diameter_top: 9.2
+    diameter_bottom: 7.0
+    net_height: 11.0
+
+
+container_46:
+  shape: cylindrical
+  material: ceramic
+  visibility: opaque
+  example_video_id: VID_20240405_214157
+  comment: white colored cup of coffee (non cylindrical bottom) (fine-bone china)
+  measurements:
+    diameter_top: 7.0
+    diameter_bottom: 7.0
+    net_height: 10.2
+
+
+container_47:
+  # Making an approximation here
+  # shape: parabolic
+  shape: semiconical
+  material: glass
+  visibility: transparent
+  example_video_id: VID_20240405_214552
+  comment: cup of coffee
+  measurements:
+    diameter_top: 7.0
+    diameter_bottom: 7.0
+    net_height: 7.2
+
+
+container_48:
+  shape: cylindrical
+  material: ceramic
+  visibility: opaque
+  example_video_id: VID_20240405_214852
+  comment: white-red cup of coffee with open bulge at the top
+  measurements:
+    diameter_top: 9.0
+    diameter_bottom: 6.0
+    net_height: 12.0
+
+
+container_49:
+  shape: semiconical
+  material: ceramic
+  visibility: opaque
+  example_video_id: VID_20240405_215239
+  comment: cream colored cup of coffee with a handle
+  measurements:
+    diameter_top: 8.4
+    diameter_bottom: 6.0
+    net_height: 10.2
+
+
+container_50:
+  # Making an approximation here
+  # shape: parabolic
+  shape: semiconical
+  material: ceramic
+  visibility: opaque
+  example_video_id: VID_20240405_215553
+  comment: off-white colored cup of coffee with a handle
+  measurements:
+    diameter_top: 7.5
+    diameter_bottom: 5.0
+    net_height: 11.2
+
+
+container_51:
+  # Fair to approximate as a cylinder
+  # shape: freeform
+  shape: cylindrical
+  material: steel
+  visibility: opaque
+  example_video_id: VID_20240405_215918
+  comment: coffee pourer
+  measurements:
+    diameter_top: 6.5
+    diameter_bottom: 7.0
+    net_height: 9.0

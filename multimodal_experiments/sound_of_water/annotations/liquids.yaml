@@ -1,0 +1,5 @@
+water_hot:
+  density_range: [950, 960]
+
+water_normal:
+  density_range: [997, 1003]
