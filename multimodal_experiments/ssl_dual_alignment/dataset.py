@@ -39,7 +39,9 @@ class DualDisentangleDataset(Dataset):
         u3a_scale: float = 0.2,
         u3b_scale: float = 0.3,
         turns: float = 1.0,
-        wave_amplitude: float = 1.0
+        wave_amplitude: float = 1.0,
+        # HD embedding: used by 3d-3f-2c-rot and 3d-3f-2c-mlp
+        embed_dim: int = None,
     ):
         def safe_float(val, default=0.0):
             return default if val is None else float(val)
@@ -52,6 +54,7 @@ class DualDisentangleDataset(Dataset):
         self.u3b_scale = safe_float(u3b_scale, 0.3)
         self.turns = safe_float(turns, 1.0)
         self.wave_amplitude = safe_float(wave_amplitude, 1.0)
+        self.embed_dim = int(embed_dim) if embed_dim is not None else None
         
         # Backward compatibility for old configs using "asymmetric_noise_rate" (defaulting to corrupt behavior)
         self.asym_corrupt_rate_a = max(safe_float(asym_corrupt_rate_a, 0.0), safe_float(asymmetric_noise_rate_a, 0.0))
@@ -65,6 +68,10 @@ class DualDisentangleDataset(Dataset):
             data_type = '3d-av-1f-common'
         elif dt_upper == '3D2F':
             data_type = '3d-2f-common'
+        elif dt_upper in ('3D-3F-2C-ROT', '3D3F2CROT'):
+            data_type = '3d-3f-2c-rot'
+        elif dt_upper in ('3D-3F-2C-MLP', '3D3F2CMLP'):
+            data_type = '3d-3f-2c-mlp'
         self.data_type = data_type
 
         # Use local RandomState for isolated reproducibility (fixes worker-fork duplicates)
@@ -161,7 +168,7 @@ class DualDisentangleDataset(Dataset):
             # --------------------------------------------------------------
             # DATA TYPE: 3D-3F-2C (Mode 1: Volumetric Spiral/Wave Visualizer)
             # --------------------------------------------------------------
-            elif data_type == '3d-3f-2c':
+            elif data_type in ('3d-3f-2c', '3d-3f-2c-rot', '3d-3f-2c-mlp'):
                 r"""
                 3D Observable, 3 Factors Total, 2 Factors Common.
                 Uses explicit volumetric formulas for visual inspection of disentanglement.
@@ -561,6 +568,80 @@ class DualDisentangleDataset(Dataset):
 
             else:
                 raise ValueError(f"Unknown data type {data_type}")
+
+            # ---------------------------------------------------------------
+            # HD EMBEDDING: 3d-3f-2c-rot and 3d-3f-2c-mlp
+            # After generating the 3D base (data_a, data_b with shape [N,3]),
+            # pad with (embed_dim-3) Gaussian noise dims then apply transform.
+            # Normalization is redone after the transform.
+            # ---------------------------------------------------------------
+            if data_type in ('3d-3f-2c-rot', '3d-3f-2c-mlp'):
+                D = self.embed_dim
+                if D is None:
+                    raise ValueError(f"data_type='{data_type}' requires embed_dim to be set")
+                if D < 3:
+                    raise ValueError(f"embed_dim={D} must be >= 3 for {data_type}")
+
+                # Pad both modalities with (D-3) N(0,1) noise dimensions
+                def _pad(arr, rng, extra):
+                    if extra <= 0:
+                        return arr
+                    return np.hstack([arr, rng.normal(0, 1, (arr.shape[0], extra))])
+
+                extra = D - 3
+                data_a = _pad(data_a, self.rng, extra)
+                data_b = _pad(data_b, self.rng, extra)
+
+                if data_type == '3d-3f-2c-rot':
+                    # Random Haar-distributed orthogonal matrix in R^{D×D}, one per modality.
+                    from scipy.stats import ortho_group
+                    rng_rot_a = np.random.RandomState(self.seed if self.seed is not None else 0)
+                    rng_rot_b = np.random.RandomState((self.seed if self.seed is not None else 0) + 1)
+                    Q_a = ortho_group.rvs(D, random_state=rng_rot_a)
+                    Q_b = ortho_group.rvs(D, random_state=rng_rot_b)
+                    data_a = data_a @ Q_a.T
+                    data_b = data_b @ Q_b.T
+
+
+                elif data_type == '3d-3f-2c-mlp':
+                    import torch.nn as nn
+
+                    class _FrozenMLP(nn.Module):
+                        def __init__(self, dim, hidden=64):
+                            super().__init__()
+                            self.net = nn.Sequential(
+                                nn.Linear(dim, hidden), nn.GELU(),
+                                nn.Linear(hidden, hidden), nn.GELU(),
+                                nn.Linear(hidden, dim),
+                            )
+                            for p in self.parameters():
+                                p.requires_grad = False
+
+                        def forward(self, x):
+                            return self.net(x)
+
+                    mlp_a = _FrozenMLP(D).eval()
+                    mlp_b = _FrozenMLP(D).eval()
+
+                    def _init(m):
+                        if isinstance(m, nn.Linear):
+                            torch.nn.init.xavier_uniform_(m.weight, generator=self.torch_rng)
+                            torch.nn.init.zeros_(m.bias)
+
+                    mlp_a.apply(_init)
+                    mlp_b.apply(_init)
+
+                    with torch.no_grad():
+                        data_a = mlp_a(torch.tensor(data_a, dtype=torch.float32)).numpy()
+                        data_b = mlp_b(torch.tensor(data_b, dtype=torch.float32)).numpy()
+
+                # Re-normalize after embedding (zero mean, unit std per dim)
+                m_a, s_a = data_a.mean(0), data_a.std(0)
+                m_b, s_b = data_b.mean(0), data_b.std(0)
+                data_a = (data_a - m_a) / (s_a + 1e-8)
+                data_b = (data_b - m_b) / (s_b + 1e-8)
+                # axis_box is None for HD types (confirmed)
+                self.axis_box = None
 
             # Apply random 3D rotations for all 3D data types
             if data_type.startswith('3d') and data_a.shape[1] == 3:

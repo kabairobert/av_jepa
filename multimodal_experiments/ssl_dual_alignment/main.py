@@ -189,6 +189,7 @@ def run(
         u3b_scale=cfg.data.get('u3b_scale', 0.3),
         turns=cfg.data.get('turns', 1.0),
         wave_amplitude=cfg.data.get('wave_amplitude', 1.0),
+        embed_dim=cfg.data.get('embed_dim', None),
     )
 
     # Move entire dataset to GPU for significant training speedup (if using CUDA)

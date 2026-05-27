@@ -133,6 +133,7 @@ def _build_interactive_4way_html(
     point_type_b: Optional[np.ndarray] = None,
     min_height_px: int = 420,
     axis_box: Optional[np.ndarray] = None,
+    predictor_a2b=None,
 ) -> Optional[str]:
     try:
         import plotly.graph_objects as go
@@ -143,8 +144,27 @@ def _build_interactive_4way_html(
 
     data_a_proj = _project_to_3d(data_a)
     data_b_proj = _project_to_3d(data_b)
-    out_a_proj = _project_to_3d(out_a)
-    out_b_proj = _project_to_3d(out_b)
+
+    # Inner panels (output spaces): use top-3 dims by |predictor.weight| when the predictor
+    # has a 1D weight vector (DiagonalPredictor and AffinePredictor both qualify — AffinePredictor
+    # has weight (dim,) + bias (dim,); we use weight only for dim selection).
+    # Falls back to PCA when predictor is None, MLP, or any other architecture.
+    def _project_output(out, pred):
+        if pred is not None and hasattr(pred, 'weight') and pred.weight.ndim == 1:
+            abs_w = pred.weight.detach().cpu().numpy()
+            top3 = np.argsort(np.abs(abs_w))[::-1][:3]
+            projected = out[:, top3]
+            # Pad to 3 cols if latent dim < 3
+            if projected.shape[1] < 3:
+                projected = np.hstack([projected,
+                                       np.zeros((out.shape[0], 3 - projected.shape[1]))])
+            return projected, [f"w_dim{i}" for i in top3]
+        # Default: top-3 PCA
+        proj = _project_to_3d(out)
+        return proj, ["PC1", "PC2", "PC3"]
+
+    out_a_proj, out_a_labels = _project_output(out_a, predictor_a2b)
+    out_b_proj, out_b_labels = _project_output(out_b, predictor_a2b)  # same predictor → same dim selection
 
     if point_type_a is not None:
         color_vals_a = _get_point_type_colors(param_values, point_type_a)
@@ -174,13 +194,24 @@ def _build_interactive_4way_html(
     fig.add_trace(_scatter(out_b_proj, "Output B", color_vals_b), row=1, col=3)
     fig.add_trace(_scatter(data_b_proj, "Input B", color_vals_b), row=1, col=4)
 
-    scene_cube = dict(aspectmode="cube")
+    # Outer panels (input spaces): axis labels reflect PCA or raw dim
+    dim_str_a = "PC" if data_a.shape[1] > 3 else "Dim"
+    dim_str_b = "PC" if data_b.shape[1] > 3 else "Dim"
+
+    def _scene(x_lbl, y_lbl, z_lbl):
+        return dict(aspectmode="cube",
+                    xaxis_title=x_lbl, yaxis_title=y_lbl, zaxis_title=z_lbl)
+
     fig.update_layout(
         autosize=True, height=min_height_px,
         margin=dict(l=40, r=40, t=80, b=40),
         showlegend=False, hovermode="closest",
-        scene=scene_cube, scene2=scene_cube, scene3=scene_cube, scene4=scene_cube,
+        scene=_scene(f"{dim_str_a}1", f"{dim_str_a}2", f"{dim_str_a}3"),
+        scene2=_scene(out_a_labels[0], out_a_labels[1], out_a_labels[2]),
+        scene3=_scene(out_b_labels[0], out_b_labels[1], out_b_labels[2]),
+        scene4=_scene(f"{dim_str_b}1", f"{dim_str_b}2", f"{dim_str_b}3"),
     )
+
 
     html_body = fig.to_html(full_html=False, include_plotlyjs="cdn", default_width="100%", default_height="100%")
     return f"<div style='width:100%;height:100%;min-height:{int(min_height_px)}px'>{html_body}</div>"
@@ -780,6 +811,7 @@ def evaluate_and_log_checkpoint(
                     point_type_a=pt_a,
                     point_type_b=pt_b,
                     min_height_px=int(interactive_min_height),
+                    predictor_a2b=predictors.get("a2b"),
                 )
                 if html is not None:
                     wandb.log({"interactive_3d_4way_html": wandb.Html(html)}, step=step)
@@ -857,6 +889,7 @@ def run(
         u3b_scale=data_cfg.get("u3b_scale", 0.3),
         turns=data_cfg.get("turns", 1.0),
         wave_amplitude=data_cfg.get("wave_amplitude", 1.0),
+        embed_dim=data_cfg.get("embed_dim", None),
     )
     effective_batch_size = int(batch_size) if batch_size is not None else int(data_cfg.get("batch_size", 128))
     eval_loader = DataLoader(eval_set, batch_size=effective_batch_size, shuffle=False,
