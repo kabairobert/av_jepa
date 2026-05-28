@@ -10,7 +10,9 @@
 #SBATCH --output=%x_%j.out
 #SBATCH --error=%x_%j.err
 
-set -e
+# Note: set -e intentionally omitted. It does not propagate into xargs subshells,
+# so individual run failures would not terminate the sweep anyway. Run failures are
+# instead captured explicitly in failed_runs.log below.
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
@@ -23,11 +25,15 @@ cd ~/github/eb_jepa_private
 
 export PATH="$HOME/.cargo/bin:$PATH"
 
+FAILED_LOG="multimodal_experiments/ssl_dual_alignment/hyp_testing/batches/B11_data_scaling/failed_runs.log"
+> "$FAILED_LOG"  # truncate at start
+
 echo "Starting B11 Data Scaling Sweep (24 configs)..."
 echo "Running parallel configurations across 9 CPUs on a MIG partition."
 
 # Find all B11 configs and pipe them to xargs.
 # xargs keeps exactly 8 background processes running.
+# || true: individual failures are isolated and logged; they do NOT kill the sweep.
 ls multimodal_experiments/ssl_dual_alignment/cfgs/B11_*.yaml | \
     xargs -n 1 -P 8 -I {} bash -c '
         cfg="{}"
@@ -35,7 +41,14 @@ ls multimodal_experiments/ssl_dual_alignment/cfgs/B11_*.yaml | \
         echo "Launching $name"
         uv run python -m multimodal_experiments.ssl_dual_alignment.main \
             --config "$cfg" \
-            --wandb_tags "B11_data_scaling,$name"
+            --wandb_tags "B11_data_scaling,$name" \
+        || echo "FAILED: $name" >> '"$FAILED_LOG"'
     '
 
 echo "B11 Sweep complete."
+if [ -s "$FAILED_LOG" ]; then
+    echo "Some runs failed:"
+    cat "$FAILED_LOG"
+else
+    echo "All runs completed successfully."
+fi

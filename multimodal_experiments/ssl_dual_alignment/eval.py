@@ -13,6 +13,7 @@ from eb_jepa.training_utils import load_config, setup_device, setup_seed, setup_
 from multimodal_experiments.ssl_dual_alignment.dataset import DualDisentangleDataset
 from multimodal_experiments.ssl_dual_alignment.model_builder import build_model_and_predictors
 from multimodal_experiments.ssl_dual_alignment.losses import EBMJEPALoss
+from multimodal_experiments.ssl_dual_alignment.losses import canonicalize_congruence_mode
 from multimodal_experiments.initial_trials.ssl_disentangling import SupervisedFactorLoss
 from multimodal_experiments.ssl_dual_alignment.vis import log_plots_to_wandb
 
@@ -902,14 +903,7 @@ def run(
     predictor_b2a = built["predictor_b2a"]
 
     cm_val = str(cfg_obj.loss.get("congruence_mode", cfg_obj.loss.get("noise_reweighting", "none")))
-    if cm_val in ("none", "off", "cm_off"):
-        canon_cm = "none"
-    elif cm_val in ("pred_only", "pred", "cm_pred"):
-        canon_cm = "pred_only"
-    elif cm_val in ("pred_and_sparse", "pred_sparse", "full", "cm_pred_sparse"):
-        canon_cm = "pred_and_sparse"
-    else:
-        canon_cm = cm_val
+    canon_cm = canonicalize_congruence_mode(cm_val)
 
     loss_type = cfg_obj.loss.get("type", "ebm")
     if loss_type == "ebm":

@@ -22,6 +22,7 @@ from eb_jepa.training_utils import (
 from multimodal_experiments.ssl_dual_alignment.dataset import DualDisentangleDataset
 from multimodal_experiments.ssl_dual_alignment.model_builder import build_model_and_predictors
 from multimodal_experiments.ssl_dual_alignment.losses import EBMJEPALoss
+from multimodal_experiments.ssl_dual_alignment.losses import canonicalize_congruence_mode
 from multimodal_experiments.initial_trials.ssl_disentangling import SupervisedFactorLoss
 from multimodal_experiments.ssl_dual_alignment.eval import evaluate_and_log_checkpoint
 from multimodal_experiments.ssl_dual_alignment.vis import log_plots_to_wandb
@@ -56,14 +57,9 @@ def _deprecated_get_exp_name_from_cfg(cfg, loss_type, two_stage):
     pred_type_str = "aff" if pred_type_raw == "affine" else pred_type_raw
 
     cm_val = str(cfg.loss.get("congruence_mode", cfg.loss.get("noise_reweighting", "none")))
-    if cm_val in ("none", "off"):
-        cm_str = "off"
-    elif cm_val in ("pred_only", "pred"):
-        cm_str = "pred"
-    elif cm_val in ("pred_and_sparse", "pred_sparse", "full"):
-        cm_str = "pred_sparse"
-    else:
-        cm_str = cm_val
+    # Map to canonical then back to short display string for exp_name
+    _canon = canonicalize_congruence_mode(cm_val)
+    cm_str = {"none": "off", "pred_only": "pred", "pred_and_sparse": "pred_sparse"}.get(_canon, _canon)
 
     # EBM-only naming tags are only meaningful when loss.type == "ebm"
     if loss_type == "ebm":
@@ -136,14 +132,7 @@ def run(
     loss_type = cfg.loss.get("type", "ebm")
 
     cm_val = str(cfg.loss.get("congruence_mode", cfg.loss.get("noise_reweighting", "none")))
-    if cm_val in ("none", "off"):
-        canon_cm = "none"
-    elif cm_val in ("pred_only", "pred"):
-        canon_cm = "pred_only"
-    elif cm_val in ("pred_and_sparse", "pred_sparse", "full"):
-        canon_cm = "pred_and_sparse"
-    else:
-        canon_cm = cm_val
+    canon_cm = canonicalize_congruence_mode(cm_val)
 
     # Old brittle naming logic has been deprecated. 
     # _ = _deprecated_get_exp_name_from_cfg(cfg, loss_type, two_stage)

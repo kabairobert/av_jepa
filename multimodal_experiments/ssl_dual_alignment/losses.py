@@ -3,6 +3,41 @@ import torch
 import torch.nn.functional as F
 
 
+# ---------------------------------------------------------------------------
+# Shared alias helper — single source of truth for congruence_mode strings.
+# Callers: EBMJEPALoss.__init__, main.py, eval.py
+# ---------------------------------------------------------------------------
+
+_CONGRUENCE_ALIAS_MAP = {
+    'none':           'none',
+    'off':            'none',
+    'cm_off':         'none',
+    'pred_only':      'pred_only',
+    'pred':           'pred_only',
+    'cm_pred':        'pred_only',
+    'full':           'pred_and_sparse',   # old 'full' closest to pred_and_sparse
+    'pred_and_sparse': 'pred_and_sparse',
+    'pred_sparse':    'pred_and_sparse',
+    'cm_pred_sparse': 'pred_and_sparse',
+}
+
+_VALID_CONGRUENCE_MODES = ('none', 'pred_only', 'pred_and_sparse')
+
+
+def canonicalize_congruence_mode(val: str) -> str:
+    """Map any known congruence_mode alias to its canonical form.
+
+    Raises ValueError for unknown values so callers catch config mistakes early.
+    """
+    canonical = _CONGRUENCE_ALIAS_MAP.get(str(val))
+    if canonical is None:
+        raise ValueError(
+            f"Unknown congruence_mode '{val}'. "
+            f"Valid values/aliases: {sorted(_CONGRUENCE_ALIAS_MAP.keys())}"
+        )
+    return canonical
+
+
 class EBMJEPALoss(torch.nn.Module):
     """EBM JEPA Loss: Prediction error + Prior - Jacobian + Sparsity.
 
@@ -44,18 +79,9 @@ class EBMJEPALoss(torch.nn.Module):
         noise_reweighting (deprecated): old alias; mapped automatically.
     """
 
-    _CONGRUENCE_ALIAS_MAP = {
-        'none':      'none',
-        'off':       'none',
-        'cm_off':    'none',
-        'pred_only': 'pred_only',
-        'pred':      'pred_only',
-        'cm_pred':   'pred_only',
-        'full':      'pred_and_sparse',   # old 'full' closest to pred_and_sparse
-        'pred_and_sparse': 'pred_and_sparse',
-        'pred_sparse': 'pred_and_sparse',
-        'cm_pred_sparse': 'pred_and_sparse'
-    }
+    # Backward-compat: keep the class-level dict for any external code that
+    # might reference EBMJEPALoss._CONGRUENCE_ALIAS_MAP directly.
+    _CONGRUENCE_ALIAS_MAP = _CONGRUENCE_ALIAS_MAP
 
     def __init__(
         self,
@@ -76,12 +102,7 @@ class EBMJEPALoss(torch.nn.Module):
         super().__init__()
         # Backward-compat: map deprecated noise_reweighting -> congruence_mode
         if noise_reweighting is not None:
-            mapped = self._CONGRUENCE_ALIAS_MAP.get(noise_reweighting)
-            if mapped is None:
-                raise ValueError(
-                    f"noise_reweighting='{noise_reweighting}' unknown. "
-                    "Use congruence_mode instead."
-                )
+            mapped = canonicalize_congruence_mode(noise_reweighting)
             warnings.warn(
                 f"noise_reweighting='{noise_reweighting}' is deprecated. "
                 f"Use congruence_mode='{mapped}' instead.",
@@ -97,9 +118,9 @@ class EBMJEPALoss(torch.nn.Module):
             )
             congruence_tau = reweighting_tau
 
-        congruence_mode = self._CONGRUENCE_ALIAS_MAP.get(congruence_mode, congruence_mode)
+        congruence_mode = canonicalize_congruence_mode(congruence_mode)
 
-        valid_modes = ('none', 'pred_only', 'pred_and_sparse')
+        valid_modes = _VALID_CONGRUENCE_MODES
         if congruence_mode not in valid_modes:
             raise ValueError(
                 f"congruence_mode must be one of {valid_modes}, "
