@@ -27,12 +27,29 @@ def _project_to_3d(data):
     return PCA(n_components=3).fit_transform(data)
 
 
-def _get_point_colors(param_values_1d, point_types, cmap='rainbow'):
-    """Per-point color: manifold=rainbow, corrupted=gray, external=near-black."""
-    norm_p = (param_values_1d - param_values_1d.min()) / (
-        param_values_1d.max() - param_values_1d.min() + 1e-12)
+def _get_point_colors(param_values, point_types, cmap='rainbow'):
+    """Per-point color: manifold=rainbow/hsv, corrupted=gray, external=near-black."""
+    if hasattr(param_values, 'cpu'):
+        vals = param_values.cpu().numpy().astype(float)
+    else:
+        vals = np.asarray(param_values, dtype=float)
+
+    if vals.ndim == 1:
+        norm_p = (vals - vals.min()) / (vals.max() - vals.min() + 1e-12)
+        colormap = cm.get_cmap(cmap)
+        base_colors = [colormap(float(p)) for p in norm_p]
+    else:
+        u1 = vals[:, 0]
+        u2 = vals[:, 1]
+        hue = u1 * 360.0
+        saturation = 0.2 + u2 * 0.8
+        value = np.ones_like(u1)
+        import colorsys
+        base_colors = []
+        for h, s, v in zip(hue, saturation, value):
+            r, g, b = colorsys.hsv_to_rgb((h % 360.0) / 360.0, s, v)
+            base_colors.append((r, g, b, 1.0))
     
-    colormap = cm.get_cmap(cmap)
     gray_rgba = mcolors.to_rgba(_GRAY_CORRUPT)
     black_rgba = mcolors.to_rgba(_BLACK_EXTERNAL)
     colors = []
@@ -42,7 +59,7 @@ def _get_point_colors(param_values_1d, point_types, cmap='rainbow'):
         elif pt in (2, 4):   # corrupted / noise side of asymmetric pair
             colors.append(gray_rgba)
         else:                 # manifold (0), asym_a_good (1), asym_b_good (3)
-            colors.append(colormap(float(norm_p[i])))
+            colors.append(base_colors[i])
     return colors
 
 
@@ -55,17 +72,11 @@ def plot_original_spaces(data_a, data_b, param_values,
     data_a_proj = _project_to_3d(data_a)
     data_b_proj = _project_to_3d(data_b)
 
-    # For 2D param_values (multi-factor case), extract first factor for coloring
-    if isinstance(param_values, np.ndarray) and param_values.ndim == 2:
-        param_values_1d = param_values[:, 0]
-    else:
-        param_values_1d = param_values
-
     # Build per-point color arrays
     pt_a = point_type_a if point_type_a is not None else np.zeros(len(data_a), dtype=np.int32)
     pt_b = point_type_b if point_type_b is not None else np.zeros(len(data_b), dtype=np.int32)
-    c_a = _get_point_colors(param_values_1d, pt_a)
-    c_b = _get_point_colors(param_values_1d, pt_b)
+    c_a = _get_point_colors(param_values, pt_a)
+    c_b = _get_point_colors(param_values, pt_b)
 
     if is_3d:
         ax1 = fig.add_subplot(121, projection='3d')
@@ -119,24 +130,14 @@ def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, 
     output_b_proj = _project_to_3d(output_b)
     data_b_proj = _project_to_3d(data_b)
 
-    # For 2D param_values (multi-factor case), extract first factor for coloring
-    if isinstance(param_values, np.ndarray) and param_values.ndim == 2:
-        param_values_1d = param_values[:, 0]
-    else:
-        param_values_1d = param_values
-
-    # Normalize color code (for turbo fallback on output spaces)
-    color_code = (param_values_1d - np.min(param_values_1d)) / (
-        np.max(param_values_1d) - np.min(param_values_1d) + 1e-12)
-
     # Build noise-aware colors for input spaces; use param color for latent outputs
     pt_a = point_type_a if point_type_a is not None else np.zeros(len(data_a), dtype=np.int32)
     pt_b = point_type_b if point_type_b is not None else np.zeros(len(data_b), dtype=np.int32)
-    c_in_a = _get_point_colors(param_values_1d, pt_a)
-    c_in_b = _get_point_colors(param_values_1d, pt_b)
+    c_in_a = _get_point_colors(param_values, pt_a)
+    c_in_b = _get_point_colors(param_values, pt_b)
     # Latent outputs: retain noise-type coloring (same point indices)
-    c_out_a = _get_point_colors(param_values_1d, pt_a)
-    c_out_b = _get_point_colors(param_values_1d, pt_b)
+    c_out_a = _get_point_colors(param_values, pt_a)
+    c_out_b = _get_point_colors(param_values, pt_b)
 
     is_3d = data_a.shape[1] >= 3
     fig = plt.figure(figsize=(18, 4))

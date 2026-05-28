@@ -90,21 +90,30 @@ def _get_color_values(param_values: np.ndarray) -> np.ndarray:
 def _get_point_type_colors(param_values: np.ndarray, point_types: np.ndarray) -> list:
     """Return Plotly color strings using point_type coloring.
 
-    Manifold points use Rainbow by param value. Corrupted points are gray.
+    Manifold points use Rainbow (1D) or HSV (2D) by param value. Corrupted points are gray.
     External points are near-black.
     """
-    if param_values.ndim == 2:
-        param_values = param_values[:, 0]
-    
     if hasattr(param_values, 'cpu'):
         vals = param_values.cpu().numpy().astype(float)
     else:
         vals = param_values.astype(float)
-        
-    denom = (vals.max() - vals.min()) + 1e-8
-    normalized = (vals - vals.min()) / denom
-    from plotly.colors import sample_colorscale
-    base_colors = sample_colorscale("Rainbow", normalized)
+
+    if vals.ndim == 1:
+        denom = (vals.max() - vals.min()) + 1e-8
+        normalized = (vals - vals.min()) / denom
+        from plotly.colors import sample_colorscale
+        base_colors = sample_colorscale("Rainbow", normalized)
+    else:
+        u1 = vals[:, 0]
+        u2 = vals[:, 1]
+        hue = u1 * 360.0
+        saturation = 0.2 + u2 * 0.8
+        value = np.ones_like(u1)
+        import colorsys
+        base_colors = []
+        for h, s, v in zip(hue, saturation, value):
+            r, g, b = colorsys.hsv_to_rgb((h % 360.0) / 360.0, s, v)
+            base_colors.append('rgb({},{},{})'.format(int(r * 255), int(g * 255), int(b * 255)))
 
     colors = []
     for i, pt in enumerate(point_types):
