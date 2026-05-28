@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from datetime import datetime
 
 import fire
 import torch
@@ -49,56 +50,19 @@ def _save_optimizer_only(path: Path, optimizer, epoch: int, step: int) -> None:
     )
 
 
-def run(
-    fname: str = "multimodal_experiments/ssl_dual_alignment/cfgs/paired_factors_2D.yaml",
-    config: str = None,
-    cfg=None,
-    folder=None,
-    wandb_tags=None,
-    quickrun: bool = False,
-    **overrides
-):
-    # --config is an alias for --fname (used by sweep.py)
-    if config is not None:
-        fname = config
-
-    # --- 1. Config & Env ---
-    if cfg is None:
-        cfg = load_config(fname, overrides if overrides else None)
-
-    # Apply quickrun shortcut
-    if quickrun:
-        cfg.optim.epochs = 1
-        if not hasattr(cfg, "training"):
-            from omegaconf import OmegaConf
-            cfg.training = OmegaConf.create({})
-        cfg.training.max_train_batches = 1
-        cfg.logging.log_wandb = False
-
-    device = setup_device(cfg.meta.device)
-    setup_seed(cfg.meta.seed)
-    torch.set_default_dtype(torch.float32)
-
-    # --- 2. Exp Dir Setup ---
-    two_stage = cfg.training.get('two_stage', False) if hasattr(cfg, 'training') else False
-    loss_type = cfg.loss.get("type", "ebm")
-
+def _deprecated_get_exp_name_from_cfg(cfg, loss_type, two_stage):
     data_type_str = str(cfg.data.get('type', '2d')).replace('3d-2f-common', '3D2F').replace('3d-av-1f-common', '3D1F')
     pred_type_raw = str(cfg.model.get('predictor_type', 'none'))
     pred_type_str = "aff" if pred_type_raw == "affine" else pred_type_raw
 
     cm_val = str(cfg.loss.get("congruence_mode", cfg.loss.get("noise_reweighting", "none")))
     if cm_val in ("none", "off"):
-        canon_cm = "none"
         cm_str = "off"
     elif cm_val in ("pred_only", "pred"):
-        canon_cm = "pred_only"
         cm_str = "pred"
     elif cm_val in ("pred_and_sparse", "pred_sparse", "full"):
-        canon_cm = "pred_and_sparse"
         cm_str = "pred_sparse"
     else:
-        canon_cm = cm_val
         cm_str = cm_val
 
     # EBM-only naming tags are only meaningful when loss.type == "ebm"
@@ -134,6 +98,58 @@ def run(
             f"l_{loss_type}-"
             f"pre_{pred_type_str}"
         )
+    return exp_name
+
+
+def run(
+    fname: str = "multimodal_experiments/ssl_dual_alignment/cfgs/paired_factors_2D.yaml",
+    config: str = None,
+    cfg=None,
+    folder=None,
+    wandb_tags=None,
+    quickrun: bool = False,
+    **overrides
+):
+    # --config is an alias for --fname (used by sweep.py)
+    if config is not None:
+        fname = config
+
+    # --- 1. Config & Env ---
+    if cfg is None:
+        cfg = load_config(fname, overrides if overrides else None)
+
+    # Apply quickrun shortcut
+    if quickrun:
+        cfg.optim.epochs = 1
+        if not hasattr(cfg, "training"):
+            from omegaconf import OmegaConf
+            cfg.training = OmegaConf.create({})
+        cfg.training.max_train_batches = 1
+        cfg.logging.log_wandb = False
+
+    device = setup_device(cfg.meta.device)
+    setup_seed(cfg.meta.seed)
+    torch.set_default_dtype(torch.float32)
+
+    # --- 2. Exp Dir Setup ---
+    two_stage = cfg.training.get('two_stage', False) if hasattr(cfg, 'training') else False
+    loss_type = cfg.loss.get("type", "ebm")
+
+    cm_val = str(cfg.loss.get("congruence_mode", cfg.loss.get("noise_reweighting", "none")))
+    if cm_val in ("none", "off"):
+        canon_cm = "none"
+    elif cm_val in ("pred_only", "pred"):
+        canon_cm = "pred_only"
+    elif cm_val in ("pred_and_sparse", "pred_sparse", "full"):
+        canon_cm = "pred_and_sparse"
+    else:
+        canon_cm = cm_val
+
+    # Old brittle naming logic has been deprecated. 
+    # _ = _deprecated_get_exp_name_from_cfg(cfg, loss_type, two_stage)
+    
+    timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
+    exp_name = f"{Path(fname).stem}_{timestamp}"
 
     if folder is None:
         sweep_name = get_default_dev_name()
