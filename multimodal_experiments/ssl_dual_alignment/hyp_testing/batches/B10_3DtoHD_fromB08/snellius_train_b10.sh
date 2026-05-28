@@ -10,7 +10,7 @@
 #SBATCH --output=%x_%j.out
 #SBATCH --error=%x_%j.err
 
-set -e
+# Note: set -e intentionally omitted so individual failures are tracked in failed_runs.log
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
@@ -22,6 +22,9 @@ source ~/.secrets
 cd ~/github/eb_jepa_private
 
 export PATH="$HOME/.cargo/bin:$PATH"
+
+FAILED_LOG="multimodal_experiments/ssl_dual_alignment/hyp_testing/batches/B10_3DtoHD_fromB08/failed_runs.log"
+> "$FAILED_LOG"
 
 echo "Starting B10 Volumetric Sweep (72 configs)..."
 echo "Running parallel configurations across 9 CPUs on a MIG partition."
@@ -35,7 +38,14 @@ ls multimodal_experiments/ssl_dual_alignment/cfgs/B10_[RM]*.yaml | \
         echo "Launching $name"
         uv run python -m multimodal_experiments.ssl_dual_alignment.main \
             --config "$cfg" \
-            --wandb_tags "B10_3DtoHD_fromB08,$name"
+            --wandb_tags "B10_3DtoHD_fromB08,$name" \
+        || echo "FAILED: $name" >> '"$FAILED_LOG"'
     '
 
 echo "B10 Sweep complete."
+if [ -s "$FAILED_LOG" ]; then
+    echo "Some runs failed:"
+    cat "$FAILED_LOG"
+else
+    echo "All runs completed successfully."
+fi
