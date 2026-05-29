@@ -1,0 +1,36 @@
+batch_id: B12_data_scaling
+description: >-
+  A 9-config sweep investigating the hypothesis that increasing dataset size prevents the model from overfitting 
+  to coincidental noise alignments when epochs are kept constant at 150, forcing it to learn the true shared 2D manifold.
+
+configs:
+  - B12_1x_M20_N1P21
+  - B12_2x_M20_N1P21
+  - B12_4x_M20_N1P21
+  - B12_8x_M20_N1P21
+  - B12_16x_M20_N1P21
+  - B12_32x_M20_N1P21
+  - B12_64x_M20_N1P21
+  - B12_128x_M20_N1P21
+  - B12_256x_M20_N1P21
+
+hypotheses:
+  # ------------------------------------------------------------------
+  # H1 — Data Scaling Overcomes Noise Overfitting (Constant Epochs)
+  # ------------------------------------------------------------------
+  - id: H1
+    claim: >-
+      At low data scales (1x), the model overfits to coincidental correlations in the external noise, 
+      failing to perfectly isolate the 2D manifold. Keeping epochs constant at 150 and scaling data 
+      (to 256x) breaks these spurious correlations, resulting in significantly higher retrieval accuracy.
+    configs_compared:
+      a: B12_1x_M20_N1P21
+      b: B12_256x_M20_N1P21
+    primary_metrics:
+      [retrieval_cos@1]
+    decision_rules:
+      - metric: retrieval_cos@1
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.10
+        verdict_true: CONSTANT_EPOCH_SCALING_OVERCOMES_NOISE_OVERFIT
+        verdict_false: NO_SIGNIFICANT_CONSTANT_EPOCH_SCALING_BENEFIT
