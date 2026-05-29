@@ -558,6 +558,10 @@ for m in ordered_metrics_list:
     metric_details[m] = details
 
 # Parameters for B10 Sweep
+embed_display_map = {
+    "R": "Orthogonal Rotation",
+    "M": "Random MLP",
+}
 noise_display_map = {
     "1": "Ext 10%",
     "2": "Ext 30%",
@@ -629,13 +633,15 @@ for cfg_file in all_cfg_files:
     # Read parameters from yaml configuration
     with open(cfg_file, "r") as yf:
         c = yaml.safe_load(yf)
-        noise_rate_a = c['data']['asymmetric_noise_rate_a']
-        ext_noise_ratio = c['data']['external_noise_ratio']
+        noise_rate_a = c['data'].get('asymmetric_noise_rate_a', 0.0)
+        ext_noise_ratio = c['data'].get('external_noise_ratio', 0.0)
         noise_str = f"Asy:{noise_rate_a}/Ext:{ext_noise_ratio}"
         
         prior_str = f"Pri:{c['loss']['prior_type']}" if c['loss']['lambda_prior'] > 0 else "Pri:None"
         pred_str = f"Pre:{c['loss']['pred_loss']}" if c['loss']['lambda_pred'] > 0 else "Pre:None"
         
+        embed_desc = embed_display_map.get(embed_type, f"Type {embed_type}")
+        dim_desc = f"{dim} Dimensions"
         noise_desc = noise_display_map.get(n_idx, f"Noise Regime {n_idx}")
         prior_desc = prior_display_map.get(p1_idx, f"Prior {p1_idx}")
         pred_desc = pred_display_map.get(p2_idx, f"Predictor {p2_idx}")
@@ -698,6 +704,8 @@ for cfg_file in all_cfg_files:
         "n_idx": n_idx,
         "p1_idx": p1_idx,
         "p2_idx": p2_idx,
+        "embed": embed_desc,
+        "dim_desc": dim_desc,
         "noise": noise_desc,
         "prior": prior_desc,
         "pred": pred_desc,
@@ -800,17 +808,30 @@ html_content = f"""<!DOCTYPE html>
             font-size: 14px;
         }}
 
-        /* Column Selector (inline list inside filters box) */
+        /* Column Selector (collapsible matching dictionary styling, closed by default) */
         .column-select-box {{
             margin-top: 12px;
             border-top: 1px solid #d0d7de;
             padding-top: 12px;
             font-size: 13px;
         }}
+        .col-select-header {{
+            font-weight: 600;
+            font-size: 13px;
+            cursor: pointer;
+            color: #0969da;
+            user-select: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
         .checkbox-grid {{
-            display: inline-flex;
+            display: none;
+            margin-top: 10px;
             flex-wrap: wrap;
             gap: 12px 18px;
+            border-top: 1px solid #e1e4e8;
+            padding-top: 10px;
         }}
         .checkbox-label {{
             display: flex;
@@ -1123,33 +1144,45 @@ html_content = f"""<!DOCTYPE html>
     <div class="filters">
         <div>
             <div class="filter-group">
-                <label for="filter-noise">Noise Regime [N]:</label>
+                <label for="filter-embed">Embed Type [E]:</label>
+                <select id="filter-embed" onchange="applyFilters()">
+                    <option value="all">All</option>
+                    <option value="Orthogonal Rotation" selected>Orthogonal Rotation [R]</option>
+                    <option value="Random MLP">Random MLP [M]</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="filter-dim">Dimension [D]:</label>
+                <select id="filter-dim" onchange="applyFilters()">
+                    <option value="all">All</option>
+                    <option value="10 Dimensions" selected>10 Dimensions [10]</option>
+                    <option value="20 Dimensions">20 Dimensions [20]</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="filter-noise">Noise Level [N]:</label>
                 <select id="filter-noise" onchange="applyFilters()">
                     <option value="all">All</option>
-                    <option value="Asym 5% (asym05_ext0)" selected>[1] Asym 5%</option>
-                    <option value="Asym 15% (asym15_ext0)">[2] Asym 15%</option>
-                    <option value="Asym 25% (asym25_ext0)">[3] Asym 25%</option>
-                    <option value="Ext 10% (asym0_ext10)">[4] Ext 10%</option>
-                    <option value="Ext 30% (asym0_ext30)">[5] Ext 30%</option>
-                    <option value="Ext 50% (asym0_ext50)">[6] Ext 50%</option>
+                    <option value="Ext 10%" selected>External 10% [1]</option>
+                    <option value="Ext 30%">External 30% [2]</option>
                 </select>
             </div>
             <div class="filter-group">
                 <label for="filter-prior">Prior Type [P1]:</label>
                 <select id="filter-prior" onchange="applyFilters()">
                     <option value="all">All</option>
-                    <option value="None" selected>[0] None</option>
-                    <option value="L1 Prior">[1] L1 Prior</option>
-                    <option value="L2 Prior">[2] L2 Prior</option>
+                    <option value="None" selected>None [0]</option>
+                    <option value="L1 Prior">L1 [1]</option>
+                    <option value="L2 Prior">L2 [2]</option>
                 </select>
             </div>
             <div class="filter-group">
                 <label for="filter-pred">Predictor Type [P2]:</label>
                 <select id="filter-pred" onchange="applyFilters()">
                     <option value="all">All</option>
-                    <option value="None" selected>[0] None</option>
-                    <option value="L1 Predictor">[1] L1 Predictor</option>
-                    <option value="L2 Predictor">[2] L2 Predictor</option>
+                    <option value="None" selected>None [0]</option>
+                    <option value="L1 Predictor">L1 [1]</option>
+                    <option value="L2 Predictor">L2 [2]</option>
                 </select>
             </div>
             <span id="stats">Showing 0 of 0 runs</span>
@@ -1157,8 +1190,11 @@ html_content = f"""<!DOCTYPE html>
 
         <!-- Visibility selectors box -->
         <div class="column-select-box">
-            <strong style="color: #57606a; margin-right: 10px;">Visible Columns:</strong>
-            <span class="checkbox-grid" id="checkbox-grid"></span>
+            <div class="col-select-header" onclick="toggleColumns()">
+                <span>🛠️ Columns Visibility Selector (Click to collapse/expand)</span>
+                <span id="col-icon">▼</span>
+            </div>
+            <div class="checkbox-grid" id="checkbox-grid"></div>
         </div>
     </div>
 
@@ -1271,17 +1307,19 @@ html_content = f"""<!DOCTYPE html>
         // Visibility Toggles
         const columnState = {{
             config: true,
-            noise_col: true,
-            prior_col: true,
-            pred_col: true,
+            embed_col: false,
+            dim_col: false,
+            noise_col: false,
+            prior_col: false,
+            pred_col: false,
             state: false,
             wandb: false,
-            visualization: false // Visualizations OFF by default
+            visualization: true // Selected by default!
         }};
 
         // Fill remaining metric columns
         allMetrics.forEach(m => {{
-            columnState[m] = defaultCoreMetrics.includes(m);
+            columnState[m] = false;
         }});
 
         // Calculate global min/max for metrics to scale HSL colors consistently
@@ -1304,12 +1342,14 @@ html_content = f"""<!DOCTYPE html>
             grid.innerHTML = "";
 
             const helperColumns = [
+                {{ id: "visualization", label: "Visualization [Plot]" }},
+                {{ id: "embed_col", label: "Embed Type Column" }},
+                {{ id: "dim_col", label: "Dimension Column" }},
                 {{ id: "noise_col", label: "Noise Column" }},
                 {{ id: "prior_col", label: "Prior Column" }},
                 {{ id: "pred_col", label: "Predictor Column" }},
                 {{ id: "state", label: "State" }},
-                {{ id: "wandb", label: "WandB Link" }},
-                {{ id: "visualization", label: "Visualization [Plot]" }}
+                {{ id: "wandb", label: "WandB Link" }}
             ];
 
             helperColumns.forEach(c => {{
@@ -1352,6 +1392,20 @@ html_content = f"""<!DOCTYPE html>
             headers.appendChild(thConfig);
 
             // Separate parameters cells
+            if (columnState.embed_col) {{
+                const th = document.createElement("th");
+                th.textContent = "Embed Type" + getHeaderIcon('embed_col');
+                th.className = "col-param";
+                th.onclick = () => handleSort('embed_col');
+                headers.appendChild(th);
+            }}
+            if (columnState.dim_col) {{
+                const th = document.createElement("th");
+                th.textContent = "Dimension" + getHeaderIcon('dim_col');
+                th.className = "col-param";
+                th.onclick = () => handleSort('dim_col');
+                headers.appendChild(th);
+            }}
             if (columnState.noise_col) {{
                 const th = document.createElement("th");
                 th.textContent = "Noise" + getHeaderIcon('noise_col');
@@ -1414,6 +1468,8 @@ html_content = f"""<!DOCTYPE html>
         }}
 
         function applyFilters() {{
+            const fEmbed = document.getElementById("filter-embed").value;
+            const fDim = document.getElementById("filter-dim").value;
             const fNoise = document.getElementById("filter-noise").value;
             const fPrior = document.getElementById("filter-prior").value;
             const fPred = document.getElementById("filter-pred").value;
@@ -1423,10 +1479,12 @@ html_content = f"""<!DOCTYPE html>
 
             // Filter rows
             let filteredRows = runData.filter(row => {{
+                const matchEmbed = (fEmbed === 'all' || row.embed === fEmbed);
+                const matchDim = (fDim === 'all' || row.dim_desc === fDim);
                 const matchNoise = (fNoise === 'all' || row.noise === fNoise);
                 const matchPrior = (fPrior === 'all' || row.prior === fPrior);
                 const matchPred = (fPred === 'all' || row.pred === fPred);
-                return matchNoise && matchPrior && matchPred;
+                return matchEmbed && matchDim && matchNoise && matchPrior && matchPred;
             }});
 
             // Sort filtered rows if active
@@ -1436,6 +1494,12 @@ html_content = f"""<!DOCTYPE html>
                     if (currentSortCol === 'config') {{
                         valA = a.config;
                         valB = b.config;
+                    }} else if (currentSortCol === 'embed_col') {{
+                        valA = a.embed;
+                        valB = b.embed;
+                    }} else if (currentSortCol === 'dim_col') {{
+                        valA = a.dim_desc;
+                        valB = b.dim_desc;
                     }} else if (currentSortCol === 'noise_col') {{
                         valA = a.noise;
                         valB = b.noise;
@@ -1487,6 +1551,18 @@ html_content = f"""<!DOCTYPE html>
             tr.appendChild(tdConfig);
 
             // Separate parameters cells
+            if (columnState.embed_col) {{
+                const td = document.createElement("td");
+                td.className = "col-param";
+                td.textContent = row.embed;
+                tr.appendChild(td);
+            }}
+            if (columnState.dim_col) {{
+                const td = document.createElement("td");
+                td.className = "col-param";
+                td.textContent = row.dim_desc;
+                tr.appendChild(td);
+            }}
             if (columnState.noise_col) {{
                 const td = document.createElement("td");
                 td.className = "col-param";
@@ -1607,26 +1683,43 @@ html_content = f"""<!DOCTYPE html>
             }}
         }}
 
-
+        // Collapse Column Selection toggle
+        function toggleColumns() {{
+            const content = document.getElementById("checkbox-grid");
+            const icon = document.getElementById("col-icon");
+            if (content.style.display === "flex") {{
+                content.style.display = "none";
+                icon.textContent = "▼";
+            }} else {{
+                content.style.display = "flex";
+                icon.textContent = "▲";
+            }}
+        }}
 
         // Filtered CSV Exporter
         function exportCSV() {{
+            const fEmbed = document.getElementById("filter-embed").value;
+            const fDim = document.getElementById("filter-dim").value;
             const fNoise = document.getElementById("filter-noise").value;
             const fPrior = document.getElementById("filter-prior").value;
             const fPred = document.getElementById("filter-pred").value;
 
-            const csvHeaders = ["Config", "Noise", "Prior", "Predictor", "State"];
+            const csvHeaders = ["Config", "Embed Type", "Dimension", "Noise", "Prior", "Predictor", "State"];
             allMetrics.forEach(m => csvHeaders.push(m));
 
             const rows = [];
             runData.forEach(row => {{
+                const matchEmbed = (fEmbed === 'all' || row.embed === fEmbed);
+                const matchDim = (fDim === 'all' || row.dim_desc === fDim);
                 const matchNoise = (fNoise === 'all' || row.noise === fNoise);
                 const matchPrior = (fPrior === 'all' || row.prior === fPrior);
                 const matchPred = (fPred === 'all' || row.pred === fPred);
 
-                if (matchNoise && matchPrior && matchPred) {{
+                if (matchEmbed && matchDim && matchNoise && matchPrior && matchPred) {{
                     const rowData = [
                         row.config,
+                        row.embed,
+                        row.dim_desc,
                         row.noise_str,
                         row.prior_str,
                         row.pred_str,
