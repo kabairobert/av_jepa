@@ -803,17 +803,30 @@ html_content = f"""<!DOCTYPE html>
             font-size: 14px;
         }}
 
-        /* Column Selector (inline list inside filters box) */
+        /* Column Selector (collapsible matching dictionary styling, closed by default) */
         .column-select-box {{
             margin-top: 12px;
             border-top: 1px solid #d0d7de;
             padding-top: 12px;
             font-size: 13px;
         }}
+        .col-select-header {{
+            font-weight: 600;
+            font-size: 13px;
+            cursor: pointer;
+            color: #0969da;
+            user-select: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
         .checkbox-grid {{
-            display: inline-flex;
+            display: none;
+            margin-top: 10px;
             flex-wrap: wrap;
             gap: 12px 18px;
+            border-top: 1px solid #e1e4e8;
+            padding-top: 10px;
         }}
         .checkbox-label {{
             display: flex;
@@ -1109,7 +1122,7 @@ html_content = f"""<!DOCTYPE html>
     </style>
 </head>
 <body>
-    <h1>B10 Volumetric Sweep <span>Dashboard</span></h1>
+    <h1>B11 Data Scaling Alignment Study <span>Dashboard</span></h1>
 
     <!-- Dictionary Box (Closed by default) -->
     <div class="dictionary-box">
@@ -1126,33 +1139,31 @@ html_content = f"""<!DOCTYPE html>
     <div class="filters">
         <div>
             <div class="filter-group">
-                <label for="filter-noise">Noise Regime [N]:</label>
-                <select id="filter-noise" onchange="applyFilters()">
+                <label for="filter-scale">Scale [S]:</label>
+                <select id="filter-scale" onchange="applyFilters()">
                     <option value="all">All</option>
-                    <option value="Asym 5% (asym05_ext0)" selected>[1] Asym 5%</option>
-                    <option value="Asym 15% (asym15_ext0)">[2] Asym 15%</option>
-                    <option value="Asym 25% (asym25_ext0)">[3] Asym 25%</option>
-                    <option value="Ext 10% (asym0_ext10)">[4] Ext 10%</option>
-                    <option value="Ext 30% (asym0_ext30)">[5] Ext 30%</option>
-                    <option value="Ext 50% (asym0_ext50)">[6] Ext 50%</option>
+                    <option value="1x" selected>1x Scale (4k pts)</option>
+                    <option value="2x">2x Scale (8k pts)</option>
+                    <option value="4x">4x Scale (16k pts)</option>
+                    <option value="8x">8x Scale (32k pts)</option>
+                    <option value="16x">16x Scale (65k pts)</option>
+                    <option value="32x">32x Scale (131k pts)</option>
                 </select>
             </div>
             <div class="filter-group">
-                <label for="filter-prior">Prior Type [P1]:</label>
-                <select id="filter-prior" onchange="applyFilters()">
+                <label for="filter-embed">Embed Type [E]:</label>
+                <select id="filter-embed" onchange="applyFilters()">
                     <option value="all">All</option>
-                    <option value="None" selected>[0] None</option>
-                    <option value="L1 Prior">[1] L1 Prior</option>
-                    <option value="L2 Prior">[2] L2 Prior</option>
+                    <option value="R" selected>Orthogonal Rotation [R]</option>
+                    <option value="M">Random MLP [M]</option>
                 </select>
             </div>
             <div class="filter-group">
-                <label for="filter-pred">Predictor Type [P2]:</label>
-                <select id="filter-pred" onchange="applyFilters()">
+                <label for="filter-dim">Dimension [D]:</label>
+                <select id="filter-dim" onchange="applyFilters()">
                     <option value="all">All</option>
-                    <option value="None" selected>[0] None</option>
-                    <option value="L1 Predictor">[1] L1 Predictor</option>
-                    <option value="L2 Predictor">[2] L2 Predictor</option>
+                    <option value="10" selected>10 Dimensions [10]</option>
+                    <option value="20">20 Dimensions [20]</option>
                 </select>
             </div>
             <span id="stats">Showing 0 of 0 runs</span>
@@ -1160,8 +1171,11 @@ html_content = f"""<!DOCTYPE html>
 
         <!-- Visibility selectors box -->
         <div class="column-select-box">
-            <strong style="color: #57606a; margin-right: 10px;">Visible Columns:</strong>
-            <span class="checkbox-grid" id="checkbox-grid"></span>
+            <div class="col-select-header" onclick="toggleColumns()">
+                <span>🛠️ Columns Visibility Selector (Click to collapse/expand)</span>
+                <span id="col-icon">▼</span>
+            </div>
+            <div class="checkbox-grid" id="checkbox-grid"></div>
         </div>
     </div>
 
@@ -1274,17 +1288,20 @@ html_content = f"""<!DOCTYPE html>
         // Visibility Toggles
         const columnState = {{
             config: true,
-            noise_col: true,
-            prior_col: true,
-            pred_col: true,
+            visualization: true, // Visualization is the only one selected by default!
+            scale_col: false,
+            embed_col: false,
+            dim_col: false,
+            noise_col: false,
+            prior_col: false,
+            pred_col: false,
             state: false,
-            wandb: false,
-            visualization: false // Visualizations OFF by default
+            wandb: false
         }};
 
         // Fill remaining metric columns
         allMetrics.forEach(m => {{
-            columnState[m] = defaultCoreMetrics.includes(m);
+            columnState[m] = false;
         }});
 
         // Calculate global min/max for metrics to scale HSL colors consistently
@@ -1307,12 +1324,15 @@ html_content = f"""<!DOCTYPE html>
             grid.innerHTML = "";
 
             const helperColumns = [
+                {{ id: "visualization", label: "Visualization [Plot]" }},
+                {{ id: "scale_col", label: "Scale Column" }},
+                {{ id: "embed_col", label: "Embed Type Column" }},
+                {{ id: "dim_col", label: "Dimension Column" }},
                 {{ id: "noise_col", label: "Noise Column" }},
                 {{ id: "prior_col", label: "Prior Column" }},
                 {{ id: "pred_col", label: "Predictor Column" }},
                 {{ id: "state", label: "State" }},
-                {{ id: "wandb", label: "WandB Link" }},
-                {{ id: "visualization", label: "Visualization [Plot]" }}
+                {{ id: "wandb", label: "WandB Link" }}
             ];
 
             helperColumns.forEach(c => {{
@@ -1355,12 +1375,27 @@ html_content = f"""<!DOCTYPE html>
             headers.appendChild(thConfig);
 
             // Separate parameters cells
-            {
-                const td = document.createElement("td");
-                td.className = "col-param";
-                td.textContent = row.scale;
-                tr.appendChild(td);
-            }
+            if (columnState.scale_col) {{
+                const th = document.createElement("th");
+                th.textContent = "Scale" + getHeaderIcon('scale_col');
+                th.className = "col-param";
+                th.onclick = () => handleSort('scale_col');
+                headers.appendChild(th);
+            }}
+            if (columnState.embed_col) {{
+                const th = document.createElement("th");
+                th.textContent = "Embed Type" + getHeaderIcon('embed_col');
+                th.className = "col-param";
+                th.onclick = () => handleSort('embed_col');
+                headers.appendChild(th);
+            }}
+            if (columnState.dim_col) {{
+                const th = document.createElement("th");
+                th.textContent = "Dimension" + getHeaderIcon('dim_col');
+                th.className = "col-param";
+                th.onclick = () => handleSort('dim_col');
+                headers.appendChild(th);
+            }}
             if (columnState.noise_col) {{
                 const th = document.createElement("th");
                 th.textContent = "Noise" + getHeaderIcon('noise_col');
@@ -1423,19 +1458,19 @@ html_content = f"""<!DOCTYPE html>
         }}
 
         function applyFilters() {{
-            const fNoise = document.getElementById("filter-noise").value;
-            const fPrior = document.getElementById("filter-prior").value;
-            const fPred = document.getElementById("filter-pred").value;
+            const fScale = document.getElementById("filter-scale").value;
+            const fEmbed = document.getElementById("filter-embed").value;
+            const fDim = document.getElementById("filter-dim").value;
 
             const tbody = document.getElementById("table-body");
             tbody.innerHTML = "";
 
             // Filter rows
             let filteredRows = runData.filter(row => {{
-                const matchNoise = (fNoise === 'all' || row.noise === fNoise);
-                const matchPrior = (fPrior === 'all' || row.prior === fPrior);
-                const matchPred = (fPred === 'all' || row.pred === fPred);
-                return matchNoise && matchPrior && matchPred;
+                const matchScale = (fScale === 'all' || row.scale === fScale);
+                const matchEmbed = (fEmbed === 'all' || row.embed_type === fEmbed);
+                const matchDim = (fDim === 'all' || row.dim === fDim);
+                return matchScale && matchEmbed && matchDim;
             }});
 
             // Sort filtered rows if active
@@ -1445,6 +1480,15 @@ html_content = f"""<!DOCTYPE html>
                     if (currentSortCol === 'config') {{
                         valA = a.config;
                         valB = b.config;
+                    }} else if (currentSortCol === 'scale_col') {{
+                        valA = parseFloat(a.scale.replace('x', ''));
+                        valB = parseFloat(b.scale.replace('x', ''));
+                    }} else if (currentSortCol === 'embed_col') {{
+                        valA = a.embed_type;
+                        valB = b.embed_type;
+                    }} else if (currentSortCol === 'dim_col') {{
+                        valA = parseInt(a.dim);
+                        valB = parseInt(b.dim);
                     }} else if (currentSortCol === 'noise_col') {{
                         valA = a.noise;
                         valB = b.noise;
@@ -1496,12 +1540,24 @@ html_content = f"""<!DOCTYPE html>
             tr.appendChild(tdConfig);
 
             // Separate parameters cells
-            {
+            if (columnState.scale_col) {{
                 const td = document.createElement("td");
                 td.className = "col-param";
                 td.textContent = row.scale;
                 tr.appendChild(td);
-            }
+            }}
+            if (columnState.embed_col) {{
+                const td = document.createElement("td");
+                td.className = "col-param";
+                td.textContent = row.embed_type === 'R' ? 'Orthogonal Rotation' : 'Random MLP';
+                tr.appendChild(td);
+            }}
+            if (columnState.dim_col) {{
+                const td = document.createElement("td");
+                td.className = "col-param";
+                td.textContent = row.dim + ' Dimensions';
+                tr.appendChild(td);
+            }}
             if (columnState.noise_col) {{
                 const td = document.createElement("td");
                 td.className = "col-param";
@@ -1622,29 +1678,42 @@ html_content = f"""<!DOCTYPE html>
             }}
         }}
 
+        // Collapse Column Selection toggle
+        function toggleColumns() {{
+            const content = document.getElementById("checkbox-grid");
+            const icon = document.getElementById("col-icon");
+            if (content.style.display === "flex") {{
+                content.style.display = "none";
+                icon.textContent = "▼";
+            }} else {{
+                content.style.display = "flex";
+                icon.textContent = "▲";
+            }}
+        }}
+
 
 
         // Filtered CSV Exporter
         function exportCSV() {{
-            const fNoise = document.getElementById("filter-noise").value;
-            const fPrior = document.getElementById("filter-prior").value;
-            const fPred = document.getElementById("filter-pred").value;
+            const fScale = document.getElementById("filter-scale").value;
+            const fEmbed = document.getElementById("filter-embed").value;
+            const fDim = document.getElementById("filter-dim").value;
 
-            const csvHeaders = ["Config", "Noise", "Prior", "Predictor", "State"];
+            const csvHeaders = ["Config", "Scale", "Embed Type", "Dimension", "State"];
             allMetrics.forEach(m => csvHeaders.push(m));
 
             const rows = [];
             runData.forEach(row => {{
-                const matchNoise = (fNoise === 'all' || row.noise === fNoise);
-                const matchPrior = (fPrior === 'all' || row.prior === fPrior);
-                const matchPred = (fPred === 'all' || row.pred === fPred);
+                const matchScale = (fScale === 'all' || row.scale === fScale);
+                const matchEmbed = (fEmbed === 'all' || row.embed_type === fEmbed);
+                const matchDim = (fDim === 'all' || row.dim === fDim);
 
-                if (matchNoise && matchPrior && matchPred) {{
+                if (matchScale && matchEmbed && matchDim) {{
                     const rowData = [
                         row.config,
-                        row.noise_str,
-                        row.prior_str,
-                        row.pred_str,
+                        row.scale,
+                        row.embed_type === 'R' ? 'Orthogonal Rotation' : 'Random MLP',
+                        row.dim + ' Dimensions',
                         row.state
                     ];
                     allMetrics.forEach(m => {{
@@ -1661,7 +1730,7 @@ html_content = f"""<!DOCTYPE html>
             const encodedUri = encodeURI(csvContent);
             const link = document.createElement("a");
             link.setAttribute("href", encodedUri);
-            link.setAttribute("download", `B10_Sweep_metrics_${{fNoise.replace(/\\s+/g, '_')}}.csv`);
+            link.setAttribute("download", `B11_Sweep_metrics_${{fScale.replace(/\\s+/g, '_')}}.csv`);
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
