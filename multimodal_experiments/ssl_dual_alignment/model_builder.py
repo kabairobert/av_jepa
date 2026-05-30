@@ -5,13 +5,24 @@ from multimodal_experiments.initial_trials.ssl_disentangling import FlowModel, b
 
 def build_model_and_predictors(cfg, device):
     """Builds unimodal models, wraps them, and sets up cross-modal predictors."""
-    stage_count = cfg.model.get('stage_count', 6)
-    num_dims = cfg.model.get('num_dims', 2)
-    hidden_units = cfg.model.get('hidden_units', 128)
-    
+    stage_count    = cfg.model.get('stage_count', 6)
+    num_dims       = cfg.model.get('num_dims', 2)
+    hidden_units   = cfg.model.get('hidden_units', 128)
+    coupling_type  = cfg.model.get('coupling_type', 'additive')
+    coupling_clamp = cfg.model.get('coupling_clamp', 2.0)
+    affine_subnet_layers = cfg.model.get('affine_subnet_layers', 2)
+
     # 1. Build & wrap unimodal flows
-    model_a = FlowModel(build_flow_layers(stage_count=stage_count, num_dims=num_dims, hidden_units=hidden_units)).to(device)
-    model_b = FlowModel(build_flow_layers(stage_count=stage_count, num_dims=num_dims, hidden_units=hidden_units)).to(device)
+    flow_kwargs = dict(
+        stage_count=stage_count,
+        num_dims=num_dims,
+        hidden_units=hidden_units,
+        coupling_type=coupling_type,
+        coupling_clamp=coupling_clamp,
+        affine_subnet_layers=affine_subnet_layers,
+    )
+    model_a = FlowModel(build_flow_layers(**flow_kwargs)).to(device)
+    model_b = FlowModel(build_flow_layers(**flow_kwargs)).to(device)
     dual_model = DualPairModel(model_a, model_b).to(device)
     
     # 2. Setup cross-modal predictors

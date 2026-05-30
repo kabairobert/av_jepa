@@ -1,6 +1,7 @@
 from .ssl_disentangling import (
     ActivationNormalization,
     AdditiveCoupling,
+    ClampedAffineCoupling,
     CheckerBoardMask,
     CheckerBoardPermutation,
     FlowModel,

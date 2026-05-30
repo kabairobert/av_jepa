@@ -61,6 +61,29 @@ def _make_dense_stack(num_dims: int, hidden_units: int) -> nn.Sequential:
     return stack
 
 
+def _make_affine_dense_stack(
+    num_dims: int,
+    hidden_units: int,
+    num_hidden_layers: int = 2,
+) -> nn.Sequential:
+    """Subnet for ClampedAffineCoupling.
+
+    Outputs 2*num_dims: first half = log-scale (s), second half = translation (t).
+    Final layer is zero-initialized so the flow starts as pure identity:
+    s=0, t=0 → exp(0)=1 → y2 = x2 (no distortion at step 0).
+    """
+    layers: List[nn.Module] = []
+    in_dim = num_dims
+    for _ in range(num_hidden_layers):
+        layers += [nn.Linear(in_dim, hidden_units), nn.GELU()]
+        in_dim = hidden_units
+    final = nn.Linear(in_dim, num_dims * 2)
+    nn.init.zeros_(final.weight)
+    nn.init.zeros_(final.bias)
+    layers.append(final)
+    return nn.Sequential(*layers).to(dtype=torch.get_default_dtype())
+
+
 class ActivationNormalization(FlowLayer):
     def __init__(self, shape: List[int], axes: List[int]):
         super().__init__(shape=shape, axes=axes)
@@ -235,6 +258,71 @@ class AdditiveCoupling(Coupling):
         return outputs - coupling_parameters
 
 
+class ClampedAffineCoupling(Coupling):
+    """Affine coupling layer with tanh-clamped log-scale (RealNVP/Glow style).
+
+    Replaces AdditiveCoupling's  y2 = x2 + t  with  y2 = x2 * exp(s) + t,
+    where s is bounded via  s_clamped = clamp * tanh(s / clamp).
+
+    Unlike AdditiveCoupling, this produces a non-zero log-det, so the flow
+    is no longer volume-preserving and can learn to suppress noise dimensions.
+
+    forward() is overridden directly (not via _couple_/_decouple_) because
+    the log-det computation needs access to s_clamped inside the same pass.
+    """
+
+    def __init__(
+        self,
+        shape: List[int],
+        axes: List[int],
+        compute_coupling_parameters: nn.Module,
+        mask: CheckerBoardMask,
+        clamp: float = 2.0,
+    ):
+        super().__init__(
+            shape=shape, axes=axes,
+            compute_coupling_parameters=compute_coupling_parameters,
+            mask=mask,
+        )
+        self.clamp = clamp
+
+    def forward(self, inputs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        # 1. Unchanged half (positive mask)
+        x_1 = self._mask_.call(inputs=inputs, is_positive=True)
+
+        # 2. Compute s and t from unchanged half
+        st = self._compute_coupling_parameters_(x_1)   # (N, 2*D)
+        s, t = st.chunk(2, dim=-1)                     # each (N, D)
+
+        # 3. Clamp log-scale: s_clamped ∈ (-clamp, +clamp)
+        s_clamped = self.clamp * torch.tanh(s / self.clamp)
+
+        # 4. Affine transform on negative-mask half: y2 = x2 * exp(s) + t
+        y_hat_2 = self._mask_.call(
+            inputs=(inputs * torch.exp(s_clamped) + t),
+            is_positive=False,
+        )
+        y_hat = x_1 + y_hat_2
+
+        # 5. Log-det = sum of active (negative-mask) log-scales over all dims
+        s_active = self._mask_.call(inputs=s_clamped, is_positive=False)
+        jacobian_determinant = s_active.sum(dim=tuple(range(1, s_active.dim())))
+
+        return y_hat, jacobian_determinant
+
+    def invert(self, outputs: torch.Tensor) -> torch.Tensor:
+        y_1 = self._mask_.call(inputs=outputs, is_positive=True)
+        st = self._compute_coupling_parameters_(y_1)
+        s, t = st.chunk(2, dim=-1)
+        s_clamped = self.clamp * torch.tanh(s / self.clamp)
+        # Inverse affine law: x2 = (y2 - t) * exp(-s)
+        x_2 = self._mask_.call(
+            inputs=((outputs - t) * torch.exp(-s_clamped)),
+            is_positive=False,
+        )
+        return y_1 + x_2
+
+
 class FlowModel(nn.Module):
     def __init__(self, flow_layers: List[FlowLayer]):
         super().__init__()
@@ -333,19 +421,51 @@ def self_supervised_dual_generator(z1_data, z2_data, batch_size, rng=None):
         yield (Z1_batch, Z2_batch), y_corr_target
 
 
-def construct_layers(stage_count: int, num_dims: int, hidden_units: int = 128) -> List[FlowLayer]:
+def construct_layers(
+    stage_count: int,
+    num_dims: int,
+    hidden_units: int = 128,
+    coupling_type: str = 'additive',
+    coupling_clamp: float = 2.0,
+    affine_subnet_layers: int = 2,
+) -> List[FlowLayer]:
+    """Build a list of FlowLayer objects for a normalizing flow.
+
+    Args:
+        stage_count: Number of (Reflection + 2xCoupling + 2xPermutation + ActNorm) blocks.
+        num_dims: Dimensionality of the data.
+        hidden_units: Hidden layer width for coupling subnets.
+        coupling_type: 'additive' (volume-preserving, default) or 'affine' (non-volume-preserving).
+        coupling_clamp: Tanh clamp magnitude for affine coupling log-scale. Ignored for additive.
+        affine_subnet_layers: Number of hidden layers in the affine subnet. Ignored for additive.
+    """
     layers: List[FlowLayer] = [None] * (6 * stage_count + 1)
     layers[0] = ActivationNormalization(shape=[num_dims], axes=[1])
     for i in range(stage_count):
         layers[6 * i + 1] = Reflection(shape=[num_dims], axes=[1], reflection_count=1)
-        mask_1 = CheckerBoardMask(axes=[1], shape=[num_dims])
-        compute_coupling_parameters_1 = _make_dense_stack(num_dims=num_dims, hidden_units=hidden_units)
-        layers[6 * i + 2] = AdditiveCoupling(shape=[num_dims], axes=[1], compute_coupling_parameters=compute_coupling_parameters_1, mask=mask_1)
-        layers[6 * i + 3] = CheckerBoardPermutation(shape=[num_dims], axes=[1])
-        compute_coupling_parameters_2 = _make_dense_stack(num_dims=num_dims, hidden_units=hidden_units)
-        mask_2 = CheckerBoardMask(axes=[1], shape=[num_dims])
-        layers[6 * i + 4] = AdditiveCoupling(shape=[num_dims], axes=[1], compute_coupling_parameters=compute_coupling_parameters_2, mask=mask_2)
-        layers[6 * i + 5] = CheckerBoardPermutation(shape=[num_dims], axes=[1])
+        for slot in (2, 4):
+            mask = CheckerBoardMask(axes=[1], shape=[num_dims])
+            if coupling_type == 'affine':
+                subnet = _make_affine_dense_stack(
+                    num_dims=num_dims,
+                    hidden_units=hidden_units,
+                    num_hidden_layers=affine_subnet_layers,
+                )
+                coupling: FlowLayer = ClampedAffineCoupling(
+                    shape=[num_dims], axes=[1],
+                    compute_coupling_parameters=subnet,
+                    mask=mask,
+                    clamp=coupling_clamp,
+                )
+            else:  # 'additive' (default, backward-compatible)
+                subnet = _make_dense_stack(num_dims=num_dims, hidden_units=hidden_units)
+                coupling = AdditiveCoupling(
+                    shape=[num_dims], axes=[1],
+                    compute_coupling_parameters=subnet,
+                    mask=mask,
+                )
+            layers[6 * i + slot] = coupling
+            layers[6 * i + slot + 1] = CheckerBoardPermutation(shape=[num_dims], axes=[1])
         layers[6 * i + 6] = ActivationNormalization(shape=[num_dims], axes=[1])
     return layers
 
@@ -362,5 +482,20 @@ def paired_batch_generator(data_a: np.ndarray, data_b: np.ndarray, batch_size: i
     return self_supervised_dual_generator(z1_data=data_a, z2_data=data_b, batch_size=batch_size)
 
 
-def build_flow_layers(stage_count: int, num_dims: int, hidden_units: int = 128) -> List[FlowLayer]:
-    return construct_layers(stage_count=stage_count, num_dims=num_dims, hidden_units=hidden_units)
+def build_flow_layers(
+    stage_count: int,
+    num_dims: int,
+    hidden_units: int = 128,
+    coupling_type: str = 'additive',
+    coupling_clamp: float = 2.0,
+    affine_subnet_layers: int = 2,
+) -> List[FlowLayer]:
+    """Public entry point for building flow layers. See construct_layers for param docs."""
+    return construct_layers(
+        stage_count=stage_count,
+        num_dims=num_dims,
+        hidden_units=hidden_units,
+        coupling_type=coupling_type,
+        coupling_clamp=coupling_clamp,
+        affine_subnet_layers=affine_subnet_layers,
+    )
