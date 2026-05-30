@@ -63,6 +63,19 @@ class EBMJEPALoss(torch.nn.Module):
       - prior_loss  is a per-sample magnitude penalty; it must stay
         uniform so that the prior is enforced regardless of prediction ease.
 
+    Flow Variance Calibration
+    -------------------------
+    The combination of `prior_loss` and `jac_loss` acts as a Maximum Likelihood 
+    objective matching the latent space to a prior distribution.
+    For an L2 prior (`prior_loss = z^2`), the EBM loss matches a Gaussian:
+      Loss = lambda_prior * z^2 - lambda_jac * log|det J|
+    This analytical formulation mathematically forces the latent space to converge 
+    to an Isotropic Gaussian N(0, σ^2) with variance:
+      σ^2 = lambda_jac / (2 * lambda_prior)
+    To achieve standard JEPA / SIGReg unit variance (σ^2 = 1.0) and preserve 
+    unimodal information scales without collapsing them, we must set:
+      lambda_jac = 1.0  and  lambda_prior = 0.5.
+
     Args:
         predictor_a2b, predictor_b2a : cross-modal predictor modules
         lambda_jac   : weight for Jacobian loss (kept uniform)
