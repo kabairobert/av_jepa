@@ -15,32 +15,19 @@ metrics:
   r2_b_u0:           "geom/zb/r2_u0"
   r2_b_u1:           "geom/zb/r2_u1"
 
-  # --- geometry / per-dim disentanglement (B04 H_disent) ---
-  # dim0/dim1/dim2 of z_A regressed onto u1, u2, noise respectively
-  r2_dim0_u1:        "geom/za/r2_dim0_u1"
-  r2_dim1_u2:        "geom/za/r2_dim1_u2"
-  r2_dim2_noise:     "geom/za/r2_dim2_noise"
-
-  # --- geometry / manifold flatness (B06) ---
-  # flatness_ratio: fraction of variance in top-2 PCA plane
-  #   -> 1.0 = all variance in flat 2D plane (perfectly unrolled)
-  #   -> low = variance spread into 3rd dim (curved manifold)
-  # orth_residual: mean distance of each point from top-2 PCA plane
-  #   -> 0.0 = all points lie in a flat plane
-  #   -> high = manifold is curved / 3D
-  # NOTE: computed over all points until point_type implemented;
-  #       noise points underestimate true flatness (lower bound).
-  flatness_ratio_a:  "geom/za/flatness_ratio"
-  flatness_ratio_b:  "geom/zb/flatness_ratio"
-  orth_residual_a:   "geom/za/orth_residual_mean"
-  orth_residual_b:   "geom/zb/orth_residual_mean"
-  
-  # --- geometry / B08 clean manifold flatness and diagonality ---
+  # --- geometry / B08 diagonality ---
   diagonality_ratio:      "geom/za/diagonality_ratio"
-  clean_flatness_ratio_a: "geom/za/clean_flatness_ratio"
-  clean_flatness_ratio_b: "geom/zb/clean_flatness_ratio"
-  clean_orth_residual_a:  "geom/za/clean_orth_residual_mean"
-  clean_orth_residual_b:  "geom/zb/clean_orth_residual_mean"
+
+  # --- geometry / RankMe ---
+  rankme_a:          "geom/rankme_a"
+  rankme_b:          "geom/rankme_b"
+
+  # --- geometry / VICReg Variance/Covariance ---
+  vicreg_variance_a: "geom/vicreg_variance_a"
+  vicreg_variance_b: "geom/vicreg_variance_b"
+  vicreg_covariance_a: "geom/vicreg_covariance_a"
+  vicreg_covariance_b: "geom/vicreg_covariance_b"
+  vicreg_invariance: "geom/vicreg_invariance"
 
   # --- geometry / PCA axis-alignment (B04 H_geo) ---
   # max cosine similarity between top-2 PCA eigenvectors and nearest coord axis
@@ -62,6 +49,12 @@ metrics:
   retrieval_cos@5:   "geom/retrieval_cos@5"
   retrieval_l2@1:    "geom/retrieval_l2@1"
   retrieval_l2@5:    "geom/retrieval_l2@5"
+
+  # --- geometry / masked retrieval ---
+  masked_retrieval_cos@1: "geom/masked_retrieval_cos@1"
+  masked_retrieval_cos@5: "geom/masked_retrieval_cos@5"
+  masked_retrieval_l2@1:  "geom/masked_retrieval_l2@1"
+  masked_retrieval_l2@5:  "geom/masked_retrieval_l2@5"
 
   # --- geometry / norms ---
   z_a_norm:          "geom/z_a_norm_mean"

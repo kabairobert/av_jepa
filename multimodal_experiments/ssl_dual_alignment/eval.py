@@ -245,37 +245,39 @@ def linear_probe_r2(z: np.ndarray, u: np.ndarray) -> dict:
     return result
 
 
-def per_dim_disentanglement(z_a: np.ndarray, u: np.ndarray) -> dict:
-    """Per-dim linear R2: regress each dim of z_A independently onto each factor.
+def rankme_score(z: np.ndarray) -> float:
+    """Compute RankMe score for representations: exp(-sum(p_i log p_i)) where p_i are normalized singular values."""
+    # Center the data
+    z = z - z.mean(axis=0)
+    _, svals, _ = np.linalg.svd(z, full_matrices=False)
+    
+    # Avoid zero division and extremely small singular values
+    svals = svals[svals > 1e-7]
+    if len(svals) == 0:
+        return 0.0
+        
+    p = svals / svals.sum()
+    rankme = np.exp(-np.sum(p * np.log(p + 1e-7)))
+    return float(rankme)
 
-    Returns generic keys r2_dim{i}_u{j} for all pairs, plus canonical aliases.
-    """
-    from sklearn.linear_model import Ridge
-    from sklearn.metrics import r2_score
+def vicreg_variance(z: np.ndarray, margin: float = 1.0) -> float:
+    """Calculate variance hinge loss as in VICReg."""
+    z = z - z.mean(axis=0)
+    std = np.sqrt(z.var(axis=0) + 0.0001)
+    std_loss = np.mean(np.maximum(0, margin - std))
+    return float(std_loss)
 
-    if u.ndim == 1:
-        u = u[:, None]
+def vicreg_covariance(z: np.ndarray) -> float:
+    """Calculate off-diagonal covariance penalty as in VICReg."""
+    batch_size = z.shape[0]
+    num_features = z.shape[1]
+    z = z - z.mean(axis=0)
+    cov = (z.T @ z) / (batch_size - 1)
+    
+    # Remove diagonal
+    cov_off_diag = cov.flatten()[:-1].reshape(num_features - 1, num_features + 1)[:, 1:].flatten()
+    return float(np.mean(cov_off_diag**2))
 
-    n_dims = z_a.shape[1]
-    n_factors = u.shape[1]
-    results = {}
-
-    for i in range(n_dims):
-        zi = z_a[:, i:i+1]
-        for j in range(n_factors):
-            uj = u[:, j]
-            reg = Ridge(alpha=1.0).fit(zi, uj)
-            r2 = float(r2_score(uj, reg.predict(zi)))
-            results[f'r2_dim{i}_u{j}'] = r2
-
-    # --- Backward-compatible aliases ---
-    # Aliases used in historical hypotheses.yaml and wandb logs
-    results['r2_dim0_u1'] = results.get('r2_dim0_u0', 0.0)   # u1 maps to ground-truth index 0
-    results['r2_dim1_u2'] = results.get('r2_dim1_u1', 0.0)   # u2 maps to ground-truth index 1
-    if n_dims > 2:
-        noise_r2s = [results.get(f'r2_dim2_u{j}', 0.0) for j in range(n_factors)]
-        results['r2_dim2_noise'] = float(max(noise_r2s)) if noise_r2s else 0.0
-    return results
 
 
 def pca_axis_alignment(z: np.ndarray, n_active: int = 2) -> float:
@@ -299,28 +301,30 @@ def pca_axis_alignment(z: np.ndarray, n_active: int = 2) -> float:
     return float(np.mean(scores))
 
 
-def manifold_flatness(z: np.ndarray, n_plane: int = 2) -> dict:
-    """PCA-based flatness of a latent manifold.
-
-    flatness_ratio: variance explained by top-n_plane PCs (1.0 = perfectly flat).
-    orth_residual_mean: mean distance to the top-n_plane PCA subspace (0 = flat).
-    """
-    z_centered = z - z.mean(axis=0)
-    _, svals, vt = np.linalg.svd(z_centered, full_matrices=False)
-    total_var = float(np.sum(svals**2))
-    top_var = float(np.sum(svals[:n_plane]**2))
-    flatness_ratio = top_var / total_var if total_var > 1e-12 else 0.0
-
-    basis = vt[:n_plane].T
-    proj = z_centered @ basis
-    recon = proj @ basis.T
-    residual = z_centered - recon
-    orth_residual_mean = float(np.linalg.norm(residual, axis=1).mean())
-
-    return {
-        'flatness_ratio': float(flatness_ratio),
-        'orth_residual_mean': orth_residual_mean,
-    }
+def masked_retrieval_accuracy(z_a: np.ndarray, z_b: np.ndarray, mask: np.ndarray, ks=(1, 5)) -> dict:
+    """For each masked z_A[i], find k-nearest masked z_B by L2 and cosine."""
+    from sklearn.metrics.pairwise import euclidean_distances, cosine_distances
+    
+    # Apply mask
+    z_a_masked = z_a[:, mask]
+    z_b_masked = z_b[:, mask]
+    
+    # If mask is empty, return 0 for everything
+    if z_a_masked.shape[1] == 0:
+        results = {}
+        for name in ['l2', 'cos']:
+            for k in ks:
+                results[f'masked_retrieval_{name}@{k}'] = 0.0
+        return results
+        
+    results = {}
+    for dist_fn, name in [(euclidean_distances, 'l2'), (cosine_distances, 'cos')]:
+        D = dist_fn(z_a_masked, z_b_masked)
+        for k in ks:
+            top_k = np.argsort(D, axis=1)[:, :k]
+            hits = float(np.mean([i in top_k[i] for i in range(len(z_a_masked))]))
+            results[f'masked_retrieval_{name}@{k}'] = hits
+    return results
 
 
 def retrieval_accuracy(z_a: np.ndarray, z_b: np.ndarray, ks=(1, 5)) -> dict:
@@ -444,29 +448,37 @@ def compute_geometry_metrics(
         for k, v in probe.items():
             metrics[f'geom/{prefix}/{k}'] = v
 
-    # --- Per-dim disentanglement (z_A only — primary geometry space) ---
-    pdis = {}
-    if param_values.ndim == 2 and num_zdims >= 2:
-        pdis = per_dim_disentanglement(z_a, u)
-        for k, v in pdis.items():
-            metrics[f'geom/za/{k}'] = v
+    # --- RankMe ---
+    metrics['geom/rankme_a'] = rankme_score(z_a)
+    metrics['geom/rankme_b'] = rankme_score(z_b)
+    
+    # --- VICReg Variance/Covariance/Invariance ---
+    metrics['geom/vicreg_variance_a'] = vicreg_variance(z_a)
+    metrics['geom/vicreg_variance_b'] = vicreg_variance(z_b)
+    metrics['geom/vicreg_covariance_a'] = vicreg_covariance(z_a)
+    metrics['geom/vicreg_covariance_b'] = vicreg_covariance(z_b)
+    metrics['geom/vicreg_invariance'] = float(np.mean((z_a - z_b)**2))
 
-        # --- Generalised Axis-Alignment / Diagonality Ratio (permutation-invariant, supports any k_shared) ---
+    # --- Generalised Axis-Alignment / Diagonality Ratio (permutation-invariant, supports any k_shared) ---
+    if param_values.ndim == 2 and num_zdims >= 2:
         # Build R2 matrix: M[i, j] = R2(z_dim_i predicts u_j) for all (dim, factor) pairs.
-        # Find the k_shared latent dims that together best explain the k_shared shared factors,
-        # then score how "diagonal" the assignment is (each dim captures exactly one factor).
-        # Mechanism: the L1 sparse_loss on predictor weights (not the L1 prior) drives w[i]->0
-        # for non-shared dims; the prior shapes marginals but doesn't suppress full-rank dims.
+        from sklearn.linear_model import Ridge
+        from sklearn.metrics import r2_score
+        
         n_factors = u.shape[1]
-        r2_matrix = np.array([
-            [pdis.get(f'r2_dim{i}_u{j}', 0.0) for j in range(n_factors)]
-            for i in range(num_zdims)
-        ])  # shape: (num_zdims, n_factors)
+        r2_matrix = np.zeros((num_zdims, n_factors))
+        for i in range(num_zdims):
+            zi = z_a[:, i:i+1]
+            for j in range(n_factors):
+                uj = u[:, j]
+                reg = Ridge(alpha=1.0).fit(zi, uj)
+                r2_matrix[i, j] = float(r2_score(uj, reg.predict(zi)))
+        
         # Select top-k_shared z-dims by total R2 summed across all shared factors
         top_dim_idxs = np.argsort(r2_matrix.sum(axis=1))[::-1][:k_shared]
         sub = r2_matrix[top_dim_idxs, :]  # (k_shared, n_factors)
+        
         # Greedy optimal assignment: maximise sum of selected (dim, factor) R2 pairs
-        # (permutation-invariant: dims don't need to be ordered)
         assigned_rows, assigned_cols = set(), set()
         diag_sum = 0.0
         for val, r, c in sorted(
@@ -488,27 +500,20 @@ def compute_geometry_metrics(
     metrics['geom/pca_axis_align_a'] = pca_axis_alignment(z_a, n_active=n_active)
     metrics['geom/pca_axis_align_b'] = pca_axis_alignment(z_b, n_active=n_active)
 
-    # --- Manifold flatness (n_plane = k_shared, not hardcoded 2) ---
-    if param_values.ndim == 2 and num_zdims >= 2:
-        flat_a = manifold_flatness(z_a, n_plane=k_shared)
-        flat_b = manifold_flatness(z_b, n_plane=k_shared)
-        metrics['geom/za/flatness_ratio'] = flat_a['flatness_ratio']
-        metrics['geom/za/orth_residual_mean'] = flat_a['orth_residual_mean']
-        metrics['geom/zb/flatness_ratio'] = flat_b['flatness_ratio']
-        metrics['geom/zb/orth_residual_mean'] = flat_b['orth_residual_mean']
-        # --- Clean Manifold Flatness (reuses pre-computed z_a_clean / z_b_clean) ---
-        if z_a_clean is not None and z_a_clean.shape[0] >= 2 and z_a_clean.shape[1] >= 2:
-            flat_a_clean = manifold_flatness(z_a_clean, n_plane=k_shared)
-            flat_b_clean = manifold_flatness(z_b_clean, n_plane=k_shared)
-            metrics['geom/za/clean_flatness_ratio'] = flat_a_clean['flatness_ratio']
-            metrics['geom/za/clean_orth_residual_mean'] = flat_a_clean['orth_residual_mean']
-            metrics['geom/zb/clean_flatness_ratio'] = flat_b_clean['flatness_ratio']
-            metrics['geom/zb/clean_orth_residual_mean'] = flat_b_clean['orth_residual_mean']
+    # --- Manifold flatness (removed) ---
 
     # --- Retrieval ---
     ret = retrieval_accuracy(z_a, z_b)
     for k, v in ret.items():
         metrics[f'geom/{k}'] = v
+        
+    # --- Masked Retrieval ---
+    if predictor_a2b is not None and hasattr(predictor_a2b, 'weight'):
+        w_np = predictor_a2b.weight.detach().cpu().numpy()
+        mask = np.abs(w_np) > 0.5
+        masked_ret = masked_retrieval_accuracy(z_a, z_b, mask)
+        for k, v in masked_ret.items():
+            metrics[f'geom/{k}'] = v
 
     # --- CCA (includes cca_diag_score and per-dim cca_corr_dim{i}) ---
     cca = cca_score(z_a, z_b)

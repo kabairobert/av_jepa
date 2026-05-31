@@ -80,6 +80,36 @@ metric_definitions = {
         "Top-5 nearest neighbor cross-modal retrieval accuracy using L2 distance.",
         "Acc@5 (L2)"
     ),
+    "masked_retrieval_cos@1": (
+        "Masked Retrieval Cos@1",
+        "1-nearest neighbor retrieval strictly on the shared sub-manifold filtered by predictor weights.",
+        "Acc@1 (Cosine | Masked)"
+    ),
+    "rankme_a": (
+        "RankMe Score A",
+        "Effective rank of Modality A representations via Shannon entropy of singular values.",
+        "exp(-sum(p_i ln p_i))"
+    ),
+    "rankme_b": (
+        "RankMe Score B",
+        "Effective rank of Modality B representations via Shannon entropy of singular values.",
+        "exp(-sum(p_i ln p_i))"
+    ),
+    "vicreg_invariance": (
+        "VICReg Invariance MSE",
+        "Mean squared error between aligned representations Z_A and Z_B.",
+        "mean(||Z_A - Z_B||^2)"
+    ),
+    "vicreg_covariance_a": (
+        "VICReg Covariance A",
+        "Penalty for off-diagonal covariance elements in Modality A.",
+        "mean(cov_off_diag^2)"
+    ),
+    "vicreg_covariance_b": (
+        "VICReg Covariance B",
+        "Penalty for off-diagonal covariance elements in Modality B.",
+        "mean(cov_off_diag^2)"
+    ),
 
     # --- Manifold flatness / unrolling ---
     "clean_flatness_ratio_a": (
@@ -297,66 +327,34 @@ metric_definitions = {
 
 # Ordered by importance for Audio-Video Multimodal JEPA alignment analysis
 ordered_metrics = [
-    # 1. Subspace alignment & CCA
-    "diagonality_ratio",
-    "cca_diag_score",
-    "cca_rank",
-    "cca_dim0",
-    "cca_dim1",
-    "cca_dim2",
+    # Tier 1 (Training Health)
+    "train_loss",
+    "val_loss",
+    "rankme_a",
+    "rankme_b",
+    "vicreg_invariance",
+    "vicreg_covariance_a",
+    "vicreg_covariance_b",
+
+    # Tier 2 (Literature Benchmarks)
     "retrieval_cos@1",
     "retrieval_cos@5",
     "retrieval_l2@1",
     "retrieval_l2@5",
 
-    # 2. Manifold flatness & unrolling
-    "clean_flatness_ratio_a",
-    "clean_flatness_ratio_b",
-    "clean_orth_residual_a",
-    "clean_orth_residual_b",
-    "flatness_ratio_a",
-    "flatness_ratio_b",
-    "orth_residual_a",
-    "orth_residual_b",
+    # Tier 3 (Deep Diagnostics)
+    "cca_rank",
+    "masked_retrieval_cos@1",
+    "diagonality_ratio",
     "pca_axis_align_a",
     "pca_axis_align_b",
-
-    # 3. Disentanglement & isolation
-    "r2_dim2_noise",
-    "r2_dim0_u1",
-    "r2_dim1_u2",
     "r2_joint",
-    "r2_a",
-    "r2_b",
-    "r2_joint_u0",
-    "r2_joint_u1",
-    "r2_a_u0",
-    "r2_a_u1",
-    "r2_b_u0",
-    "r2_b_u1",
-
-    # 4. Latent representation norms
-    "z_a_norm",
-    "z_b_norm",
-    "z_a_norm_manifold",
-    "z_b_norm_manifold",
-    "z_a_norm_asym_corrupt",
-    "z_b_norm_asym_corrupt",
-    "z_a_norm_external",
-    "z_b_norm_external",
-
-    # 5. EBM / alignment losses
-    "train_loss",
-    "val_loss",
-    "val_align_a2b",
-    "val_align_b2a",
-    "train_align_a2b",
-    "train_align_b2a",
-    "align_mse_a2b_manifold",
-    "align_mse_b2a_manifold",
-    "align_mse_a2b_asym_corrupt",
-    "align_mse_b2a_asym_corrupt",
-    "align_mse_a2b_external"
+    
+    # Extras
+    "cca_diag_score",
+    "cca_dim0",
+    "cca_dim1",
+    "cca_dim2"
 ]
 
 ordered_metrics_list = []
@@ -706,11 +704,11 @@ for cfg_file in all_cfg_files:
 
 # Core metrics to show by default
 default_metrics = [
-    "diagonality_ratio",
-    "cca_diag_score",
     "cca_rank",
-    "clean_flatness_ratio_a",
-    "clean_flatness_ratio_b"
+    "masked_retrieval_cos@1",
+    "diagonality_ratio",
+    "pca_axis_align_a",
+    "r2_joint"
 ]
 
 # Map alias -> display label for checkboxes and headers
@@ -1265,7 +1263,7 @@ html_content = f"""<!DOCTYPE html>
         // Visibility Toggles
         const columnState = {{
             config: true,
-            visualization: true,
+            visualization: false,
             scale_col: true,
             stages_col: true,
             state: false,
@@ -1304,13 +1302,33 @@ html_content = f"""<!DOCTYPE html>
                 {{ id: "wandb", label: "WandB Link" }}
             ];
 
+            const groupDiv = document.createElement("div");
+            groupDiv.style.width = "100%";
+            groupDiv.innerHTML = "<h4 style='margin:10px 0 5px 0; color:#57606a;'>Meta & Actions</h4>";
+            grid.appendChild(groupDiv);
+
             helperColumns.forEach(c => {{
                 grid.appendChild(createCheckbox(c.id, c.label));
             }});
 
-            allMetrics.forEach(m => {{
-                const label = metricNamesDisplay[m] || m;
-                grid.appendChild(createCheckbox(m, label));
+            const tiers = [
+                {{ title: "Tier 1 (Training Health - Every Batch)", metrics: ["train_loss", "val_loss", "rankme_a", "rankme_b", "vicreg_invariance", "vicreg_covariance_a", "vicreg_covariance_b"] }},
+                {{ title: "Tier 2 (Literature Benchmarks - End of Epoch)", metrics: ["retrieval_cos@1", "retrieval_cos@5", "retrieval_l2@1", "retrieval_l2@5"] }},
+                {{ title: "Tier 3 (Deep Diagnostics - End of Epoch/Run)", metrics: ["cca_rank", "masked_retrieval_cos@1", "diagonality_ratio", "pca_axis_align_a", "pca_axis_align_b", "r2_joint"] }},
+                {{ title: "Other Metrics", metrics: allMetrics.filter(m => !["train_loss", "val_loss", "rankme_a", "rankme_b", "vicreg_invariance", "vicreg_covariance_a", "vicreg_covariance_b", "retrieval_cos@1", "retrieval_cos@5", "retrieval_l2@1", "retrieval_l2@5", "cca_rank", "masked_retrieval_cos@1", "diagonality_ratio", "pca_axis_align_a", "pca_axis_align_b", "r2_joint"].includes(m)) }}
+            ];
+
+            tiers.forEach(t => {{
+                if(t.metrics.length === 0) return;
+                const headerDiv = document.createElement("div");
+                headerDiv.style.width = "100%";
+                headerDiv.innerHTML = `<h4 style='margin:10px 0 5px 0; color:#57606a;'>${{t.title}}</h4>`;
+                grid.appendChild(headerDiv);
+                
+                t.metrics.forEach(m => {{
+                    const label = metricNamesDisplay[m] || m;
+                    grid.appendChild(createCheckbox(m, label));
+                }});
             }});
         }}
 
