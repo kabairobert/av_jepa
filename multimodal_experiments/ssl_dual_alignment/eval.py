@@ -191,11 +191,17 @@ def _build_interactive_4way_html(
         subplot_titles=("Input Space A", "Output Space A", "Output Space B", "Input Space B"),
     )
 
+    if param_values.ndim == 2 and param_values.shape[1] >= 3:
+        u3 = param_values[:, 2]
+        sizes = 2 + ((u3 - u3.min()) / (u3.max() - u3.min() + 1e-8)) * 8
+    else:
+        sizes = 3
+
     def _scatter(xyz, name, colors):
         return go.Scatter3d(
             x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2],
             mode="markers",
-            marker=dict(size=3, color=colors, showscale=False),
+            marker=dict(size=sizes, color=colors, showscale=False),
             name=name,
         )
 

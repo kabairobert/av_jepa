@@ -62,6 +62,18 @@ def _get_point_colors(param_values, point_types, cmap='rainbow'):
             colors.append(base_colors[i])
     return colors
 
+def _get_point_sizes(param_values):
+    """Return point sizes mapped from u3 (if present) or default 5."""
+    if hasattr(param_values, 'cpu'):
+        vals = param_values.cpu().numpy().astype(float)
+    else:
+        vals = np.asarray(param_values, dtype=float)
+        
+    if vals.ndim == 2 and vals.shape[1] >= 3:
+        u3 = vals[:, 2]
+        return 2 + ((u3 - u3.min()) / (u3.max() - u3.min() + 1e-8)) * 8
+    return 5
+
 
 def plot_original_spaces(data_a, data_b, param_values,
                          point_type_a=None, point_type_b=None, axis_box=None):
@@ -77,30 +89,31 @@ def plot_original_spaces(data_a, data_b, param_values,
     pt_b = point_type_b if point_type_b is not None else np.zeros(len(data_b), dtype=np.int32)
     c_a = _get_point_colors(param_values, pt_a)
     c_b = _get_point_colors(param_values, pt_b)
+    s_points = _get_point_sizes(param_values)
 
     if is_3d:
         ax1 = fig.add_subplot(121, projection='3d')
         ax1.scatter(data_a_proj[:, 0], data_a_proj[:, 1], data_a_proj[:, 2],
-                    c=c_a, s=5, alpha=0.5)
+                    c=c_a, s=s_points, alpha=0.5)
         ax1.set_title('Modality A')
         ax1.set_xlabel('PC 1' if data_a.shape[1] > 3 else 'Dim 1')
         ax1.set_ylabel('PC 2' if data_a.shape[1] > 3 else 'Dim 2')
         ax1.set_zlabel('PC 3' if data_a.shape[1] > 3 else 'Dim 3')
         ax2 = fig.add_subplot(122, projection='3d')
         ax2.scatter(data_b_proj[:, 0], data_b_proj[:, 1], data_b_proj[:, 2],
-                    c=c_b, s=5, alpha=0.5)
+                    c=c_b, s=s_points, alpha=0.5)
         ax2.set_title('Modality B')
         ax2.set_xlabel('PC 1' if data_b.shape[1] > 3 else 'Dim 1')
         ax2.set_ylabel('PC 2' if data_b.shape[1] > 3 else 'Dim 2')
         ax2.set_zlabel('PC 3' if data_b.shape[1] > 3 else 'Dim 3')
     else:
         ax1 = fig.add_subplot(121)
-        ax1.scatter(data_a[:, 0], data_a[:, 1], c=c_a, alpha=0.5)
+        ax1.scatter(data_a[:, 0], data_a[:, 1], c=c_a, s=s_points, alpha=0.5)
         ax1.set_title('Modality A')
         ax1.set_xlabel('Dim 1'); ax1.set_ylabel('Dim 2')
         ax1.axis('equal')
         ax2 = fig.add_subplot(122)
-        ax2.scatter(data_b[:, 0], data_b[:, 1], c=c_b, alpha=0.5)
+        ax2.scatter(data_b[:, 0], data_b[:, 1], c=c_b, s=s_points, alpha=0.5)
         ax2.set_title('Modality B')
         ax2.set_xlabel('Dim 1'); ax2.set_ylabel('Dim 2')
         ax2.axis('equal')
@@ -138,6 +151,8 @@ def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, 
     # Latent outputs: retain noise-type coloring (same point indices)
     c_out_a = _get_point_colors(param_values, pt_a)
     c_out_b = _get_point_colors(param_values, pt_b)
+    
+    s_points = _get_point_sizes(param_values) * 2  # double size for the 4-way plot default to match the original s=10 vs s=5
 
     is_3d = data_a.shape[1] >= 3
     fig = plt.figure(figsize=(18, 4))
@@ -145,10 +160,10 @@ def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, 
 
     if is_3d:
         axs = [fig.add_subplot(1, 4, i+1, projection='3d') for i in range(4)]
-        axs[0].scatter(data_a_proj[:, 0], data_a_proj[:, 1], data_a_proj[:, 2], c=c_in_a, s=10, alpha=0.85)
-        axs[1].scatter(output_a_proj[:, 0], output_a_proj[:, 1], output_a_proj[:, 2], c=c_out_a, s=10, alpha=0.85)
-        axs[2].scatter(output_b_proj[:, 0], output_b_proj[:, 1], output_b_proj[:, 2], c=c_out_b, s=10, alpha=0.85)
-        axs[3].scatter(data_b_proj[:, 0], data_b_proj[:, 1], data_b_proj[:, 2], c=c_in_b, s=10, alpha=0.85)
+        axs[0].scatter(data_a_proj[:, 0], data_a_proj[:, 1], data_a_proj[:, 2], c=c_in_a, s=s_points, alpha=0.85)
+        axs[1].scatter(output_a_proj[:, 0], output_a_proj[:, 1], output_a_proj[:, 2], c=c_out_a, s=s_points, alpha=0.85)
+        axs[2].scatter(output_b_proj[:, 0], output_b_proj[:, 1], output_b_proj[:, 2], c=c_out_b, s=s_points, alpha=0.85)
+        axs[3].scatter(data_b_proj[:, 0], data_b_proj[:, 1], data_b_proj[:, 2], c=c_in_b, s=s_points, alpha=0.85)
         for i in range(4):
             dim_str = "PC" if data_a.shape[1] > 3 else "Dim"
             axs[i].set_xlabel(f'{dim_str} 1')
@@ -156,10 +171,10 @@ def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, 
             axs[i].set_zlabel(f'{dim_str} 3')
     else:
         axs = [fig.add_subplot(1, 4, i+1) for i in range(4)]
-        axs[0].scatter(data_a[:, 0], data_a[:, 1], c=c_in_a, s=10, alpha=0.85)
-        axs[1].scatter(output_a[:, 0], output_a[:, 1], c=c_out_a, s=10, alpha=0.85)
-        axs[2].scatter(output_b[:, 0], output_b[:, 1], c=c_out_b, s=10, alpha=0.85)
-        axs[3].scatter(data_b[:, 0], data_b[:, 1], c=c_in_b, s=10, alpha=0.85)
+        axs[0].scatter(data_a[:, 0], data_a[:, 1], c=c_in_a, s=s_points, alpha=0.85)
+        axs[1].scatter(output_a[:, 0], output_a[:, 1], c=c_out_a, s=s_points, alpha=0.85)
+        axs[2].scatter(output_b[:, 0], output_b[:, 1], c=c_out_b, s=s_points, alpha=0.85)
+        axs[3].scatter(data_b[:, 0], data_b[:, 1], c=c_in_b, s=s_points, alpha=0.85)
         for i in range(4):
             axs[i].set_xlabel('Dim 1'); axs[i].set_ylabel('Dim 2'); axs[i].axis('equal')
 

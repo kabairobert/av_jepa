@@ -35,6 +35,7 @@ class DualDisentangleDataset(Dataset):
         k_shared: int = 2,
         m_unique: int = 2,
         d_out: int = 16,
+        shared_factor_dist: str = 'uniform',
         # New 3D3F2C shape parameters
         u3a_scale: float = 0.2,
         u3b_scale: float = 0.3,
@@ -57,6 +58,7 @@ class DualDisentangleDataset(Dataset):
         self.wave_amplitude = safe_float(wave_amplitude, 1.0)
         self.embed_dim = int(embed_dim) if embed_dim is not None else None
         self.mlp_depth = int(mlp_depth)
+        self.shared_factor_dist = shared_factor_dist
         
         # Backward compatibility for old configs using "asymmetric_noise_rate" (defaulting to corrupt behavior)
         self.asym_corrupt_rate_a = max(safe_float(asym_corrupt_rate_a, 0.0), safe_float(asymmetric_noise_rate_a, 0.0))
@@ -361,7 +363,10 @@ class DualDisentangleDataset(Dataset):
                 pta, ptb = [], []
 
                 def sample_latents(n):
-                    u_s = self.rng.uniform(0, 1, (n, k_shared))
+                    if getattr(self, 'shared_factor_dist', 'uniform') == 'normal':
+                        u_s = self.rng.normal(0, 1, (n, k_shared))
+                    else:
+                        u_s = self.rng.uniform(0, 1, (n, k_shared))
                     u_ua = self.rng.normal(0, 1, (n, m_unique))
                     u_ub = self.rng.normal(0, 1, (n, m_unique))
                     return u_s, u_ua, u_ub
@@ -612,8 +617,6 @@ class DualDisentangleDataset(Dataset):
 
 
                 elif data_type == '3d-3f-2c-mlp':
-                    import torch.nn as nn
-
                     class _FrozenMLP(nn.Module):
                         def __init__(self, dim, hidden=64, depth=2):
                             super().__init__()
