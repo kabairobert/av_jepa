@@ -195,6 +195,7 @@ def run(
         turns=cfg.data.get('turns', 1.0),
         wave_amplitude=cfg.data.get('wave_amplitude', 1.0),
         embed_dim=cfg.data.get('embed_dim', None),
+        mlp_depth=cfg.data.get('mlp_depth', 2),
     )
 
     # Move entire dataset to GPU for significant training speedup (if using CUDA)

@@ -1,0 +1,82 @@
+batch_id: B13_affine_mlp
+description: >-
+  A 6-config sweep testing whether ClampedAffineCoupling ($y = x \cdot e^s + t$)
+  can untangle a 20D Random MLP embedding (where B12's Additive coupling failed),
+  investigating depth dependency (S6 vs S12) and data scaling (1x to 256x).
+
+configs:
+  - B13_1x_S6
+  - B13_1x_S12
+  - B13_16x_S6
+  - B13_16x_S12
+  - B13_256x_S6
+  - B13_256x_S12
+
+hypotheses:
+  # ------------------------------------------------------------------
+  # H13.1 — Affine Untangling vs Additive Failure
+  # ------------------------------------------------------------------
+  - id: H13.1
+    claim: >-
+      Affine coupling (scale + shear) provides sufficient geometric flexibility to
+      axis-align the 2 shared dims from a 20D Random MLP embedding, whereas Additive
+      coupling failed.
+    configs_compared:
+      a: B12_256x_M20_N1P21
+      b: B13_256x_S12
+    primary_metrics:
+      [diagonality_ratio, retrieval_cos@1]
+    decision_rules:
+      - metric: diagonality_ratio
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.10
+        verdict_true: AFFINE_UNTANGLING_SUPPORTED
+        verdict_false: AFFINE_UNTANGLING_REFUTED
+      - metric: retrieval_cos@1
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.15
+        verdict_true: AFFINE_UNTANGLING_SUPPORTED
+        verdict_false: AFFINE_UNTANGLING_REFUTED
+
+  # ------------------------------------------------------------------
+  # H13.2 — Depth Dependency on MLP Manifold
+  # ------------------------------------------------------------------
+  - id: H13.2
+    claim: >-
+      Deeper flows (stage_count=12) achieve significantly higher disentanglement
+      scores than shallow (stage_count=6) when inverting a 2-layer neural network.
+    configs_compared:
+      a: B13_256x_S6
+      b: B13_256x_S12
+    primary_metrics:
+      [diagonality_ratio, retrieval_cos@1]
+    decision_rules:
+      - metric: diagonality_ratio
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: DEPTH_IMPROVES_DISENTANGLEMENT_SUPPORTED
+        verdict_false: DEPTH_DISENTANGLEMENT_IMPROVEMENT_REFUTED
+      - metric: retrieval_cos@1
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.05
+        verdict_true: DEPTH_IMPROVES_DISENTANGLEMENT_SUPPORTED
+        verdict_false: DEPTH_DISENTANGLEMENT_IMPROVEMENT_REFUTED
+
+  # ------------------------------------------------------------------
+  # H13.3 — Data Efficiency for MLP Untangling
+  # ------------------------------------------------------------------
+  - id: H13.3
+    claim: >-
+      Untangling a non-linear MLP manifold with Affine coupling requires dense
+      manifold sampling, peaking at 256x.
+    configs_compared:
+      a: B13_1x_S12
+      b: B13_256x_S12
+    primary_metrics:
+      [retrieval_cos@1]
+    decision_rules:
+      - metric: retrieval_cos@1
+        condition: "{b} - {a} > {threshold}"
+        threshold: 0.10
+        verdict_true: DATA_SCALING_REQUIRED_SUPPORTED
+        verdict_false: DATA_SCALING_REQUIRED_REFUTED

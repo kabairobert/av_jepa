@@ -42,6 +42,7 @@ class DualDisentangleDataset(Dataset):
         wave_amplitude: float = 1.0,
         # HD embedding: used by 3d-3f-2c-rot and 3d-3f-2c-mlp
         embed_dim: int = None,
+        mlp_depth: int = 2,
     ):
         def safe_float(val, default=0.0):
             return default if val is None else float(val)
@@ -55,6 +56,7 @@ class DualDisentangleDataset(Dataset):
         self.turns = safe_float(turns, 1.0)
         self.wave_amplitude = safe_float(wave_amplitude, 1.0)
         self.embed_dim = int(embed_dim) if embed_dim is not None else None
+        self.mlp_depth = int(mlp_depth)
         
         # Backward compatibility for old configs using "asymmetric_noise_rate" (defaulting to corrupt behavior)
         self.asym_corrupt_rate_a = max(safe_float(asym_corrupt_rate_a, 0.0), safe_float(asymmetric_noise_rate_a, 0.0))
@@ -319,15 +321,21 @@ class DualDisentangleDataset(Dataset):
                 Observation is a frozen random MLP to simulate complex rendering.
                 """
                 class RandomFrozenMLP(nn.Module):
-                    def __init__(self, in_dim, out_dim, hidden_dim=64):
+                    def __init__(self, in_dim, out_dim, hidden_dim=64, depth=2):
                         super().__init__()
-                        self.net = nn.Sequential(
-                            nn.Linear(in_dim, hidden_dim),
-                            nn.GELU(),
-                            nn.Linear(hidden_dim, hidden_dim),
-                            nn.GELU(),
-                            nn.Linear(hidden_dim, out_dim)
-                        )
+                        if depth < 1:
+                            raise ValueError(f"depth must be >= 1, got {depth}")
+                        layers = []
+                        if depth == 1:
+                            layers.append(nn.Linear(in_dim, out_dim))
+                        else:
+                            layers.append(nn.Linear(in_dim, hidden_dim))
+                            layers.append(nn.GELU())
+                            for _ in range(depth - 2):
+                                layers.append(nn.Linear(hidden_dim, hidden_dim))
+                                layers.append(nn.GELU())
+                            layers.append(nn.Linear(hidden_dim, out_dim))
+                        self.net = nn.Sequential(*layers)
                         # Freeze
                         for p in self.parameters():
                             p.requires_grad = False
@@ -336,8 +344,8 @@ class DualDisentangleDataset(Dataset):
                         return self.net(x)
 
                 in_dim = k_shared + m_unique
-                mlp_a = RandomFrozenMLP(in_dim, d_out).eval()
-                mlp_b = RandomFrozenMLP(in_dim, d_out).eval()
+                mlp_a = RandomFrozenMLP(in_dim, d_out, depth=self.mlp_depth).eval()
+                mlp_b = RandomFrozenMLP(in_dim, d_out, depth=self.mlp_depth).eval()
                 
                 # Make sure the MLPs are deterministically initialized based on self.seed
                 # For simplicity, we just seeded torch globally earlier or we rely on torch_rng.
@@ -607,21 +615,29 @@ class DualDisentangleDataset(Dataset):
                     import torch.nn as nn
 
                     class _FrozenMLP(nn.Module):
-                        def __init__(self, dim, hidden=64):
+                        def __init__(self, dim, hidden=64, depth=2):
                             super().__init__()
-                            self.net = nn.Sequential(
-                                nn.Linear(dim, hidden), nn.GELU(),
-                                nn.Linear(hidden, hidden), nn.GELU(),
-                                nn.Linear(hidden, dim),
-                            )
+                            if depth < 1:
+                                raise ValueError(f"depth must be >= 1, got {depth}")
+                            layers = []
+                            if depth == 1:
+                                layers.append(nn.Linear(dim, dim))
+                            else:
+                                layers.append(nn.Linear(dim, hidden))
+                                layers.append(nn.GELU())
+                                for _ in range(depth - 2):
+                                    layers.append(nn.Linear(hidden, hidden))
+                                    layers.append(nn.GELU())
+                                layers.append(nn.Linear(hidden, dim))
+                            self.net = nn.Sequential(*layers)
                             for p in self.parameters():
                                 p.requires_grad = False
 
                         def forward(self, x):
                             return self.net(x)
 
-                    mlp_a = _FrozenMLP(D).eval()
-                    mlp_b = _FrozenMLP(D).eval()
+                    mlp_a = _FrozenMLP(D, depth=self.mlp_depth).eval()
+                    mlp_b = _FrozenMLP(D, depth=self.mlp_depth).eval()
 
                     def _init(m):
                         if isinstance(m, nn.Linear):
