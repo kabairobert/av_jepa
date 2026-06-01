@@ -42,14 +42,14 @@ run_job() {
 
 echo "Running Group 1 (High + Low VRAM): 512D, 64D, 32D"
 run_job "multimodal_experiments/ssl_dual_alignment/cfgs/B14_512D_S12.yaml" &
-run_job "multimodal_experiments/ssl_dual_alignment/cfgs/B14_64D_S6.yaml" &
-run_job "multimodal_experiments/ssl_dual_alignment/cfgs/B14_32D_S4.yaml" &
+#run_job "multimodal_experiments/ssl_dual_alignment/cfgs/B14_64D_S6.yaml" &
+#run_job "multimodal_experiments/ssl_dual_alignment/cfgs/B14_32D_S4.yaml" &
 wait
 
-echo "Running Group 2 (Medium VRAM): 256D, 128D"
-run_job "multimodal_experiments/ssl_dual_alignment/cfgs/B14_256D_S10.yaml" &
-run_job "multimodal_experiments/ssl_dual_alignment/cfgs/B14_128D_S8.yaml" &
-wait
+#echo "Running Group 2 (Medium VRAM): 256D, 128D"
+#run_job "multimodal_experiments/ssl_dual_alignment/cfgs/B14_256D_S10.yaml" &
+#run_job "multimodal_experiments/ssl_dual_alignment/cfgs/B14_128D_S8.yaml" &
+#wait
 
 echo "B14 Sweep complete."
 if [ -s "$FAILED_LOG" ]; then

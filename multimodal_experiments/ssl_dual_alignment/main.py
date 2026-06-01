@@ -355,9 +355,9 @@ def run(
                 device, global_step, wandb_run,
                 checkpoint_name=f"epoch_{epoch_idx+1}.pth.tar",
                 checkpoint_path=str(exp_dir / f"epoch_{epoch_idx+1}.pth.tar"),
-                log_interactive_3d=str(cfg.data.get("type", "2d")).startswith("3d"),
+                log_interactive_3d=bool(train_set.data_a.shape[1] >= 3),
                 log_prefix="val",
-                is_3d=str(cfg.data.get("type", "2d")).startswith("3d"),
+                is_3d=bool(train_set.data_a.shape[1] >= 3),
             )
 
     save_every = cfg.logging.get("save_every", 50)
@@ -459,9 +459,9 @@ def run(
             device, global_step, wandb_run,
             checkpoint_name="latest.pth.tar",
             checkpoint_path=str(exp_dir / "latest.pth.tar"),
-            log_interactive_3d=str(cfg.data.get("type", "2d")).startswith("3d"),
+            log_interactive_3d=bool(train_set.data_a.shape[1] >= 3),
             log_prefix="val",
-            is_3d=str(cfg.data.get("type", "2d")).startswith("3d"),
+            is_3d=bool(train_set.data_a.shape[1] >= 3),
         )
         log_plots_to_wandb(dual_model, train_set, device, global_step, wandb_run)
         wandb.finish()

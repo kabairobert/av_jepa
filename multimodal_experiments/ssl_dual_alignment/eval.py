@@ -77,7 +77,7 @@ def _get_color_values(param_values: np.ndarray) -> np.ndarray:
         u1 = param_values[:, 0]
         u2 = param_values[:, 1]
         hue = u1 * 360.0
-        saturation = 0.2 + u2 * 0.8
+        saturation = 0.1 + u2 * 0.9
         value = np.ones_like(u1)
         import colorsys
         color_list = []
@@ -107,7 +107,7 @@ def _get_point_type_colors(param_values: np.ndarray, point_types: np.ndarray) ->
         u1 = vals[:, 0]
         u2 = vals[:, 1]
         hue = u1 * 360.0
-        saturation = 0.2 + u2 * 0.8
+        saturation = 0.1 + u2 * 0.9
         value = np.ones_like(u1)
         import colorsys
         base_colors = []
@@ -788,7 +788,7 @@ def evaluate_and_log_checkpoint(
         wandb.log(geom_metrics, step=step)
 
         if is_3d is None:
-            is_3d = str(getattr(eval_set, "data_type", "")).startswith("3d")
+            is_3d = (eval_set.data_a.shape[1] >= 3)
 
         if is_3d and log_interactive_3d:
             data_a = eval_set.data_a.cpu().numpy()
@@ -963,7 +963,7 @@ def run(
     if not ckpts:
         raise ValueError(f"No checkpoints found in {run_dir}")
 
-    is_3d = str(data_cfg.get("type", "2d")).startswith("3d")
+    is_3d = (eval_set.data_a.shape[1] >= 3)
 
     for idx, ckpt in enumerate(ckpts):
         is_last = (idx == (len(ckpts) - 1))

@@ -42,7 +42,7 @@ def _get_point_colors(param_values, point_types, cmap='rainbow'):
         u1 = vals[:, 0]
         u2 = vals[:, 1]
         hue = u1 * 360.0
-        saturation = 0.2 + u2 * 0.8
+        saturation = 0.1 + u2 * 0.9
         value = np.ones_like(u1)
         import colorsys
         base_colors = []
