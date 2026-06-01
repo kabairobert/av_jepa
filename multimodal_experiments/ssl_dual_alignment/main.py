@@ -219,6 +219,10 @@ def run(
     predictor_a2b = built["predictor_a2b"]
     predictor_b2a = built["predictor_b2a"]
 
+    if hasattr(torch, "compile"):
+        print("Compiling model with torch.compile...")
+        dual_model = torch.compile(dual_model)
+
     # --- 6. Loss ---
     if loss_type == "ebm":
         loss_fn = EBMJEPALoss(
@@ -283,6 +287,28 @@ def run(
     if wandb_run:
         log_plots_to_wandb(dual_model, train_set, device, global_step, wandb_run)
 
+    # Mixed precision setup matching video_jepa's elegant and robust pattern
+    train_cfg = cfg.get("training", {})
+    if train_cfg is None:
+        train_cfg = {}
+    
+    use_amp = train_cfg.get("use_amp", True)
+    dtype_str = train_cfg.get("dtype", "bfloat16").lower()
+    
+    dtype_map = {
+        "float16": torch.float16,
+        "bfloat16": torch.bfloat16,
+        "float32": torch.float32,
+    }
+    dtype = dtype_map.get(dtype_str, torch.bfloat16)
+    
+    if use_amp and not torch.cuda.is_available():
+        print("AMP requested but CUDA not available — disabling AMP for safety on CPU")
+        use_amp = False
+        
+    scaler = torch.amp.GradScaler('cuda', enabled=use_amp and dtype == torch.float16)
+    print(f"Using AMP: {use_amp} with dtype: {dtype}")
+
     # --- 9. Training Loop ---
     max_train_batches = cfg.training.get("max_train_batches") if hasattr(cfg, "training") else None
 
@@ -307,10 +333,12 @@ def run(
             data_b = batch["data_b"].to(device)
             corr_target = batch["corr_target"].to(device)
             active_optimizer.zero_grad()
-            outputs = dual_model(data_a, data_b)
-            loss = loss_fn(outputs) if loss_type == "ebm" else loss_fn(corr_target, outputs)
-            loss.backward()
-            active_optimizer.step()
+            with torch.autocast(device_type=device.type, dtype=dtype, enabled=use_amp):
+                outputs = dual_model(data_a, data_b)
+                loss = loss_fn(outputs) if loss_type == "ebm" else loss_fn(corr_target, outputs)
+            scaler.scale(loss).backward()
+            scaler.step(active_optimizer)
+            scaler.update()
             # FIX #8: In Stage 1, predictor params receive gradients (from pred loss path)
             # but are not in opt_flow. Zero them explicitly to prevent stale grad accumulation.
             if stage == 1 and predictor_a2b is not None:

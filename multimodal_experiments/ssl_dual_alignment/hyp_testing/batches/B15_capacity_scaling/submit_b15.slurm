@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=9
 #SBATCH --gpus=1
 #SBATCH --mem=60G
-#SBATCH --time=03:00:00
+#SBATCH --time=12:00:00
 #SBATCH --array=0-4
 #SBATCH --output=multimodal_experiments/ssl_dual_alignment/hyp_testing/batches/B15_capacity_scaling/logs/b15_%A_%a.out
 #SBATCH --error=multimodal_experiments/ssl_dual_alignment/hyp_testing/batches/B15_capacity_scaling/logs/b15_%A_%a.err

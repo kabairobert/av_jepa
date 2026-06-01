@@ -161,16 +161,18 @@ class Reflection(FlowLayer):
 class _PermutationBase(FlowLayer):
     def __init__(self, shape: List[int], axes: List[int], permutation: Sequence[int]):
         super().__init__(shape=shape, axes=axes)
+        self.register_buffer('_permutation_tensor', torch.tensor(permutation, dtype=torch.long))
+        self.register_buffer('_inverse_permutation_tensor', torch.tensor(np.argsort(permutation), dtype=torch.long))
         self._permutation_ = list(permutation)
         self._inverse_permutation_ = list(np.argsort(self._permutation_))
 
     def forward(self, inputs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        y_hat = inputs[:, self._permutation_]
+        y_hat = inputs[:, self._permutation_tensor]
         jacobian_determinant = self.compute_jacobian_determinant(inputs)
         return y_hat, jacobian_determinant
 
     def invert(self, outputs: torch.Tensor) -> torch.Tensor:
-        return outputs[:, self._inverse_permutation_]
+        return outputs[:, self._inverse_permutation_tensor]
 
     def compute_jacobian_determinant(self, x: torch.Tensor) -> torch.Tensor:
         return torch.zeros(x.shape[0], device=x.device, dtype=x.dtype)
