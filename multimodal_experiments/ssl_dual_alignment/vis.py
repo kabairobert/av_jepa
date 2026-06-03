@@ -204,6 +204,20 @@ def log_plots_to_wandb(dual_model, dataset, device, step, wandb_run):
     if hasattr(pt_b, 'cpu'):
         pt_b = pt_b.cpu().numpy()
 
+    # Subsample to max 5000 points to prevent OOM and slow Matplotlib rendering
+    N = data_a.shape[0]
+    if N > 5000:
+        rng = np.random.RandomState(42)
+        idx = rng.choice(N, size=5000, replace=False)
+        data_a = data_a[idx]
+        data_b = data_b[idx]
+        if param_values is not None:
+            param_values = param_values[idx]
+        if pt_a is not None:
+            pt_a = pt_a[idx]
+        if pt_b is not None:
+            pt_b = pt_b[idx]
+
     fig_spaces = plot_original_spaces(data_a, data_b, param_values, pt_a, pt_b)
     fig_reshaping = plot_dual_geometry_reshaping_view(
         dual_model, data_a, data_b, param_values, device, pt_a, pt_b)
