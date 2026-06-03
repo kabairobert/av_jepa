@@ -2,8 +2,8 @@
 
 | Config | Status | Parameters | WandB Link | Rel Link | Abs Link |
 | --- | --- | --- | --- | --- | --- |
-| B15_128D_S12 | TODO | N=1048576, D=128, S=12 | - | - | - |
-| B15_256D_S14 | TODO | N=1048576, D=256, S=14 | - | - | - |
-| B15_32D_S8 | TODO | N=1048576, D=32, S=8 | - | - | - |
-| B15_512D_S16 | TODO | N=1048576, D=512, S=16 | - | - | - |
-| B15_64D_S10 | TODO | N=1048576, D=64, S=10 | - | - | - |
+| B15_128D_S12 | FINISHED | N=1048576, D=128, S=12 | [W&B](https://wandb.ai/robertkabai-um/eb_jepa/runs/vefljvbq) | [HTML](../../../../../checkpoints/sslda/dev_2026-06-02_03-15/B15_128D_S12_260602_031544_seed12345/wandb/run-20260602_031544-vefljvbq/files/media/html/interactive_3d_4way_html_25600_3850e6073897e5bfdc21.html) | [HTML](/gpfs/home3/rkabai/github/eb_jepa_private/checkpoints/sslda/dev_2026-06-02_03-15/B15_128D_S12_260602_031544_seed12345/wandb/run-20260602_031544-vefljvbq/files/media/html/interactive_3d_4way_html_25600_3850e6073897e5bfdc21.html) |
+| B15_256D_S14 | FINISHED | N=1048576, D=256, S=14 | [W&B](https://wandb.ai/robertkabai-um/eb_jepa/runs/8kzy0r3z) | [HTML](../../../../../checkpoints/sslda/dev_2026-06-02_03-21/B15_256D_S14_260602_032148_seed12345/wandb/run-20260602_032149-8kzy0r3z/files/media/html/interactive_3d_4way_html_25600_f4e5fd2e79068ab13cc4.html) | [HTML](/gpfs/home3/rkabai/github/eb_jepa_private/checkpoints/sslda/dev_2026-06-02_03-21/B15_256D_S14_260602_032148_seed12345/wandb/run-20260602_032149-8kzy0r3z/files/media/html/interactive_3d_4way_html_25600_f4e5fd2e79068ab13cc4.html) |
+| B15_32D_S8 | FINISHED | N=1048576, D=32, S=8 | [W&B](https://wandb.ai/robertkabai-um/eb_jepa/runs/dx2x4hnz) | [HTML](../../../../../checkpoints/sslda/dev_2026-06-02_03-14/B15_32D_S8_260602_031420_seed12345/wandb/run-20260602_031420-dx2x4hnz/files/media/html/interactive_3d_4way_html_25600_1478dbba0623998917e2.html) | [HTML](/gpfs/home3/rkabai/github/eb_jepa_private/checkpoints/sslda/dev_2026-06-02_03-14/B15_32D_S8_260602_031420_seed12345/wandb/run-20260602_031420-dx2x4hnz/files/media/html/interactive_3d_4way_html_25600_1478dbba0623998917e2.html) |
+| B15_512D_S16 | FAILED | N=1048576, D=512, S=16 | [W&B](https://wandb.ai/robertkabai-um/eb_jepa/runs/b5n6s7ob) | - | - |
+| B15_64D_S10 | FINISHED | N=1048576, D=64, S=10 | [W&B](https://wandb.ai/robertkabai-um/eb_jepa/runs/nzfc1i29) | [HTML](../../../../../checkpoints/sslda/dev_2026-06-02_03-14/B15_64D_S10_260602_031420_seed12345/wandb/run-20260602_031420-nzfc1i29/files/media/html/interactive_3d_4way_html_25600_e5057fe38f8c286226af.html) | [HTML](/gpfs/home3/rkabai/github/eb_jepa_private/checkpoints/sslda/dev_2026-06-02_03-14/B15_64D_S10_260602_031420_seed12345/wandb/run-20260602_031420-nzfc1i29/files/media/html/interactive_3d_4way_html_25600_e5057fe38f8c286226af.html) |
