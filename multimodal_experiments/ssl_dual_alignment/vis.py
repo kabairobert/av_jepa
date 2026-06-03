@@ -38,6 +38,32 @@ def _project_to_3d(data):
     return PCA(n_components=3).fit_transform(data)
 
 
+def get_hsv_colors(u1: np.ndarray, u2: np.ndarray, format_type: str = 'rgba') -> list:
+    """Computes HSV mapping (u1 -> Hue, u2 -> Saturation) returning either RGBA tuples or Plotly RGB strings."""
+    hue = u1 * 360.0
+    saturation = 0.1 + u2 * 0.9
+    value = np.ones_like(u1)
+    
+    import colorsys
+    colors = []
+    for h, s, v in zip(hue, saturation, value):
+        r, g, b = colorsys.hsv_to_rgb((h % 360.0) / 360.0, s, v)
+        if format_type == 'plotly':
+            colors.append(f"rgb({int(r*255)},{int(g*255)},{int(b*255)})")
+        else:
+            colors.append((r, g, b, 1.0))
+    return colors
+
+
+def get_point_sizes(param_values: np.ndarray, default_size: float = 5.0) -> np.ndarray | float:
+    """Return point sizes mapped from u3 (if present) or default_size."""
+    vals = _to_numpy(param_values).astype(float)
+    if vals.ndim == 2 and vals.shape[1] >= 3:
+        u3 = vals[:, 2]
+        return 2 + ((u3 - u3.min()) / (u3.max() - u3.min() + 1e-8)) * 8
+    return default_size
+
+
 def _get_point_colors(param_values, point_types, cmap='rainbow'):
     """Per-point color: manifold=rainbow/hsv, corrupted=gray, external=near-black."""
     vals = _to_numpy(param_values).astype(float)
@@ -47,16 +73,7 @@ def _get_point_colors(param_values, point_types, cmap='rainbow'):
         colormap = plt.colormaps[cmap]
         base_colors = [colormap(float(p)) for p in norm_p]
     else:
-        u1 = vals[:, 0]
-        u2 = vals[:, 1]
-        hue = u1 * 360.0
-        saturation = 0.1 + u2 * 0.9
-        value = np.ones_like(u1)
-        import colorsys
-        base_colors = []
-        for h, s, v in zip(hue, saturation, value):
-            r, g, b = colorsys.hsv_to_rgb((h % 360.0) / 360.0, s, v)
-            base_colors.append((r, g, b, 1.0))
+        base_colors = get_hsv_colors(vals[:, 0], vals[:, 1], format_type='rgba')
     
     gray_rgba = mcolors.to_rgba(_GRAY_CORRUPT)
     black_rgba = mcolors.to_rgba(_BLACK_EXTERNAL)
@@ -70,14 +87,10 @@ def _get_point_colors(param_values, point_types, cmap='rainbow'):
             colors.append(base_colors[i])
     return colors
 
+
 def _get_point_sizes(param_values):
     """Return point sizes mapped from u3 (if present) or default 5."""
-    vals = _to_numpy(param_values).astype(float)
-        
-    if vals.ndim == 2 and vals.shape[1] >= 3:
-        u3 = vals[:, 2]
-        return 2 + ((u3 - u3.min()) / (u3.max() - u3.min() + 1e-8)) * 8
-    return 5
+    return get_point_sizes(param_values, default_size=5.0)
 
 
 def plot_original_spaces(data_a, data_b, param_values,

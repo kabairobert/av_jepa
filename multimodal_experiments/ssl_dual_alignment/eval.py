@@ -13,7 +13,7 @@ from eb_jepa.training_utils import load_config, setup_device, setup_seed, setup_
 from multimodal_experiments.ssl_dual_alignment.dataset import PointType, build_dataset_from_config, DualDisentangleDataset
 from multimodal_experiments.ssl_dual_alignment.model_builder import build_model_and_predictors
 from multimodal_experiments.ssl_dual_alignment.losses import build_loss_from_config
-from multimodal_experiments.ssl_dual_alignment.vis import log_plots_to_wandb, _project_to_3d, _to_numpy
+from multimodal_experiments.ssl_dual_alignment.vis import log_plots_to_wandb, _project_to_3d, _to_numpy, get_hsv_colors, get_point_sizes
 
 logger = get_logger(__name__)
 
@@ -54,7 +54,7 @@ def _discover_checkpoints(run_dir: Path) -> list[Path]:
     return ckpts
 
 
-def _get_color_values(param_values: np.ndarray) -> np.ndarray:
+def _get_color_values(param_values: np.ndarray) -> np.ndarray | list:
     """Convert param values to RGB colors.
 
     For 1D param_values: use Rainbow colorscale.
@@ -69,17 +69,7 @@ def _get_color_values(param_values: np.ndarray) -> np.ndarray:
         from plotly.colors import sample_colorscale
         return sample_colorscale("Rainbow", normalized)
     else:
-        u1 = param_values[:, 0]
-        u2 = param_values[:, 1]
-        hue = u1 * 360.0
-        saturation = 0.1 + u2 * 0.9
-        value = np.ones_like(u1)
-        import colorsys
-        color_list = []
-        for h, s, v in zip(hue, saturation, value):
-            r, g, b = colorsys.hsv_to_rgb((h % 360.0) / 360.0, s, v)
-            color_list.append('rgb({},{},{})'.format(int(r * 255), int(g * 255), int(b * 255)))
-        return color_list
+        return get_hsv_colors(param_values[:, 0], param_values[:, 1], format_type='plotly')
 
 
 def _get_point_type_colors(param_values: np.ndarray, point_types: np.ndarray) -> list:
@@ -96,16 +86,7 @@ def _get_point_type_colors(param_values: np.ndarray, point_types: np.ndarray) ->
         from plotly.colors import sample_colorscale
         base_colors = sample_colorscale("Rainbow", normalized)
     else:
-        u1 = vals[:, 0]
-        u2 = vals[:, 1]
-        hue = u1 * 360.0
-        saturation = 0.1 + u2 * 0.9
-        value = np.ones_like(u1)
-        import colorsys
-        base_colors = []
-        for h, s, v in zip(hue, saturation, value):
-            r, g, b = colorsys.hsv_to_rgb((h % 360.0) / 360.0, s, v)
-            base_colors.append('rgb({},{},{})'.format(int(r * 255), int(g * 255), int(b * 255)))
+        base_colors = get_hsv_colors(vals[:, 0], vals[:, 1], format_type='plotly')
 
     colors = []
     for i, pt in enumerate(point_types):
@@ -179,11 +160,7 @@ def _build_interactive_4way_html(
         subplot_titles=("Input Space A", "Output Space A", "Output Space B", "Input Space B"),
     )
 
-    if param_values.ndim == 2 and param_values.shape[1] >= 3:
-        u3 = param_values[:, 2]
-        sizes = 2 + ((u3 - u3.min()) / (u3.max() - u3.min() + 1e-8)) * 8
-    else:
-        sizes = 3
+    sizes = get_point_sizes(param_values, default_size=3.0)
 
     def _scatter(xyz, name, colors):
         return go.Scatter3d(

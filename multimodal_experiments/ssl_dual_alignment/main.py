@@ -4,6 +4,7 @@ from datetime import datetime
 
 import fire
 import torch
+import wandb
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -288,7 +289,6 @@ def run(
     for epoch_idx in range(start_epoch, epochs):
         avg_loss, avg_a2b, avg_b2a = _train_epoch(epoch_idx, optimizer)
         if wandb_run:
-            import wandb
             wandb.log({
                 "train/loss": avg_loss,
                 "train/align_mse_a2b": avg_a2b,
@@ -309,7 +309,6 @@ def run(
     )
 
     if wandb_run:
-        import wandb
         evaluate_and_log_checkpoint(
             train_set, train_loader, dual_model, loss_fn, loss_type,
             {"a2b": predictor_a2b, "b2a": predictor_b2a},
