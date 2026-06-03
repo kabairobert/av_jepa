@@ -35,20 +35,6 @@ def _parse_tags(wandb_tags):
     return [t.strip() for t in str(wandb_tags).split(",") if t.strip()]
 
 
-def _save_optimizer_only(path: Path, optimizer, epoch: int, step: int) -> None:
-    """Save only optimizer state (no model) for Stage-2 predictor checkpoints.
-
-    save_checkpoint() requires a non-None model; use this helper when only the
-    optimizer state needs to be persisted (e.g. predictor optimizer in two-stage).
-    """
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
-        {"epoch": epoch, "step": step, "optimizer_state_dict": optimizer.state_dict()},
-        path,
-    )
-
-
 def _estimate_vram_footprint(cfg, device) -> None:
     """Estimate GPU VRAM footprint and print warning if usage is predicted high."""
     if device.type != 'cuda':
@@ -116,7 +102,9 @@ def run(
     torch.set_default_dtype(torch.float32)
 
     # --- 2. Exp Dir Setup ---
-    two_stage = cfg.training.get('two_stage', False) if hasattr(cfg, 'training') else False
+    two_stage_legacy = cfg.training.get('two_stage', False) if hasattr(cfg, 'training') else False
+    if two_stage_legacy:
+        print("⚠️ WARNING: Config specified two_stage=True, but two-stage training has been deprecated. Running in standard one-stage joint mode instead.")
     loss_type = cfg.loss.get("type", "ebm")
 
 
@@ -189,48 +177,23 @@ def run(
 
     loss_fn = build_loss_from_config(cfg, predictor_a2b, predictor_b2a)
 
-    # --- 7. Optimizers (one-stage or two-stage) ---
+    # --- 7. Optimizers ---
     start_epoch = 0
     global_step = 0
-    if two_stage:
-        stage1_epochs = cfg.training.get('stage1_epochs', 150)
-        stage2_epochs = cfg.training.get('stage2_epochs', 150)
-        epochs = stage1_epochs + stage2_epochs
-        opt_flow = torch.optim.Adam(dual_model.parameters(), lr=cfg.optim.get("lr", 0.001))
-        pred_params = []
-        if predictor_a2b is not None:
-            pred_params += list(predictor_a2b.parameters()) + list(predictor_b2a.parameters())
-        opt_pred = torch.optim.Adam(pred_params, lr=cfg.optim.get("lr", 0.001)) if pred_params else None
-    else:
-        epochs = cfg.optim.get("epochs", 500)
-        all_params = list(dual_model.parameters())
-        if predictor_a2b is not None:
-            all_params += list(predictor_a2b.parameters()) + list(predictor_b2a.parameters())
-        optimizer = torch.optim.Adam(all_params, lr=cfg.optim.get("lr", 0.001))
+    epochs = cfg.optim.get("epochs", 500)
+    all_params = list(dual_model.parameters())
+    if predictor_a2b is not None:
+        all_params += list(predictor_a2b.parameters()) + list(predictor_b2a.parameters())
+    optimizer = torch.optim.Adam(all_params, lr=cfg.optim.get("lr", 0.001))
 
     # --- 8. Resume Checkpoint ---
     if cfg.meta.get("load_model"):
         ckpt_path = exp_dir / cfg.meta.get("load_checkpoint", "latest.pth.tar")
-        if not two_stage:
-            ckpt_info = load_checkpoint(ckpt_path, full_model, optimizer, device=device)
-        else:
-            ckpt_info = load_checkpoint(ckpt_path, full_model, opt_flow, device=device)
-            # If resuming into Stage 2, also restore opt_pred state if a separate
-            # pred_optimizer checkpoint is available alongside the main checkpoint.
-            # load_checkpoint returns epoch+1, so after saving at stage1_epochs-1 we
-            # get back stage1_epochs here — the condition is therefore exact (no off-by-one).
-            start_epoch_probe = ckpt_info.get("epoch", 0)
-            if start_epoch_probe >= stage1_epochs and opt_pred is not None:
-                pred_ckpt = Path(str(ckpt_path).replace(".pth.tar", "_pred.pth.tar"))
-                if pred_ckpt.exists():
-                    raw = torch.load(pred_ckpt, map_location=device)
-                    if "optimizer_state_dict" in raw:
-                        opt_pred.load_state_dict(raw["optimizer_state_dict"])
+        ckpt_info = load_checkpoint(ckpt_path, full_model, optimizer, device=device)
         start_epoch = ckpt_info.get("epoch", 0)
         global_step = ckpt_info.get("step", 0)
 
-    print(f"Starting training for {epochs} epochs"
-          f"{' (two-stage: '+str(stage1_epochs)+'+'+str(stage2_epochs)+')' if two_stage else ''}...")
+    print(f"Starting training for {epochs} epochs...")
     if wandb_run:
         log_plots_to_wandb(dual_model, train_set, device, global_step, wandb_run)
 
@@ -259,12 +222,8 @@ def run(
     # --- 9. Training Loop ---
     max_train_batches = cfg.training.get("max_train_batches") if hasattr(cfg, "training") else None
 
-    def _train_epoch(epoch_idx, active_optimizer, stage=None):
-        """Single training epoch, returns (avg_loss, avg_align_a2b, avg_align_b2a).
-
-        stage: 1 = flow-only (Stage 1), 2 = predictor-only (Stage 2), None = joint.
-        In Stage 1, predictor .grad is zeroed after backward to prevent silent accumulation.
-        """
+    def _train_epoch(epoch_idx, active_optimizer):
+        """Single training epoch, returns (avg_loss, avg_align_a2b, avg_align_b2a)."""
         nonlocal global_step
         dual_model.train()
         epoch_loss = 0.0
@@ -286,7 +245,7 @@ def run(
             scaler.scale(loss).backward()
             scaler.step(active_optimizer)
             scaler.update()
-            # Predictor params receive no gradients in Stage 1 because they are bypassed in losses.py.
+            # Calculate alignment metrics under no_grad
             d = (outputs.shape[1] - 2) // 2
             z_a, z_b = outputs[:, :d], outputs[:, d:2*d]
             with torch.no_grad():
@@ -304,7 +263,7 @@ def run(
         nb = batch_idx
         return epoch_loss / nb, epoch_align_a2b / nb, epoch_align_b2a / nb
 
-    def _maybe_eval_and_save(epoch_idx, active_optimizer, current_stage=None):
+    def _maybe_eval_and_save(epoch_idx, active_optimizer):
         save_checkpoint(
             exp_dir / f"epoch_{epoch_idx+1}.pth.tar",
             model=full_model,
@@ -314,10 +273,6 @@ def run(
             axis_box=getattr(train_set, 'axis_box', None),
         )
         if wandb_run:
-            import wandb
-            # Log training stage directly to wandb before running evaluation.
-            if current_stage is not None:
-                wandb.log({"eval/training_stage": current_stage}, step=global_step)
             evaluate_and_log_checkpoint(
                 train_set, train_loader, dual_model, loss_fn, loss_type,
                 {"a2b": predictor_a2b, "b2a": predictor_b2a},
@@ -330,84 +285,18 @@ def run(
             )
 
     save_every = cfg.logging.get("save_every", 50)
-    if two_stage:
-        # Stage 1: train flows only
-        print(f"=== Stage 1: flow training ({stage1_epochs} epochs) ===")
-
-        # --- TEMPORARY CHANGE FOR STAGE 1 ---
-        # Set lambda_pred to 0 to ensure encoders only learn from Jacobian/Prior.
-        # This prevents the cross-modal prediction task from influencing encoders in Stage 1.
-        original_lambda_pred = getattr(loss_fn, 'lambda_pred', 1.0)
-        if hasattr(loss_fn, 'lambda_pred'):
-            loss_fn.lambda_pred = 0.0
-
-        for epoch_idx in range(start_epoch, stage1_epochs):
-            avg_loss, avg_a2b, avg_b2a = _train_epoch(epoch_idx, opt_flow, stage=1)
-            if wandb_run:
-                import wandb
-                wandb.log({
-                    "train/loss": avg_loss,
-                    "train/align_mse_a2b": avg_a2b,
-                    "train/align_mse_b2a": avg_b2a,
-                    "train/stage": 1,
-                }, step=global_step)
-            if (epoch_idx + 1) % save_every == 0:
-                _maybe_eval_and_save(epoch_idx, opt_flow, current_stage=1)
-
-        # --- RESTORE CHANGE FOR STAGE 2 ---
-        if hasattr(loss_fn, 'lambda_pred'):
-            loss_fn.lambda_pred = original_lambda_pred
-            print(f"Stage 1 complete. Restored loss_fn.lambda_pred to {original_lambda_pred}")
-
-        # Freeze flows, unfreeze predictors for Stage 2
-        dual_model.requires_grad_(False)
-        if predictor_a2b is not None:
-            predictor_a2b.requires_grad_(True)
-            predictor_b2a.requires_grad_(True)
-
-        # Stage 2: train predictors only
-        print(f"=== Stage 2: predictor training ({stage2_epochs} epochs) ===")
-        if opt_pred is None:
-            print("WARNING: no predictor params — Stage 2 is a no-op")
-        for epoch_idx in range(max(start_epoch, stage1_epochs), epochs):
-            if opt_pred is not None:
-                avg_loss, avg_a2b, avg_b2a = _train_epoch(epoch_idx, opt_pred, stage=2)
-            else:
-                avg_loss, avg_a2b, avg_b2a = 0.0, 0.0, 0.0
-            if wandb_run:
-                import wandb
-                wandb.log({
-                    "train/loss": avg_loss,
-                    "train/align_mse_a2b": avg_a2b,
-                    "train/align_mse_b2a": avg_b2a,
-                    "train/stage": 2,
-                }, step=global_step)
-            if (epoch_idx + 1) % save_every == 0:
-                _maybe_eval_and_save(epoch_idx, opt_pred or opt_flow, current_stage=2)
-                # Persist only the opt_pred state using the dedicated helper.
-                if opt_pred is not None:
-                    _save_optimizer_only(
-                        exp_dir / f"epoch_{epoch_idx+1}_pred.pth.tar",
-                        opt_pred, epoch=epoch_idx, step=global_step,
-                    )
-
-        # Restore flow grad for final save
-        dual_model.requires_grad_(True)
-        final_optimizer = opt_pred if opt_pred is not None else opt_flow
-
-    else:
-        for epoch_idx in range(start_epoch, epochs):
-            avg_loss, avg_a2b, avg_b2a = _train_epoch(epoch_idx, optimizer)
-            if wandb_run:
-                import wandb
-                wandb.log({
-                    "train/loss": avg_loss,
-                    "train/align_mse_a2b": avg_a2b,
-                    "train/align_mse_b2a": avg_b2a,
-                }, step=global_step)
-            if (epoch_idx + 1) % save_every == 0:
-                _maybe_eval_and_save(epoch_idx, optimizer)
-        final_optimizer = optimizer
+    for epoch_idx in range(start_epoch, epochs):
+        avg_loss, avg_a2b, avg_b2a = _train_epoch(epoch_idx, optimizer)
+        if wandb_run:
+            import wandb
+            wandb.log({
+                "train/loss": avg_loss,
+                "train/align_mse_a2b": avg_a2b,
+                "train/align_mse_b2a": avg_b2a,
+            }, step=global_step)
+        if (epoch_idx + 1) % save_every == 0:
+            _maybe_eval_and_save(epoch_idx, optimizer)
+    final_optimizer = optimizer
 
     # --- 10. Final checkpoint ---
     save_checkpoint(
