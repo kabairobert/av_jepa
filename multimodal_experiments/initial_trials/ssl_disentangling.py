@@ -1,6 +1,7 @@
 import math
 import random
 from dataclasses import dataclass
+import warnings
 from typing import Callable, Generator, List, Sequence, Tuple, Union
 
 import numpy as np
@@ -356,8 +357,17 @@ class FlowModel(nn.Module):
 
 
 class SupervisedFactorLoss(nn.Module):
+    # =========================================================================
+    # DEPRECATED LEGACY COMPONENT (Replaced by EBMJEPALoss in active framework)
+    # =========================================================================
     def __init__(self, dimensions_per_factor: List[int]):
         super().__init__()
+        warnings.warn(
+            "SupervisedFactorLoss is deprecated and may be removed in future versions. "
+            "Use EBMJEPALoss instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         factor_count = len(dimensions_per_factor)
         factor_masks = np.zeros((factor_count, int(np.sum(dimensions_per_factor))), dtype=np.float64)
         total = 0
@@ -412,6 +422,14 @@ def create_data_set(S: np.ndarray, manifold_function: Callable, noise_standard_d
 
 
 def self_supervised_dual_generator(z1_data, z2_data, batch_size, rng=None):
+    # =========================================================================
+    # DEPRECATED LEGACY GENERATOR (Replaced by PyTorch DataLoader)
+    # =========================================================================
+    warnings.warn(
+        "self_supervised_dual_generator is deprecated and replaced by PyTorch's native DataLoader.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if rng is None:
         rng = np.random
     num_samples = len(z1_data)
@@ -481,6 +499,14 @@ def sample_curve_data(param_values: np.ndarray, curve_fn: Callable, noise_std: T
 
 
 def paired_batch_generator(data_a: np.ndarray, data_b: np.ndarray, batch_size: int):
+    # =========================================================================
+    # DEPRECATED LEGACY GENERATOR (Replaced by PyTorch DataLoader)
+    # =========================================================================
+    warnings.warn(
+        "paired_batch_generator is deprecated and replaced by PyTorch's native DataLoader.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return self_supervised_dual_generator(z1_data=data_a, z2_data=data_b, batch_size=batch_size)
 
 

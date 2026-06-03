@@ -19,11 +19,9 @@ from eb_jepa.training_utils import (
     save_checkpoint,
     load_checkpoint
 )
-from multimodal_experiments.ssl_dual_alignment.dataset import DualDisentangleDataset
+from multimodal_experiments.ssl_dual_alignment.dataset import build_dataset_from_config
 from multimodal_experiments.ssl_dual_alignment.model_builder import build_model_and_predictors
-from multimodal_experiments.ssl_dual_alignment.losses import EBMJEPALoss
-from multimodal_experiments.ssl_dual_alignment.losses import canonicalize_congruence_mode
-from multimodal_experiments.initial_trials.ssl_disentangling import SupervisedFactorLoss
+from multimodal_experiments.ssl_dual_alignment.losses import build_loss_from_config
 from multimodal_experiments.ssl_dual_alignment.eval import evaluate_and_log_checkpoint
 from multimodal_experiments.ssl_dual_alignment.vis import log_plots_to_wandb
 
@@ -51,7 +49,40 @@ def _save_optimizer_only(path: Path, optimizer, epoch: int, step: int) -> None:
     )
 
 
-
+def _estimate_vram_footprint(cfg, device) -> None:
+    """Estimate GPU VRAM footprint and print warning if usage is predicted high."""
+    if device.type != 'cuda':
+        return
+    try:
+        total_mem = torch.cuda.get_device_properties(device).total_memory
+        s_count = cfg.model.get('stage_count', 6)
+        n_dims = cfg.model.get('num_dims', 2)
+        h_units = cfg.model.get('hidden_units', 128)
+        b_size = cfg.data.get('batch_size', 128)
+        
+        # Estimate activation memory in GB (4 coupling layers per stage, float32)
+        est_act_mem_gb = (4 * s_count * b_size * (3 * n_dims + 2 * h_units) * 4) / 1024**3
+        # Estimate compile overhead for deep models
+        compile_overhead = 8.0 if (hasattr(torch, "compile") and s_count >= 12 and n_dims >= 256) else 0.0
+        
+        total_needed_gb = est_act_mem_gb + compile_overhead
+        total_avail_gb = total_mem / 1024**3
+        
+        print(
+            f"[INFO] GPU VRAM footprint estimates:\n"
+            f"  Estimated Activation Memory: {est_act_mem_gb:.2f} GB\n"
+            f"  Estimated Compile Overhead: {compile_overhead:.2f} GB\n"
+            f"  Total Estimated GPU VRAM Required: {total_needed_gb:.2f} GB\n"
+            f"  GPU total capacity: {total_avail_gb:.2f} GB"
+        )
+        
+        if total_needed_gb > 0.50 * total_avail_gb:
+            print(
+                f"⚠️ WARNING: High GPU VRAM usage predicted! (> 50% capacity).\n"
+                f"  If you experience OOM, consider reducing batch_size, stage_count, or disabling torch.compile."
+            )
+    except Exception:
+        pass
 
 
 def run(
@@ -87,9 +118,6 @@ def run(
     # --- 2. Exp Dir Setup ---
     two_stage = cfg.training.get('two_stage', False) if hasattr(cfg, 'training') else False
     loss_type = cfg.loss.get("type", "ebm")
-
-    cm_val = str(cfg.loss.get("congruence_mode", cfg.loss.get("noise_reweighting", "none")))
-    canon_cm = canonicalize_congruence_mode(cm_val)
 
 
     
@@ -128,31 +156,7 @@ def run(
         enabled=cfg.logging.get("log_wandb", False),
     )
 
-    # --- 4. Dataset ---
-    train_set = DualDisentangleDataset(
-        data_type=cfg.data.get('type', '2d'),
-        num_samples=cfg.data.get('num_samples', 4096),
-        path_a=cfg.data.get('path_a', None),
-        path_b=cfg.data.get('path_b', None),
-        manifold_noise_a=cfg.data.get('manifold_noise_a', None),
-        manifold_noise_b=cfg.data.get('manifold_noise_b', None),
-        asymmetric_noise_magnitude=cfg.data.get('asymmetric_noise_magnitude', None),
-        asymmetric_noise_rate_a=cfg.data.get('asymmetric_noise_rate_a', None),
-        asymmetric_noise_rate_b=cfg.data.get('asymmetric_noise_rate_b', None),
-        external_noise_ratio=cfg.data.get('external_noise_ratio', None),
-        noise_bbox_expansion=cfg.data.get('noise_bbox_expansion', 0.0),
-        seed=cfg.meta.seed,
-        # nd-kf-mlp dataset shape params (ignored for other data_types)
-        k_shared=cfg.data.get('k_shared', 2),
-        m_unique=cfg.data.get('m_unique', 2),
-        d_out=cfg.data.get('d_out', 16),
-        u3a_scale=cfg.data.get('u3a_scale', 0.2),
-        u3b_scale=cfg.data.get('u3b_scale', 0.3),
-        turns=cfg.data.get('turns', 1.0),
-        wave_amplitude=cfg.data.get('wave_amplitude', 1.0),
-        embed_dim=cfg.data.get('embed_dim', None),
-        mlp_depth=cfg.data.get('mlp_depth', 2),
-    )
+    train_set = build_dataset_from_config(cfg)
 
     # Keep dataset on CPU to save VRAM and avoid OOM on large configurations
     # train_set.to(device)
@@ -177,60 +181,13 @@ def run(
     predictor_b2a = built["predictor_b2a"]
 
     # VRAM safety check
-    if device.type == 'cuda':
-        try:
-            total_mem = torch.cuda.get_device_properties(device).total_memory
-            s_count = cfg.model.get('stage_count', 6)
-            n_dims = cfg.model.get('num_dims', 2)
-            h_units = cfg.model.get('hidden_units', 128)
-            b_size = cfg.data.get('batch_size', 128)
-            
-            # Estimate activation memory in GB (4 coupling layers per stage, float32)
-            est_act_mem_gb = (4 * s_count * b_size * (3 * n_dims + 2 * h_units) * 4) / 1024**3
-            # Estimate compile overhead for deep models
-            compile_overhead = 8.0 if (hasattr(torch, "compile") and s_count >= 12 and n_dims >= 256) else 0.0
-            
-            total_needed_gb = est_act_mem_gb + compile_overhead
-            total_avail_gb = total_mem / 1024**3
-            
-            print(
-                f"[INFO] GPU VRAM footprint estimates:\n"
-                f"  Estimated Activation Memory: {est_act_mem_gb:.2f} GB\n"
-                f"  Estimated Compile Overhead: {compile_overhead:.2f} GB\n"
-                f"  Total Estimated GPU VRAM Required: {total_needed_gb:.2f} GB\n"
-                f"  GPU total capacity: {total_avail_gb:.2f} GB"
-            )
-            
-            if total_needed_gb > 0.50 * total_avail_gb:
-                print(
-                    f"⚠️ WARNING: High GPU VRAM usage predicted! (> 50% capacity).\n"
-                    f"  If you experience OOM, consider reducing batch_size, stage_count, or disabling torch.compile."
-                )
-        except Exception:
-            pass
+    _estimate_vram_footprint(cfg, device)
 
     if hasattr(torch, "compile"):
         print("Compiling model with torch.compile...")
         dual_model = torch.compile(dual_model)
 
-    # --- 6. Loss ---
-    if loss_type == "ebm":
-        loss_fn = EBMJEPALoss(
-            predictor_a2b,
-            predictor_b2a,
-            lambda_jac=cfg.loss.get("lambda_jac", 1.0),
-            lambda_prior=cfg.loss.get("lambda_prior", 0.5),
-            lambda_pred=cfg.loss.get("lambda_pred", 1.0),
-            lambda_sparse=cfg.loss.get("lambda_sparse", 0.1),
-            prior_type=cfg.loss.get("prior_type", 'l1'),
-            pred_loss=cfg.loss.get("pred_loss", 'l1'),
-            congruence_mode=canon_cm,
-            congruence_tau=cfg.loss.get("congruence_tau", cfg.loss.get("reweighting_tau", 0.5)),
-        )
-    else:
-        loss_fn = SupervisedFactorLoss(
-            dimensions_per_factor=[1, 1] if cfg.data.get('type', '2d') == '2d' else [1, 1, 1]
-        )
+    loss_fn = build_loss_from_config(cfg, predictor_a2b, predictor_b2a)
 
     # --- 7. Optimizers (one-stage or two-stage) ---
     start_epoch = 0
@@ -358,8 +315,7 @@ def run(
         )
         if wandb_run:
             import wandb
-            # FIX Bug1: evaluate_and_log_checkpoint has no extra_logs param.
-            # Log training_stage directly before the eval call instead.
+            # Log training stage directly to wandb before running evaluation.
             if current_stage is not None:
                 wandb.log({"eval/training_stage": current_stage}, step=global_step)
             evaluate_and_log_checkpoint(
@@ -413,7 +369,7 @@ def run(
         print(f"=== Stage 2: predictor training ({stage2_epochs} epochs) ===")
         if opt_pred is None:
             print("WARNING: no predictor params — Stage 2 is a no-op")
-        for epoch_idx in range(stage1_epochs, epochs):
+        for epoch_idx in range(max(start_epoch, stage1_epochs), epochs):
             if opt_pred is not None:
                 avg_loss, avg_a2b, avg_b2a = _train_epoch(epoch_idx, opt_pred, stage=2)
             else:
@@ -428,8 +384,7 @@ def run(
                 }, step=global_step)
             if (epoch_idx + 1) % save_every == 0:
                 _maybe_eval_and_save(epoch_idx, opt_pred or opt_flow, current_stage=2)
-                # FIX Bug2: save_checkpoint requires a non-None model.
-                # Persist only opt_pred state with the dedicated helper.
+                # Persist only the opt_pred state using the dedicated helper.
                 if opt_pred is not None:
                     _save_optimizer_only(
                         exp_dir / f"epoch_{epoch_idx+1}_pred.pth.tar",

@@ -20,6 +20,17 @@ _GRAY_CORRUPT = '#808080'
 _BLACK_EXTERNAL = '#000000'   # Pure black to distinguish from dark blue turbo(0)
 
 
+def _to_numpy(val):
+    """Convert PyTorch tensor or array-like to numpy array."""
+    if val is None:
+        return None
+    if hasattr(val, 'cpu'):
+        return val.cpu().numpy()
+    if hasattr(val, 'numpy'):
+        return val.numpy()
+    return np.asarray(val)
+
+
 def _project_to_3d(data):
     if data.shape[1] <= 3:
         return data
@@ -29,14 +40,11 @@ def _project_to_3d(data):
 
 def _get_point_colors(param_values, point_types, cmap='rainbow'):
     """Per-point color: manifold=rainbow/hsv, corrupted=gray, external=near-black."""
-    if hasattr(param_values, 'cpu'):
-        vals = param_values.cpu().numpy().astype(float)
-    else:
-        vals = np.asarray(param_values, dtype=float)
+    vals = _to_numpy(param_values).astype(float)
 
     if vals.ndim == 1:
         norm_p = (vals - vals.min()) / (vals.max() - vals.min() + 1e-12)
-        colormap = cm.get_cmap(cmap)
+        colormap = plt.colormaps[cmap]
         base_colors = [colormap(float(p)) for p in norm_p]
     else:
         u1 = vals[:, 0]
@@ -64,10 +72,7 @@ def _get_point_colors(param_values, point_types, cmap='rainbow'):
 
 def _get_point_sizes(param_values):
     """Return point sizes mapped from u3 (if present) or default 5."""
-    if hasattr(param_values, 'cpu'):
-        vals = param_values.cpu().numpy().astype(float)
-    else:
-        vals = np.asarray(param_values, dtype=float)
+    vals = _to_numpy(param_values).astype(float)
         
     if vals.ndim == 2 and vals.shape[1] >= 3:
         u3 = vals[:, 2]
@@ -190,19 +195,11 @@ def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, 
 def log_plots_to_wandb(dual_model, dataset, device, step, wandb_run):
     """Generates and logs visualizations to W&B."""
     # Ensure all components are on CPU before converting to numpy for plotting
-    data_a = dataset.data_a.cpu().numpy()
-    data_b = dataset.data_b.cpu().numpy()
-    param_values = dataset.param_values
-    if hasattr(param_values, 'cpu'):
-        param_values = param_values.cpu().numpy()
-    
-    pt_a = getattr(dataset, 'point_type_a', None)
-    if hasattr(pt_a, 'cpu'):
-        pt_a = pt_a.cpu().numpy()
-        
-    pt_b = getattr(dataset, 'point_type_b', None)
-    if hasattr(pt_b, 'cpu'):
-        pt_b = pt_b.cpu().numpy()
+    data_a = _to_numpy(dataset.data_a)
+    data_b = _to_numpy(dataset.data_b)
+    param_values = _to_numpy(dataset.param_values)
+    pt_a = _to_numpy(getattr(dataset, 'point_type_a', None))
+    pt_b = _to_numpy(getattr(dataset, 'point_type_b', None))
 
     # Subsample to max 5000 points to prevent OOM and slow Matplotlib rendering
     N = data_a.shape[0]
@@ -219,14 +216,18 @@ def log_plots_to_wandb(dual_model, dataset, device, step, wandb_run):
             pt_b = pt_b[idx]
 
     fig_spaces = plot_original_spaces(data_a, data_b, param_values, pt_a, pt_b)
-    fig_reshaping = plot_dual_geometry_reshaping_view(
-        dual_model, data_a, data_b, param_values, device, pt_a, pt_b)
+    fig_reshaping = None
+    try:
+        fig_reshaping = plot_dual_geometry_reshaping_view(
+            dual_model, data_a, data_b, param_values, device, pt_a, pt_b)
 
-    if wandb_run:
-        wandb.log({
-            "original_spaces": wandb.Image(fig_spaces),
-            "geometry_reshaping": wandb.Image(fig_reshaping)
-        }, step=step)
-
-    plt.close(fig_spaces)
-    plt.close(fig_reshaping)
+        if wandb_run:
+            wandb.log({
+                "original_spaces": wandb.Image(fig_spaces),
+                "geometry_reshaping": wandb.Image(fig_reshaping)
+            }, step=step)
+    finally:
+        if fig_spaces is not None:
+            plt.close(fig_spaces)
+        if fig_reshaping is not None:
+            plt.close(fig_reshaping)

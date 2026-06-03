@@ -243,3 +243,31 @@ class EBMJEPALoss(torch.nn.Module):
             total = pred_term + jac_term + prior_term + sparse_gated
 
         return total
+
+
+def build_loss_from_config(cfg_obj, predictor_a2b, predictor_b2a) -> torch.nn.Module:
+    """Builds the loss module (either EBMJEPALoss or SupervisedFactorLoss) from configuration."""
+    loss_cfg = cfg_obj.loss
+    loss_type = loss_cfg.get("type", "ebm")
+    
+    if loss_type == "ebm":
+        return EBMJEPALoss(
+            predictor_a2b,
+            predictor_b2a,
+            lambda_jac=loss_cfg.get("lambda_jac", 1.0),
+            lambda_prior=loss_cfg.get("lambda_prior", 0.5),
+            lambda_pred=loss_cfg.get("lambda_pred", 1.0),
+            lambda_sparse=loss_cfg.get("lambda_sparse", 0.1),
+            prior_type=loss_cfg.get("prior_type", 'l1'),
+            pred_loss=loss_cfg.get("pred_loss", 'l1'),
+            congruence_mode=loss_cfg.get("congruence_mode", "none"),
+            congruence_tau=loss_cfg.get("congruence_tau", 0.5),
+            noise_reweighting=loss_cfg.get("noise_reweighting"),
+            reweighting_tau=loss_cfg.get("reweighting_tau"),
+        )
+    else:
+        from multimodal_experiments.initial_trials.ssl_disentangling import SupervisedFactorLoss
+        data_type = cfg_obj.data.get('type', '2d')
+        dims = [1, 1] if data_type == '2d' else [1, 1, 1]
+        return SupervisedFactorLoss(dimensions_per_factor=dims)
+

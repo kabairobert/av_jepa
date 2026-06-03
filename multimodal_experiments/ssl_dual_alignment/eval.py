@@ -10,12 +10,10 @@ from tqdm import tqdm
 
 from eb_jepa.logging import get_logger
 from eb_jepa.training_utils import load_config, setup_device, setup_seed, setup_wandb, load_checkpoint
-from multimodal_experiments.ssl_dual_alignment.dataset import DualDisentangleDataset, PointType
+from multimodal_experiments.ssl_dual_alignment.dataset import PointType, build_dataset_from_config, DualDisentangleDataset
 from multimodal_experiments.ssl_dual_alignment.model_builder import build_model_and_predictors
-from multimodal_experiments.ssl_dual_alignment.losses import EBMJEPALoss
-from multimodal_experiments.ssl_dual_alignment.losses import canonicalize_congruence_mode
-from multimodal_experiments.initial_trials.ssl_disentangling import SupervisedFactorLoss
-from multimodal_experiments.ssl_dual_alignment.vis import log_plots_to_wandb, _project_to_3d
+from multimodal_experiments.ssl_dual_alignment.losses import build_loss_from_config
+from multimodal_experiments.ssl_dual_alignment.vis import log_plots_to_wandb, _project_to_3d, _to_numpy
 
 logger = get_logger(__name__)
 
@@ -62,10 +60,7 @@ def _get_color_values(param_values: np.ndarray) -> np.ndarray:
     For 1D param_values: use Rainbow colorscale.
     For 2D param_values: use HSV encoding (u1 -> Hue, u2 -> Saturation [0.2, 1]).
     """
-    if hasattr(param_values, 'cpu'):
-        param_values = param_values.cpu().numpy()
-    elif hasattr(param_values, 'numpy'):
-        param_values = param_values.numpy()
+    param_values = _to_numpy(param_values)
 
     if param_values.ndim == 1:
         vals = param_values
@@ -93,10 +88,7 @@ def _get_point_type_colors(param_values: np.ndarray, point_types: np.ndarray) ->
     Manifold points use Rainbow (1D) or HSV (2D) by param value. Corrupted points are gray.
     External points are near-black.
     """
-    if hasattr(param_values, 'cpu'):
-        vals = param_values.cpu().numpy().astype(float)
-    else:
-        vals = param_values.astype(float)
+    vals = _to_numpy(param_values).astype(float)
 
     if vals.ndim == 1:
         denom = (vals.max() - vals.min()) + 1e-8
@@ -276,9 +268,12 @@ def vicreg_covariance(z: np.ndarray) -> float:
     z = z - z.mean(axis=0)
     cov = (z.T @ z) / (batch_size - 1)
     
-    # Remove diagonal
-    cov_off_diag = cov.flatten()[:-1].reshape(num_features - 1, num_features + 1)[:, 1:].flatten()
-    return float(np.mean(cov_off_diag**2))
+    if num_features > 1:
+        # Zero out diagonal elements
+        cov_off_diag = cov - np.diag(np.diag(cov))
+        # Mean of squared off-diagonals
+        return float(np.sum(cov_off_diag**2) / (num_features * (num_features - 1)))
+    return 0.0
 
 
 
@@ -397,11 +392,7 @@ def compute_geometry_metrics(
     dual_model.eval()
     data_a = dataset.data_a
     data_b = dataset.data_b
-    param_values = dataset.param_values
-    if hasattr(param_values, 'cpu'):
-        param_values = param_values.cpu().numpy()
-    else:
-        param_values = np.asarray(param_values)
+    param_values = _to_numpy(dataset.param_values)
     idxs = None
 
     if data_a.shape[0] > max_points:
@@ -434,8 +425,8 @@ def compute_geometry_metrics(
     _pt_a_attr = getattr(dataset, "point_type_a", None)
     _pt_b_attr = getattr(dataset, "point_type_b", None)
     if _pt_a_attr is not None and _pt_b_attr is not None:
-        _pt_a_np = _pt_a_attr.cpu().numpy() if hasattr(_pt_a_attr, 'cpu') else np.asarray(_pt_a_attr)
-        _pt_b_np = _pt_b_attr.cpu().numpy() if hasattr(_pt_b_attr, 'cpu') else np.asarray(_pt_b_attr)
+        _pt_a_np = _to_numpy(_pt_a_attr)
+        _pt_b_np = _to_numpy(_pt_b_attr)
         if idxs is not None:
             _pt_a_np = _pt_a_np[idxs]
             _pt_b_np = _pt_b_np[idxs]
@@ -601,12 +592,8 @@ def compute_geometry_metrics(
     pt_a = getattr(dataset, "point_type_a", None)
     pt_b = getattr(dataset, "point_type_b", None)
     if pt_a is not None and pt_b is not None:
-        if hasattr(pt_a, 'cpu'):
-            pt_a = pt_a.cpu().numpy()
-            pt_b = pt_b.cpu().numpy()
-        else:
-            pt_a = np.asarray(pt_a)
-            pt_b = np.asarray(pt_b)
+        pt_a = _to_numpy(pt_a)
+        pt_b = _to_numpy(pt_b)
         if idxs is not None:
             pt_a = pt_a[idxs]
             pt_b = pt_b[idxs]
@@ -787,11 +774,9 @@ def evaluate_and_log_checkpoint(
             is_3d = (eval_set.data_a.shape[1] >= 3)
 
         if is_3d and log_interactive_3d:
-            data_a = eval_set.data_a.cpu().numpy()
-            data_b = eval_set.data_b.cpu().numpy()
-            param_values = eval_set.param_values
-            if hasattr(param_values, 'cpu'):
-                param_values = param_values.cpu().numpy()
+            data_a = _to_numpy(eval_set.data_a)
+            data_b = _to_numpy(eval_set.data_b)
+            param_values = _to_numpy(eval_set.param_values)
             idxs = None
             if data_a.shape[0] > max_interactive_points:
                 idxs = np.random.choice(data_a.shape[0], size=max_interactive_points, replace=False)
@@ -812,12 +797,8 @@ def evaluate_and_log_checkpoint(
                 pt_a = getattr(eval_set, "point_type_a", None)
                 pt_b = getattr(eval_set, "point_type_b", None)
                 if pt_a is not None:
-                    if hasattr(pt_a, "cpu"):
-                        pt_a = pt_a.cpu().numpy()
-                        pt_b = pt_b.cpu().numpy()
-                    else:
-                        pt_a = np.asarray(pt_a)
-                        pt_b = np.asarray(pt_b)
+                    pt_a = _to_numpy(pt_a)
+                    pt_b = _to_numpy(pt_b)
                     
                     if idxs is not None:
                         pt_a = pt_a[idxs]
@@ -886,30 +867,7 @@ def run(
     setup_seed(cfg_obj.meta.seed)
 
     data_cfg = cfg_obj.data
-    eval_set = DualDisentangleDataset(
-        data_type=data_cfg.get("type", "2d"),
-        num_samples=data_cfg.get("num_samples", 4096),
-        path_a=data_cfg.get("path_a", None),
-        path_b=data_cfg.get("path_b", None),
-        manifold_noise_a=data_cfg.get("manifold_noise_a", None),
-        manifold_noise_b=data_cfg.get("manifold_noise_b", None),
-        asymmetric_noise_magnitude=data_cfg.get("asymmetric_noise_magnitude", None),
-        asymmetric_noise_rate_a=data_cfg.get("asymmetric_noise_rate_a", None),
-        asymmetric_noise_rate_b=data_cfg.get("asymmetric_noise_rate_b", None),
-        external_noise_ratio=data_cfg.get("external_noise_ratio", None),
-        noise_bbox_expansion=data_cfg.get("noise_bbox_expansion", 0.0),
-        seed=cfg_obj.meta.seed,
-        k_shared=data_cfg.get("k_shared", 2),
-        m_unique=data_cfg.get("m_unique", 2),
-        d_out=data_cfg.get("d_out", 16),
-        u3a_scale=data_cfg.get("u3a_scale", 0.2),
-        u3b_scale=data_cfg.get("u3b_scale", 0.3),
-        turns=data_cfg.get("turns", 1.0),
-        wave_amplitude=data_cfg.get("wave_amplitude", 1.0),
-        embed_dim=data_cfg.get("embed_dim", None),
-        mlp_depth=data_cfg.get("mlp_depth", 2),
-        shared_factor_dist=data_cfg.get("shared_factor_dist", "uniform"),
-    )
+    eval_set = build_dataset_from_config(cfg_obj)
     effective_batch_size = int(batch_size) if batch_size is not None else int(data_cfg.get("batch_size", 128))
     pin_memory = (device.type == 'cuda')
     eval_loader = DataLoader(
@@ -926,26 +884,10 @@ def run(
     predictor_a2b = built["predictor_a2b"]
     predictor_b2a = built["predictor_b2a"]
 
-    cm_val = str(cfg_obj.loss.get("congruence_mode", cfg_obj.loss.get("noise_reweighting", "none")))
-    canon_cm = canonicalize_congruence_mode(cm_val)
+
 
     loss_type = cfg_obj.loss.get("type", "ebm")
-    if loss_type == "ebm":
-        loss_fn = EBMJEPALoss(
-            predictor_a2b, predictor_b2a,
-            lambda_jac=cfg_obj.loss.get("lambda_jac", 1.0),
-            lambda_prior=cfg_obj.loss.get("lambda_prior", 0.5),
-            lambda_pred=cfg_obj.loss.get("lambda_pred", 1.0),
-            lambda_sparse=cfg_obj.loss.get("lambda_sparse", 0.1),
-            prior_type=cfg_obj.loss.get("prior_type", 'l1'),
-            pred_loss=cfg_obj.loss.get("pred_loss", 'l1'),
-            congruence_mode=canon_cm,
-            congruence_tau=cfg_obj.loss.get("congruence_tau", cfg_obj.loss.get("reweighting_tau", 0.5)),
-        )
-    else:
-        loss_fn = SupervisedFactorLoss(
-            dimensions_per_factor=[1, 1] if data_cfg.get("type", "2d") == "2d" else [1, 1, 1]
-        )
+    loss_fn = build_loss_from_config(cfg_obj, predictor_a2b, predictor_b2a)
 
     log_wandb_override = _to_bool_or_none(log_wandb)
     enabled_wandb = bool(cfg_obj.logging.get("log_wandb", False)) if log_wandb_override is None else bool(log_wandb_override)
