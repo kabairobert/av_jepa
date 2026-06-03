@@ -10,12 +10,12 @@ from tqdm import tqdm
 
 from eb_jepa.logging import get_logger
 from eb_jepa.training_utils import load_config, setup_device, setup_seed, setup_wandb, load_checkpoint
-from multimodal_experiments.ssl_dual_alignment.dataset import DualDisentangleDataset
+from multimodal_experiments.ssl_dual_alignment.dataset import DualDisentangleDataset, PointType
 from multimodal_experiments.ssl_dual_alignment.model_builder import build_model_and_predictors
 from multimodal_experiments.ssl_dual_alignment.losses import EBMJEPALoss
 from multimodal_experiments.ssl_dual_alignment.losses import canonicalize_congruence_mode
 from multimodal_experiments.initial_trials.ssl_disentangling import SupervisedFactorLoss
-from multimodal_experiments.ssl_dual_alignment.vis import log_plots_to_wandb
+from multimodal_experiments.ssl_dual_alignment.vis import log_plots_to_wandb, _project_to_3d
 
 logger = get_logger(__name__)
 
@@ -117,20 +117,16 @@ def _get_point_type_colors(param_values: np.ndarray, point_types: np.ndarray) ->
 
     colors = []
     for i, pt in enumerate(point_types):
-        if int(pt) == 5:
+        if int(pt) == PointType.EXTERNAL:
             colors.append("rgb(0,0,0)")
-        elif int(pt) in (2, 4):
+        elif int(pt) in (PointType.ASYM_B_CORRUPT, PointType.ASYM_A_CORRUPT):
             colors.append("rgb(128,128,128)")
         else:
             colors.append(base_colors[i])
     return colors
 
 
-def _project_to_3d(data):
-    if data.shape[1] <= 3:
-        return data
-    from sklearn.decomposition import PCA
-    return PCA(n_components=3).fit_transform(data)
+
 
 
 def _build_interactive_4way_html(
@@ -443,7 +439,7 @@ def compute_geometry_metrics(
         if idxs is not None:
             _pt_a_np = _pt_a_np[idxs]
             _pt_b_np = _pt_b_np[idxs]
-        _clean_mask = (_pt_a_np == 0) & (_pt_b_np == 0)
+        _clean_mask = (_pt_a_np == PointType.MANIFOLD) & (_pt_b_np == PointType.MANIFOLD)
         if _clean_mask.any():
             z_a_clean = z_a[_clean_mask]
             z_b_clean = z_b[_clean_mask]
@@ -618,13 +614,13 @@ def compute_geometry_metrics(
         def _mean_or_nan(values, mask):
             return float(values[mask].mean()) if mask.any() else float("nan")
 
-        metrics['geom/z_a_norm_manifold'] = _mean_or_nan(norms_a, pt_a == 0)
-        metrics['geom/z_a_norm_asym_corrupt'] = _mean_or_nan(norms_a, pt_a == 4)
-        metrics['geom/z_a_norm_external'] = _mean_or_nan(norms_a, pt_a == 5)
+        metrics['geom/z_a_norm_manifold'] = _mean_or_nan(norms_a, pt_a == PointType.MANIFOLD)
+        metrics['geom/z_a_norm_asym_corrupt'] = _mean_or_nan(norms_a, pt_a == PointType.ASYM_A_CORRUPT)
+        metrics['geom/z_a_norm_external'] = _mean_or_nan(norms_a, pt_a == PointType.EXTERNAL)
 
-        metrics['geom/z_b_norm_manifold'] = _mean_or_nan(norms_b, pt_b == 0)
-        metrics['geom/z_b_norm_asym_corrupt'] = _mean_or_nan(norms_b, pt_b == 2)
-        metrics['geom/z_b_norm_external'] = _mean_or_nan(norms_b, pt_b == 5)
+        metrics['geom/z_b_norm_manifold'] = _mean_or_nan(norms_b, pt_b == PointType.MANIFOLD)
+        metrics['geom/z_b_norm_asym_corrupt'] = _mean_or_nan(norms_b, pt_b == PointType.ASYM_B_CORRUPT)
+        metrics['geom/z_b_norm_external'] = _mean_or_nan(norms_b, pt_b == PointType.EXTERNAL)
 
     return metrics
 
@@ -660,9 +656,9 @@ def _eval_loop(
 
     with torch.no_grad():
         for bi, batch in enumerate(tqdm(loader, desc="Eval", leave=False)):
-            data_a = batch["data_a"].to(device)
-            data_b = batch["data_b"].to(device)
-            corr_target = batch["corr_target"].to(device)
+            data_a = batch["data_a"].to(device, non_blocking=True)
+            data_b = batch["data_b"].to(device, non_blocking=True)
+            corr_target = batch["corr_target"].to(device, non_blocking=True)
 
             outputs = dual_model(data_a, data_b)
             if loss_type == "ebm":
@@ -683,10 +679,10 @@ def _eval_loop(
                 pt_a = batch.get("point_type_a", None)
                 pt_b = batch.get("point_type_b", None)
                 if pt_a is not None and pt_b is not None:
-                    pt_a = pt_a.to(device)
-                    pt_b = pt_b.to(device)
-                    external_mask = (pt_a == 5) | (pt_b == 5)
-                    manifold_mask = (pt_a == 0) & (pt_b == 0)
+                    pt_a = pt_a.to(device, non_blocking=True)
+                    pt_b = pt_b.to(device, non_blocking=True)
+                    external_mask = (pt_a == PointType.EXTERNAL) | (pt_b == PointType.EXTERNAL)
+                    manifold_mask = (pt_a == PointType.MANIFOLD) & (pt_b == PointType.MANIFOLD)
                     asym_mask = (~external_mask) & (~manifold_mask)
 
                     if manifold_mask.any():
@@ -911,10 +907,18 @@ def run(
         turns=data_cfg.get("turns", 1.0),
         wave_amplitude=data_cfg.get("wave_amplitude", 1.0),
         embed_dim=data_cfg.get("embed_dim", None),
+        mlp_depth=data_cfg.get("mlp_depth", 2),
+        shared_factor_dist=data_cfg.get("shared_factor_dist", "uniform"),
     )
     effective_batch_size = int(batch_size) if batch_size is not None else int(data_cfg.get("batch_size", 128))
-    eval_loader = DataLoader(eval_set, batch_size=effective_batch_size, shuffle=False,
-                             num_workers=int(num_workers or data_cfg.get("num_workers", 0)))
+    pin_memory = (device.type == 'cuda')
+    eval_loader = DataLoader(
+        eval_set,
+        batch_size=effective_batch_size,
+        shuffle=False,
+        num_workers=int(num_workers or data_cfg.get("num_workers", 0)),
+        pin_memory=pin_memory
+    )
 
     built = build_model_and_predictors(cfg_obj, device)
     full_model = built["full_model"]

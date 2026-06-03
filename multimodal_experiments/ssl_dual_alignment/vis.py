@@ -4,8 +4,8 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.colors as mcolors
-import matplotlib.colors as mcolors
 import wandb
+from multimodal_experiments.ssl_dual_alignment.dataset import PointType
 
 # ---- Point color helpers ----
 # point_type codes:
@@ -54,9 +54,9 @@ def _get_point_colors(param_values, point_types, cmap='rainbow'):
     black_rgba = mcolors.to_rgba(_BLACK_EXTERNAL)
     colors = []
     for i, pt in enumerate(point_types):
-        if pt == 5:
+        if pt == PointType.EXTERNAL:
             colors.append(black_rgba)
-        elif pt in (2, 4):   # corrupted / noise side of asymmetric pair
+        elif pt in (PointType.ASYM_B_CORRUPT, PointType.ASYM_A_CORRUPT):   # corrupted / noise side of asymmetric pair
             colors.append(gray_rgba)
         else:                 # manifold (0), asym_a_good (1), asym_b_good (3)
             colors.append(base_colors[i])

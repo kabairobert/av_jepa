@@ -199,9 +199,12 @@ class EBMJEPALoss(torch.nn.Module):
         jac_b = dual_model_outputs[:, 2 * d + 1]   # (N,)
 
         # 2. Per-sample primary losses
-        loss_a2b = self._pred_loss_per_sample(self.predictor_a2b(z_a), z_b)   # (N,)
-        loss_b2a = self._pred_loss_per_sample(self.predictor_b2a(z_b), z_a)   # (N,)
-        pred_loss_per = loss_a2b + loss_b2a                                    # (N,)
+        if self.lambda_pred > 0.0 and self.predictor_a2b is not None:
+            loss_a2b = self._pred_loss_per_sample(self.predictor_a2b(z_a), z_b)   # (N,)
+            loss_b2a = self._pred_loss_per_sample(self.predictor_b2a(z_b), z_a)   # (N,)
+            pred_loss_per = loss_a2b + loss_b2a                                    # (N,)
+        else:
+            pred_loss_per = z_a.new_zeros(z_a.shape[0])
 
         prior_loss_per = self._prior_per_sample(z_a, z_b)                     # (N,)
         jac_per = jac_a + jac_b                                                # (N,)
@@ -219,6 +222,9 @@ class EBMJEPALoss(torch.nn.Module):
         # 4. Aggregate with congruence gate
         jac_term   = -self.lambda_jac * jac_per.mean()          # uniform
         prior_term = prior_loss_per.mean()                       # uniform
+
+        if self.lambda_pred == 0.0:
+            return jac_term + prior_term
 
         if self.congruence_mode == 'none':
             pred_term   = self.lambda_pred * pred_loss_per.mean()

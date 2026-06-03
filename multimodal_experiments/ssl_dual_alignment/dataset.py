@@ -5,6 +5,48 @@ from torch.utils.data import Dataset
 from scipy.spatial.transform import Rotation
 from multimodal_experiments.initial_trials.ssl_disentangling import sample_curve_data
 
+class PointType:
+    MANIFOLD = 0
+    ASYM_A_GOOD = 1
+    ASYM_B_CORRUPT = 2
+    ASYM_B_GOOD = 3
+    ASYM_A_CORRUPT = 4
+    EXTERNAL = 5
+
+
+class FrozenRandomMLP(nn.Module):
+    def __init__(self, in_dim: int, out_dim: int, hidden_dim: int = 64, depth: int = 2, generator: torch.Generator = None):
+        super().__init__()
+        if depth < 1:
+            raise ValueError(f"depth must be >= 1, got {depth}")
+        layers = []
+        if depth == 1:
+            layers.append(nn.Linear(in_dim, out_dim))
+        else:
+            layers.append(nn.Linear(in_dim, hidden_dim))
+            layers.append(nn.GELU())
+            for _ in range(depth - 2):
+                layers.append(nn.Linear(hidden_dim, hidden_dim))
+                layers.append(nn.GELU())
+            layers.append(nn.Linear(hidden_dim, out_dim))
+        self.net = nn.Sequential(*layers)
+        
+        # Deterministic weight init using local generator
+        if generator is not None:
+            def init_weights(m):
+                if isinstance(m, nn.Linear):
+                    torch.nn.init.xavier_uniform_(m.weight, generator=generator)
+                    torch.nn.init.zeros_(m.bias)
+            self.apply(init_weights)
+            
+        # Freeze
+        for p in self.parameters():
+            p.requires_grad = False
+            
+    def forward(self, x):
+        return self.net(x)
+
+
 class DualDisentangleDataset(Dataset):
     """Paired modality dataset with a shared latent source.
     
@@ -89,8 +131,8 @@ class DualDisentangleDataset(Dataset):
             data_b = self._load_file(path_b)
             self.num_samples = data_a.shape[0]
             self.param_values = np.linspace(0, 1, self.num_samples)
-            self.point_type_a = np.zeros(self.num_samples, dtype=np.int32)
-            self.point_type_b = np.zeros(self.num_samples, dtype=np.int32)
+            self.point_type_a = np.full(self.num_samples, PointType.MANIFOLD, dtype=np.int32)
+            self.point_type_b = np.full(self.num_samples, PointType.MANIFOLD, dtype=np.int32)
         else:
             # Synthetic generation mode
             self.manifold_noise_a = 0.02 if manifold_noise_a is None else manifold_noise_a
@@ -322,42 +364,9 @@ class DualDisentangleDataset(Dataset):
                 N-Dimensional output, K-Factors Shared, M-Factors Unique.
                 Observation is a frozen random MLP to simulate complex rendering.
                 """
-                class RandomFrozenMLP(nn.Module):
-                    def __init__(self, in_dim, out_dim, hidden_dim=64, depth=2):
-                        super().__init__()
-                        if depth < 1:
-                            raise ValueError(f"depth must be >= 1, got {depth}")
-                        layers = []
-                        if depth == 1:
-                            layers.append(nn.Linear(in_dim, out_dim))
-                        else:
-                            layers.append(nn.Linear(in_dim, hidden_dim))
-                            layers.append(nn.GELU())
-                            for _ in range(depth - 2):
-                                layers.append(nn.Linear(hidden_dim, hidden_dim))
-                                layers.append(nn.GELU())
-                            layers.append(nn.Linear(hidden_dim, out_dim))
-                        self.net = nn.Sequential(*layers)
-                        # Freeze
-                        for p in self.parameters():
-                            p.requires_grad = False
-                            
-                    def forward(self, x):
-                        return self.net(x)
-
                 in_dim = k_shared + m_unique
-                mlp_a = RandomFrozenMLP(in_dim, d_out, depth=self.mlp_depth).eval()
-                mlp_b = RandomFrozenMLP(in_dim, d_out, depth=self.mlp_depth).eval()
-                
-                # Make sure the MLPs are deterministically initialized based on self.seed
-                # For simplicity, we just seeded torch globally earlier or we rely on torch_rng.
-                # Actually, best to explicitly initialize with generator to be safe:
-                def init_weights(m):
-                    if isinstance(m, nn.Linear):
-                        torch.nn.init.xavier_uniform_(m.weight, generator=self.torch_rng)
-                        torch.nn.init.zeros_(m.bias)
-                mlp_a.apply(init_weights)
-                mlp_b.apply(init_weights)
+                mlp_a = FrozenRandomMLP(in_dim, d_out, depth=self.mlp_depth, generator=self.torch_rng).eval()
+                mlp_b = FrozenRandomMLP(in_dim, d_out, depth=self.mlp_depth, generator=self.torch_rng).eval()
 
                 pa, pb, pu = [], [], []
                 pta, ptb = [], []
@@ -617,38 +626,8 @@ class DualDisentangleDataset(Dataset):
 
 
                 elif data_type == '3d-3f-2c-mlp':
-                    class _FrozenMLP(nn.Module):
-                        def __init__(self, dim, hidden=64, depth=2):
-                            super().__init__()
-                            if depth < 1:
-                                raise ValueError(f"depth must be >= 1, got {depth}")
-                            layers = []
-                            if depth == 1:
-                                layers.append(nn.Linear(dim, dim))
-                            else:
-                                layers.append(nn.Linear(dim, hidden))
-                                layers.append(nn.GELU())
-                                for _ in range(depth - 2):
-                                    layers.append(nn.Linear(hidden, hidden))
-                                    layers.append(nn.GELU())
-                                layers.append(nn.Linear(hidden, dim))
-                            self.net = nn.Sequential(*layers)
-                            for p in self.parameters():
-                                p.requires_grad = False
-
-                        def forward(self, x):
-                            return self.net(x)
-
-                    mlp_a = _FrozenMLP(D, depth=self.mlp_depth).eval()
-                    mlp_b = _FrozenMLP(D, depth=self.mlp_depth).eval()
-
-                    def _init(m):
-                        if isinstance(m, nn.Linear):
-                            torch.nn.init.xavier_uniform_(m.weight, generator=self.torch_rng)
-                            torch.nn.init.zeros_(m.bias)
-
-                    mlp_a.apply(_init)
-                    mlp_b.apply(_init)
+                    mlp_a = FrozenRandomMLP(D, D, depth=self.mlp_depth, generator=self.torch_rng).eval()
+                    mlp_b = FrozenRandomMLP(D, D, depth=self.mlp_depth, generator=self.torch_rng).eval()
 
                     with torch.no_grad():
                         data_a = mlp_a(torch.tensor(data_a, dtype=torch.float32)).numpy()
@@ -685,7 +664,7 @@ class DualDisentangleDataset(Dataset):
         # We can map point_type == 0 to 0.9, others to 0.0
         # However, legacy code just mapped everything but external to 0.9.
         # To be rigorous with the new definitions:
-        is_clean = (self.point_type_a == 0) & (self.point_type_b == 0)
+        is_clean = (self.point_type_a == PointType.MANIFOLD) & (self.point_type_b == PointType.MANIFOLD)
         c_targ = np.where(is_clean.numpy()[:, None], [0.0, 0.9], [0.0, 0.0])
         self.corr_target = torch.tensor(c_targ, dtype=torch.float32)
         

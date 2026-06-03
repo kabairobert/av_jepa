@@ -51,50 +51,7 @@ def _save_optimizer_only(path: Path, optimizer, epoch: int, step: int) -> None:
     )
 
 
-def _deprecated_get_exp_name_from_cfg(cfg, loss_type, two_stage):
-    data_type_str = str(cfg.data.get('type', '2d')).replace('3d-2f-common', '3D2F').replace('3d-av-1f-common', '3D1F')
-    pred_type_raw = str(cfg.model.get('predictor_type', 'none'))
-    pred_type_str = "aff" if pred_type_raw == "affine" else pred_type_raw
 
-    cm_val = str(cfg.loss.get("congruence_mode", cfg.loss.get("noise_reweighting", "none")))
-    # Map to canonical then back to short display string for exp_name
-    _canon = canonicalize_congruence_mode(cm_val)
-    cm_str = {"none": "off", "pred_only": "pred", "pred_and_sparse": "pred_sparse"}.get(_canon, _canon)
-
-    # EBM-only naming tags are only meaningful when loss.type == "ebm"
-    if loss_type == "ebm":
-        pred_loss_str = str(cfg.loss.get('pred_loss', 'l1'))
-        if cfg.loss.get('lambda_pred', 1.0) == 0.0:
-            pred_loss_str = "none"
-
-        ds_dims = ""
-        if data_type_str == "nd-kf-mlp":
-            ds_dims = f"-k{cfg.data.get('k_shared')}_m{cfg.data.get('m_unique')}_d{cfg.data.get('d_out')}"
-
-        asy_a = cfg.data.get('asymmetric_noise_rate_a', 0.0)
-        ext = cfg.data.get('external_noise_ratio', 0.0)
-        noise_str = f"-nz_a{asy_a}_e{ext}"
-
-        exp_name = (
-            f"sslda-{data_type_str}{ds_dims}-"
-            f"l_{loss_type}-"
-            f"pre_{pred_type_str}_{pred_loss_str}-"
-            f"pri_{cfg.loss.get('prior_type', 'l1')}-"
-            f"cm_{cm_str}-"
-            f"sp_{cfg.loss.get('lambda_sparse', 0.0)}"
-            f"{noise_str}-"
-            f"{'2stg' if two_stage else '1stg'}"
-        )
-    else:
-        ds_dims = ""
-        if data_type_str == "nd-kf-mlp":
-            ds_dims = f"-k{cfg.data.get('k_shared')}_m{cfg.data.get('m_unique')}_d{cfg.data.get('d_out')}"
-        exp_name = (
-            f"sslda-{data_type_str}{ds_dims}-"
-            f"l_{loss_type}-"
-            f"pre_{pred_type_str}"
-        )
-    return exp_name
 
 
 def run(
@@ -134,8 +91,7 @@ def run(
     cm_val = str(cfg.loss.get("congruence_mode", cfg.loss.get("noise_reweighting", "none")))
     canon_cm = canonicalize_congruence_mode(cm_val)
 
-    # Old brittle naming logic has been deprecated. 
-    # _ = _deprecated_get_exp_name_from_cfg(cfg, loss_type, two_stage)
+
     
     timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
     exp_name = f"{Path(fname).stem}_{timestamp}"
@@ -198,18 +154,19 @@ def run(
         mlp_depth=cfg.data.get('mlp_depth', 2),
     )
 
-    # Move entire dataset to GPU for significant training speedup (if using CUDA)
-    train_set.to(device)
+    # Keep dataset on CPU to save VRAM and avoid OOM on large configurations
+    # train_set.to(device)
     
-    # Use 0 workers for GPU-resident datasets (multiprocessing with CUDA tensors is complex/slow)
-    num_workers = 0 if device.type == 'cuda' else cfg.data.get('num_workers', 0)
+    # Use config value or default to 0
+    num_workers = cfg.data.get('num_workers', 0)
+    pin_memory = (device.type == 'cuda')
 
     train_loader = DataLoader(
         train_set,
         batch_size=cfg.data.get('batch_size', 128),
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=False  # Redundant for GPU-resident data
+        pin_memory=pin_memory
     )
 
     # --- 5. Model Init ---
@@ -218,6 +175,39 @@ def run(
     dual_model = built["dual_model"]
     predictor_a2b = built["predictor_a2b"]
     predictor_b2a = built["predictor_b2a"]
+
+    # VRAM safety check
+    if device.type == 'cuda':
+        try:
+            total_mem = torch.cuda.get_device_properties(device).total_memory
+            s_count = cfg.model.get('stage_count', 6)
+            n_dims = cfg.model.get('num_dims', 2)
+            h_units = cfg.model.get('hidden_units', 128)
+            b_size = cfg.data.get('batch_size', 128)
+            
+            # Estimate activation memory in GB (4 coupling layers per stage, float32)
+            est_act_mem_gb = (4 * s_count * b_size * (3 * n_dims + 2 * h_units) * 4) / 1024**3
+            # Estimate compile overhead for deep models
+            compile_overhead = 8.0 if (hasattr(torch, "compile") and s_count >= 12 and n_dims >= 256) else 0.0
+            
+            total_needed_gb = est_act_mem_gb + compile_overhead
+            total_avail_gb = total_mem / 1024**3
+            
+            print(
+                f"[INFO] GPU VRAM footprint estimates:\n"
+                f"  Estimated Activation Memory: {est_act_mem_gb:.2f} GB\n"
+                f"  Estimated Compile Overhead: {compile_overhead:.2f} GB\n"
+                f"  Total Estimated GPU VRAM Required: {total_needed_gb:.2f} GB\n"
+                f"  GPU total capacity: {total_avail_gb:.2f} GB"
+            )
+            
+            if total_needed_gb > 0.50 * total_avail_gb:
+                print(
+                    f"⚠️ WARNING: High GPU VRAM usage predicted! (> 50% capacity).\n"
+                    f"  If you experience OOM, consider reducing batch_size, stage_count, or disabling torch.compile."
+                )
+        except Exception:
+            pass
 
     if hasattr(torch, "compile"):
         print("Compiling model with torch.compile...")
@@ -329,9 +319,9 @@ def run(
             disable=cfg.logging.get("tqdm_silent", False)
         )
         for batch_idx, batch in enumerate(pbar, start=1):
-            data_a = batch["data_a"].to(device)
-            data_b = batch["data_b"].to(device)
-            corr_target = batch["corr_target"].to(device)
+            data_a = batch["data_a"].to(device, non_blocking=True)
+            data_b = batch["data_b"].to(device, non_blocking=True)
+            corr_target = batch["corr_target"].to(device, non_blocking=True)
             active_optimizer.zero_grad()
             with torch.autocast(device_type=device.type, dtype=dtype, enabled=use_amp):
                 outputs = dual_model(data_a, data_b)
@@ -339,12 +329,7 @@ def run(
             scaler.scale(loss).backward()
             scaler.step(active_optimizer)
             scaler.update()
-            # FIX #8: In Stage 1, predictor params receive gradients (from pred loss path)
-            # but are not in opt_flow. Zero them explicitly to prevent stale grad accumulation.
-            if stage == 1 and predictor_a2b is not None:
-                for p in list(predictor_a2b.parameters()) + list(predictor_b2a.parameters()):
-                    if p.grad is not None:
-                        p.grad.zero_()
+            # Predictor params receive no gradients in Stage 1 because they are bypassed in losses.py.
             d = (outputs.shape[1] - 2) // 2
             z_a, z_b = outputs[:, :d], outputs[:, d:2*d]
             with torch.no_grad():
