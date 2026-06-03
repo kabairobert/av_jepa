@@ -111,19 +111,21 @@ class DualDisentangleDataset(Dataset):
         self.asym_mismatch_rate_b = _safe_float(asym_mismatch_rate_b, 0.0)
 
         # Alias resolution for data_type
-        dt_upper = str(data_type).upper()
-        if dt_upper == '3D1F':
+        data_type = str(data_type).strip().lower()
+        if data_type in ('3d1f', '3d-av-1f-common'):
             data_type = '3d-av-1f-common'
-        elif dt_upper == '3D2F':
+        elif data_type in ('3d2f', '3d-2f-common'):
             data_type = '3d-2f-common'
-        elif dt_upper in ('3D-3F-2C-ROT', '3D3F2CROT'):
+        elif data_type in ('3d-3f-2c-rot', '3d3f2crot'):
             data_type = '3d-3f-2c-rot'
-        elif dt_upper in ('3D-3F-2C-MLP', '3D3F2CMLP'):
+        elif data_type in ('3d-3f-2c-mlp', '3d3f2cmlp'):
             data_type = '3d-3f-2c-mlp'
+        elif data_type in ('3d3f2c', '3d-3f-2c'):
+            data_type = '3d-3f-2c'
         self.data_type = data_type
 
         # Use local RandomState for isolated reproducibility (fixes worker-fork duplicates)
-        self.rng = np.random.RandomState(seed) if seed is not None else np.random.RandomState()
+        self.rng = np.random.RandomState(seed)
         # Separate torch generator for MLP weights to guarantee consistency
         self.torch_rng = torch.Generator().manual_seed(seed if seed is not None else 42)
 

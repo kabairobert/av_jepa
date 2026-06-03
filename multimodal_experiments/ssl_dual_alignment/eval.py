@@ -13,7 +13,7 @@ from eb_jepa.training_utils import load_config, setup_device, setup_seed, setup_
 from multimodal_experiments.ssl_dual_alignment.dataset import PointType, build_dataset_from_config, DualDisentangleDataset
 from multimodal_experiments.ssl_dual_alignment.model_builder import build_model_and_predictors
 from multimodal_experiments.ssl_dual_alignment.losses import build_loss_from_config
-from multimodal_experiments.ssl_dual_alignment.vis import log_plots_to_wandb, _project_to_3d, _to_numpy, get_hsv_colors, get_point_sizes
+from multimodal_experiments.ssl_dual_alignment.vis import log_plots_to_wandb, project_to_3d, to_numpy, get_point_sizes, get_point_colors
 
 logger = get_logger(__name__)
 
@@ -54,49 +54,7 @@ def _discover_checkpoints(run_dir: Path) -> list[Path]:
     return ckpts
 
 
-def _get_color_values(param_values: np.ndarray) -> np.ndarray | list:
-    """Convert param values to RGB colors.
 
-    For 1D param_values: use Rainbow colorscale.
-    For 2D param_values: use HSV encoding (u1 -> Hue, u2 -> Saturation [0.2, 1]).
-    """
-    param_values = _to_numpy(param_values)
-
-    if param_values.ndim == 1:
-        vals = param_values
-        denom = (vals.max() - vals.min()) + 1e-8
-        normalized = (vals - vals.min()) / denom
-        from plotly.colors import sample_colorscale
-        return sample_colorscale("Rainbow", normalized)
-    else:
-        return get_hsv_colors(param_values[:, 0], param_values[:, 1], format_type='plotly')
-
-
-def _get_point_type_colors(param_values: np.ndarray, point_types: np.ndarray) -> list:
-    """Return Plotly color strings using point_type coloring.
-
-    Manifold points use Rainbow (1D) or HSV (2D) by param value. Corrupted points are gray.
-    External points are near-black.
-    """
-    vals = _to_numpy(param_values).astype(float)
-
-    if vals.ndim == 1:
-        denom = (vals.max() - vals.min()) + 1e-8
-        normalized = (vals - vals.min()) / denom
-        from plotly.colors import sample_colorscale
-        base_colors = sample_colorscale("Rainbow", normalized)
-    else:
-        base_colors = get_hsv_colors(vals[:, 0], vals[:, 1], format_type='plotly')
-
-    colors = []
-    for i, pt in enumerate(point_types):
-        if int(pt) == PointType.EXTERNAL:
-            colors.append("rgb(0,0,0)")
-        elif int(pt) in (PointType.ASYM_B_CORRUPT, PointType.ASYM_A_CORRUPT):
-            colors.append("rgb(128,128,128)")
-        else:
-            colors.append(base_colors[i])
-    return colors
 
 
 
@@ -111,7 +69,6 @@ def _build_interactive_4way_html(
     point_type_a: Optional[np.ndarray] = None,
     point_type_b: Optional[np.ndarray] = None,
     min_height_px: int = 420,
-    axis_box: Optional[np.ndarray] = None,
     predictor_a2b=None,
 ) -> Optional[str]:
     try:
@@ -121,8 +78,8 @@ def _build_interactive_4way_html(
         logger.warning("Plotly not available; skipping interactive 3D plot: %s", exc)
         return None
 
-    data_a_proj = _project_to_3d(data_a)
-    data_b_proj = _project_to_3d(data_b)
+    data_a_proj = project_to_3d(data_a)
+    data_b_proj = project_to_3d(data_b)
 
     # Inner panels (output spaces): use top-3 dims by |predictor.weight| when the predictor
     # has a 1D weight vector (DiagonalPredictor and AffinePredictor both qualify — AffinePredictor
@@ -139,20 +96,14 @@ def _build_interactive_4way_html(
                                        np.zeros((out.shape[0], 3 - projected.shape[1]))])
             return projected, [f"w_dim{i}" for i in top3]
         # Default: top-3 PCA
-        proj = _project_to_3d(out)
+        proj = project_to_3d(out)
         return proj, ["PC1", "PC2", "PC3"]
 
     out_a_proj, out_a_labels = _project_output(out_a, predictor_a2b)
     out_b_proj, out_b_labels = _project_output(out_b, predictor_a2b)  # same predictor → same dim selection
 
-    if point_type_a is not None:
-        color_vals_a = _get_point_type_colors(param_values, point_type_a)
-    else:
-        color_vals_a = _get_color_values(param_values)
-    if point_type_b is not None:
-        color_vals_b = _get_point_type_colors(param_values, point_type_b)
-    else:
-        color_vals_b = _get_color_values(param_values)
+    color_vals_a = get_point_colors(param_values, point_type_a, format_type='plotly')
+    color_vals_b = get_point_colors(param_values, point_type_b, format_type='plotly')
 
     fig = make_subplots(
         rows=1, cols=4,
@@ -243,7 +194,8 @@ def vicreg_covariance(z: np.ndarray) -> float:
     batch_size = z.shape[0]
     num_features = z.shape[1]
     z = z - z.mean(axis=0)
-    cov = (z.T @ z) / (batch_size - 1)
+    denom = batch_size - 1 if batch_size > 1 else 1
+    cov = (z.T @ z) / denom
     
     if num_features > 1:
         # Zero out diagonal elements
@@ -330,13 +282,18 @@ def cca_score(z_a: np.ndarray, z_b: np.ndarray) -> dict:
     try:
         cca = CCA(n_components=n_components).fit(z_a, z_b)
         z_a_c, z_b_c = cca.transform(z_a, z_b)
-        corrs = [float(np.corrcoef(z_a_c[:, i], z_b_c[:, i])[0, 1]) for i in range(n_components)]
+        
+        corrs = []
+        for i in range(n_components):
+            val = float(np.corrcoef(z_a_c[:, i], z_b_c[:, i])[0, 1])
+            corrs.append(0.0 if np.isnan(val) else val)
 
         # Full cross-correlation matrix for diagonality score
         C = np.zeros((n_components, n_components))
         for i in range(n_components):
             for j in range(n_components):
-                C[i, j] = abs(float(np.corrcoef(z_a_c[:, i], z_b_c[:, j])[0, 1]))
+                val = float(np.corrcoef(z_a_c[:, i], z_b_c[:, j])[0, 1])
+                C[i, j] = 0.0 if np.isnan(val) else abs(val)
         total = C.sum()
         diag_score = float(np.diag(C).sum() / total) if total > 1e-8 else 0.0
 
@@ -366,10 +323,13 @@ def compute_geometry_metrics(
 
     Returns flat dict suitable for wandb.log.
     """
+    from sklearn.linear_model import Ridge
+    from sklearn.metrics import r2_score
+
     dual_model.eval()
     data_a = dataset.data_a
     data_b = dataset.data_b
-    param_values = _to_numpy(dataset.param_values)
+    param_values = to_numpy(dataset.param_values)
     idxs = None
 
     if data_a.shape[0] > max_points:
@@ -402,8 +362,8 @@ def compute_geometry_metrics(
     _pt_a_attr = getattr(dataset, "point_type_a", None)
     _pt_b_attr = getattr(dataset, "point_type_b", None)
     if _pt_a_attr is not None and _pt_b_attr is not None:
-        _pt_a_np = _to_numpy(_pt_a_attr)
-        _pt_b_np = _to_numpy(_pt_b_attr)
+        _pt_a_np = to_numpy(_pt_a_attr)
+        _pt_b_np = to_numpy(_pt_b_attr)
         if idxs is not None:
             _pt_a_np = _pt_a_np[idxs]
             _pt_b_np = _pt_b_np[idxs]
@@ -432,9 +392,6 @@ def compute_geometry_metrics(
     # --- Generalised Axis-Alignment / Diagonality Ratio (permutation-invariant, supports any k_shared) ---
     if param_values.ndim == 2 and num_zdims >= 2:
         # Build R2 matrix: M[i, j] = R2(z_dim_i predicts u_j) for all (dim, factor) pairs.
-        from sklearn.linear_model import Ridge
-        from sklearn.metrics import r2_score
-        
         n_factors = u.shape[1]
         r2_matrix = np.zeros((num_zdims, n_factors))
         for i in range(num_zdims):
@@ -542,7 +499,6 @@ def compute_geometry_metrics(
         #    Dims with high R2 are those the predictor actively maps; dims with
         #    low R2 are the unique / unpredictable ones.
         if z_a_clean is not None and z_b_clean is not None and z_a_clean.shape[0] >= 10:
-            from sklearn.metrics import r2_score as _r2_score
             _pred_device = next(predictor_a2b.parameters()).device
             with torch.no_grad():
                 _pred_zb = predictor_a2b(
@@ -550,7 +506,7 @@ def compute_geometry_metrics(
                 ).cpu().numpy()
             pred_r2_spectrum = []
             for i in range(num_zdims):
-                r2 = float(_r2_score(z_b_clean[:, i], _pred_zb[:, i]))
+                r2 = float(r2_score(z_b_clean[:, i], _pred_zb[:, i]))
                 r2 = max(0.0, r2)  # clamp: negative R2 = worse than mean; treat as 0
                 pred_r2_spectrum.append(r2)
                 metrics[f'geom/pred_r2_dim{i}'] = r2
@@ -569,8 +525,8 @@ def compute_geometry_metrics(
     pt_a = getattr(dataset, "point_type_a", None)
     pt_b = getattr(dataset, "point_type_b", None)
     if pt_a is not None and pt_b is not None:
-        pt_a = _to_numpy(pt_a)
-        pt_b = _to_numpy(pt_b)
+        pt_a = to_numpy(pt_a)
+        pt_b = to_numpy(pt_b)
         if idxs is not None:
             pt_a = pt_a[idxs]
             pt_b = pt_b[idxs]
@@ -751,9 +707,9 @@ def evaluate_and_log_checkpoint(
             is_3d = (eval_set.data_a.shape[1] >= 3)
 
         if is_3d and log_interactive_3d:
-            data_a = _to_numpy(eval_set.data_a)
-            data_b = _to_numpy(eval_set.data_b)
-            param_values = _to_numpy(eval_set.param_values)
+            data_a = to_numpy(eval_set.data_a)
+            data_b = to_numpy(eval_set.data_b)
+            param_values = to_numpy(eval_set.param_values)
             idxs = None
             if data_a.shape[0] > max_interactive_points:
                 idxs = np.random.choice(data_a.shape[0], size=max_interactive_points, replace=False)
@@ -774,8 +730,8 @@ def evaluate_and_log_checkpoint(
                 pt_a = getattr(eval_set, "point_type_a", None)
                 pt_b = getattr(eval_set, "point_type_b", None)
                 if pt_a is not None:
-                    pt_a = _to_numpy(pt_a)
-                    pt_b = _to_numpy(pt_b)
+                    pt_a = to_numpy(pt_a)
+                    pt_b = to_numpy(pt_b)
                     
                     if idxs is not None:
                         pt_a = pt_a[idxs]
@@ -828,17 +784,7 @@ def run(
     if cfg_path is None:
         raise ValueError("Could not resolve config path. Pass --cfg or provide --folder with config.yaml")
 
-    cfg_obj = load_config(str(cfg_path))
-    if overrides:
-        override_dict: dict = {}
-        for key, value in overrides.items():
-            keys = key.split(".")
-            current = override_dict
-            for k in keys[:-1]:
-                current = current.setdefault(k, {})
-            current[keys[-1]] = value
-        from omegaconf import OmegaConf
-        cfg_obj = OmegaConf.merge(cfg_obj, OmegaConf.create(override_dict))
+    cfg_obj = load_config(str(cfg_path), cli_overrides=overrides)
 
     device = setup_device(cfg_obj.meta.device)
     setup_seed(cfg_obj.meta.seed)
@@ -851,7 +797,7 @@ def run(
         eval_set,
         batch_size=effective_batch_size,
         shuffle=False,
-        num_workers=int(num_workers or data_cfg.get("num_workers", 0)),
+        num_workers=int(num_workers if num_workers is not None else data_cfg.get("num_workers", 0)),
         pin_memory=pin_memory
     )
 
@@ -860,8 +806,6 @@ def run(
     dual_model = built["dual_model"]
     predictor_a2b = built["predictor_a2b"]
     predictor_b2a = built["predictor_b2a"]
-
-
 
     loss_type = cfg_obj.loss.get("type", "ebm")
     loss_fn = build_loss_from_config(cfg_obj, predictor_a2b, predictor_b2a)

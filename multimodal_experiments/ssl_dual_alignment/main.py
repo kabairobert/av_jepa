@@ -1,10 +1,8 @@
-import os
 from pathlib import Path
 from datetime import datetime
 
 import fire
 import torch
-import wandb
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -14,7 +12,6 @@ from eb_jepa.training_utils import (
     setup_seed,
     setup_wandb,
     get_default_dev_name,
-    get_exp_name,
     get_unified_experiment_dir,
     save_config,
     save_checkpoint,
@@ -81,6 +78,7 @@ def run(
     quickrun: bool = False,
     **overrides
 ):
+    import wandb
     # --config is an alias for --fname (used by sweep.py)
     if config is not None:
         fname = config
@@ -108,8 +106,6 @@ def run(
         print("⚠️ WARNING: Config specified two_stage=True, but two-stage training has been deprecated. Running in standard one-stage joint mode instead.")
     loss_type = cfg.loss.get("type", "ebm")
 
-
-    
     timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
     exp_name = f"{Path(fname).stem}_{timestamp}"
 
@@ -174,6 +170,11 @@ def run(
 
     if hasattr(torch, "compile"):
         print("Compiling model with torch.compile...")
+        try:
+            import torch._dynamo as dynamo
+            dynamo.config.suppress_errors = True
+        except Exception:
+            pass
         dual_model = torch.compile(dual_model)
 
     loss_fn = build_loss_from_config(cfg, predictor_a2b, predictor_b2a)
@@ -204,7 +205,7 @@ def run(
         train_cfg = {}
     
     use_amp = train_cfg.get("use_amp", True)
-    dtype_str = train_cfg.get("dtype", "bfloat16").lower()
+    dtype_str = str(train_cfg.get("dtype", "bfloat16")).lower()
     
     dtype_map = {
         "float16": torch.float16,

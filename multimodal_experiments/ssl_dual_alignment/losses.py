@@ -29,7 +29,7 @@ def canonicalize_congruence_mode(val: str) -> str:
 
     Raises ValueError for unknown values so callers catch config mistakes early.
     """
-    canonical = _CONGRUENCE_ALIAS_MAP.get(str(val))
+    canonical = _CONGRUENCE_ALIAS_MAP.get(str(val).strip().lower())
     if canonical is None:
         raise ValueError(
             f"Unknown congruence_mode '{val}'. "
@@ -133,13 +133,6 @@ class EBMJEPALoss(torch.nn.Module):
 
         congruence_mode = canonicalize_congruence_mode(congruence_mode)
 
-        valid_modes = _VALID_CONGRUENCE_MODES
-        if congruence_mode not in valid_modes:
-            raise ValueError(
-                f"congruence_mode must be one of {valid_modes}, "
-                f"got '{congruence_mode}'"
-            )
-
         self.predictor_a2b = predictor_a2b
         self.predictor_b2a = predictor_b2a
         self.lambda_jac = lambda_jac
@@ -227,22 +220,17 @@ class EBMJEPALoss(torch.nn.Module):
             return jac_term + prior_term
 
         if self.congruence_mode == 'none':
-            pred_term   = self.lambda_pred * pred_loss_per.mean()
-            total = pred_term + jac_term + prior_term + sparse_loss
-
-        elif self.congruence_mode == 'pred_only':
-            w_norm, _ = self._congruence_weights(pred_loss_per)
-            pred_term = self.lambda_pred * (w_norm * pred_loss_per).sum()
-            total = pred_term + jac_term + prior_term + sparse_loss
-
-        else:  # 'pred_and_sparse'
+            pred_term = self.lambda_pred * pred_loss_per.mean()
+            sparse_term = sparse_loss
+        else:
             w_norm, mean_raw = self._congruence_weights(pred_loss_per)
             pred_term = self.lambda_pred * (w_norm * pred_loss_per).sum()
-            # Gate scalar sparsity by overall batch congruence
-            sparse_gated = sparse_loss * mean_raw
-            total = pred_term + jac_term + prior_term + sparse_gated
+            if self.congruence_mode == 'pred_only':
+                sparse_term = sparse_loss
+            else:  # 'pred_and_sparse'
+                sparse_term = sparse_loss * mean_raw
 
-        return total
+        return pred_term + jac_term + prior_term + sparse_term
 
 
 def build_loss_from_config(cfg_obj, predictor_a2b, predictor_b2a) -> torch.nn.Module:
@@ -268,6 +256,11 @@ def build_loss_from_config(cfg_obj, predictor_a2b, predictor_b2a) -> torch.nn.Mo
     else:
         from multimodal_experiments.initial_trials.ssl_disentangling import SupervisedFactorLoss
         data_type = cfg_obj.data.get('type', '2d')
-        dims = [1, 1] if data_type == '2d' else [1, 1, 1]
+        if data_type == '2d':
+            dims = [1, 1]
+        elif data_type == 'nd-kf-mlp':
+            dims = [1] * cfg_obj.data.get('k_shared', 2)
+        else:
+            dims = [1, 1, 1]
         return SupervisedFactorLoss(dimensions_per_factor=dims)
 

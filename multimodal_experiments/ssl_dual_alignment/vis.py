@@ -1,10 +1,7 @@
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.colors as mcolors
-import wandb
 from multimodal_experiments.ssl_dual_alignment.dataset import PointType
 
 # ---- Point color helpers ----
@@ -20,7 +17,7 @@ _GRAY_CORRUPT = '#808080'
 _BLACK_EXTERNAL = '#000000'   # Pure black to distinguish from dark blue turbo(0)
 
 
-def _to_numpy(val):
+def to_numpy(val):
     """Convert PyTorch tensor or array-like to numpy array."""
     if val is None:
         return None
@@ -31,7 +28,7 @@ def _to_numpy(val):
     return np.asarray(val)
 
 
-def _project_to_3d(data):
+def project_to_3d(data):
     if data.shape[1] <= 3:
         return data
     from sklearn.decomposition import PCA
@@ -55,59 +52,69 @@ def get_hsv_colors(u1: np.ndarray, u2: np.ndarray, format_type: str = 'rgba') ->
     return colors
 
 
-def get_point_sizes(param_values: np.ndarray, default_size: float = 5.0) -> np.ndarray | float:
+def get_point_sizes(param_values, default_size=5.0) -> np.ndarray | float:
     """Return point sizes mapped from u3 (if present) or default_size."""
-    vals = _to_numpy(param_values).astype(float)
+    vals = to_numpy(param_values).astype(float)
     if vals.ndim == 2 and vals.shape[1] >= 3:
         u3 = vals[:, 2]
         return 2 + ((u3 - u3.min()) / (u3.max() - u3.min() + 1e-8)) * 8
     return default_size
 
 
-def _get_point_colors(param_values, point_types, cmap='rainbow'):
-    """Per-point color: manifold=rainbow/hsv, corrupted=gray, external=near-black."""
-    vals = _to_numpy(param_values).astype(float)
+def get_point_colors(param_values, point_types=None, format_type='rgba', cmap='rainbow'):
+    """Per-point color: manifold=rainbow/hsv, corrupted=gray, external=black/near-black.
+
+    Supports:
+        format_type='rgba': returns list of RGBA tuples (matplotlib style)
+        format_type='plotly': returns list of 'rgb(R,G,B)' plotly strings
+    """
+    vals = to_numpy(param_values).astype(float)
 
     if vals.ndim == 1:
-        norm_p = (vals - vals.min()) / (vals.max() - vals.min() + 1e-12)
-        colormap = plt.colormaps[cmap]
-        base_colors = [colormap(float(p)) for p in norm_p]
+        denom = (vals.max() - vals.min()) + 1e-8
+        normalized = (vals - vals.min()) / denom
+        if format_type == 'plotly':
+            from plotly.colors import sample_colorscale
+            base_colors = sample_colorscale("Rainbow", normalized)
+        else:
+            colormap = plt.colormaps[cmap]
+            base_colors = [colormap(float(p)) for p in normalized]
     else:
-        base_colors = get_hsv_colors(vals[:, 0], vals[:, 1], format_type='rgba')
-    
-    gray_rgba = mcolors.to_rgba(_GRAY_CORRUPT)
-    black_rgba = mcolors.to_rgba(_BLACK_EXTERNAL)
+        base_colors = get_hsv_colors(vals[:, 0], vals[:, 1], format_type=format_type)
+
+    if point_types is None:
+        return base_colors
+
+    gray_color = 'rgb(128,128,128)' if format_type == 'plotly' else mcolors.to_rgba(_GRAY_CORRUPT)
+    black_color = 'rgb(0,0,0)' if format_type == 'plotly' else mcolors.to_rgba(_BLACK_EXTERNAL)
+
     colors = []
     for i, pt in enumerate(point_types):
-        if pt == PointType.EXTERNAL:
-            colors.append(black_rgba)
-        elif pt in (PointType.ASYM_B_CORRUPT, PointType.ASYM_A_CORRUPT):   # corrupted / noise side of asymmetric pair
-            colors.append(gray_rgba)
+        pt_val = int(pt)
+        if pt_val == PointType.EXTERNAL:
+            colors.append(black_color)
+        elif pt_val in (PointType.ASYM_B_CORRUPT, PointType.ASYM_A_CORRUPT):   # corrupted / noise side of asymmetric pair
+            colors.append(gray_color)
         else:                 # manifold (0), asym_a_good (1), asym_b_good (3)
             colors.append(base_colors[i])
     return colors
 
 
-def _get_point_sizes(param_values):
-    """Return point sizes mapped from u3 (if present) or default 5."""
-    return get_point_sizes(param_values, default_size=5.0)
-
-
 def plot_original_spaces(data_a, data_b, param_values,
-                         point_type_a=None, point_type_b=None, axis_box=None):
+                         point_type_a=None, point_type_b=None):
     """Plots raw Modality A and Modality B datasets with noise-aware coloring."""
     is_3d = data_a.shape[1] >= 3
     fig = plt.figure(figsize=(12, 6))
 
-    data_a_proj = _project_to_3d(data_a)
-    data_b_proj = _project_to_3d(data_b)
+    data_a_proj = project_to_3d(data_a)
+    data_b_proj = project_to_3d(data_b)
 
     # Build per-point color arrays
     pt_a = point_type_a if point_type_a is not None else np.zeros(len(data_a), dtype=np.int32)
     pt_b = point_type_b if point_type_b is not None else np.zeros(len(data_b), dtype=np.int32)
-    c_a = _get_point_colors(param_values, pt_a)
-    c_b = _get_point_colors(param_values, pt_b)
-    s_points = _get_point_sizes(param_values)
+    c_a = get_point_colors(param_values, pt_a)
+    c_b = get_point_colors(param_values, pt_b)
+    s_points = get_point_sizes(param_values, default_size=5.0)
 
     if is_3d:
         ax1 = fig.add_subplot(121, projection='3d')
@@ -141,7 +148,7 @@ def plot_original_spaces(data_a, data_b, param_values,
 
 
 def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, device,
-                                      point_type_a=None, point_type_b=None, axis_box=None):
+                                      point_type_a=None, point_type_b=None):
     """Plots 4-way view: Input A -> Output A -> Output B -> Input B."""
     dual_model.eval()
     with torch.no_grad():
@@ -156,21 +163,21 @@ def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, 
         fig.suptitle('Self-Supervised Dual Geometry Reshaping (NaN/Inf detected in outputs)')
         return fig
 
-    data_a_proj = _project_to_3d(data_a)
-    output_a_proj = _project_to_3d(output_a)
-    output_b_proj = _project_to_3d(output_b)
-    data_b_proj = _project_to_3d(data_b)
+    data_a_proj = project_to_3d(data_a)
+    output_a_proj = project_to_3d(output_a)
+    output_b_proj = project_to_3d(output_b)
+    data_b_proj = project_to_3d(data_b)
 
     # Build noise-aware colors for input spaces; use param color for latent outputs
     pt_a = point_type_a if point_type_a is not None else np.zeros(len(data_a), dtype=np.int32)
     pt_b = point_type_b if point_type_b is not None else np.zeros(len(data_b), dtype=np.int32)
-    c_in_a = _get_point_colors(param_values, pt_a)
-    c_in_b = _get_point_colors(param_values, pt_b)
+    c_in_a = get_point_colors(param_values, pt_a)
+    c_in_b = get_point_colors(param_values, pt_b)
     # Latent outputs: retain noise-type coloring (same point indices)
-    c_out_a = _get_point_colors(param_values, pt_a)
-    c_out_b = _get_point_colors(param_values, pt_b)
+    c_out_a = get_point_colors(param_values, pt_a)
+    c_out_b = get_point_colors(param_values, pt_b)
     
-    s_points = _get_point_sizes(param_values) * 2  # double size for the 4-way plot default to match the original s=10 vs s=5
+    s_points = get_point_sizes(param_values, default_size=5.0) * 2  # double size for the 4-way plot default to match the original s=10 vs s=5
 
     is_3d = data_a.shape[1] >= 3
     fig = plt.figure(figsize=(18, 4))
@@ -207,12 +214,13 @@ def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, 
 
 def log_plots_to_wandb(dual_model, dataset, device, step, wandb_run):
     """Generates and logs visualizations to W&B."""
+    import wandb
     # Ensure all components are on CPU before converting to numpy for plotting
-    data_a = _to_numpy(dataset.data_a)
-    data_b = _to_numpy(dataset.data_b)
-    param_values = _to_numpy(dataset.param_values)
-    pt_a = _to_numpy(getattr(dataset, 'point_type_a', None))
-    pt_b = _to_numpy(getattr(dataset, 'point_type_b', None))
+    data_a = to_numpy(dataset.data_a)
+    data_b = to_numpy(dataset.data_b)
+    param_values = to_numpy(dataset.param_values)
+    pt_a = to_numpy(getattr(dataset, 'point_type_a', None))
+    pt_b = to_numpy(getattr(dataset, 'point_type_b', None))
 
     # Subsample to max 5000 points to prevent OOM and slow Matplotlib rendering
     N = data_a.shape[0]
