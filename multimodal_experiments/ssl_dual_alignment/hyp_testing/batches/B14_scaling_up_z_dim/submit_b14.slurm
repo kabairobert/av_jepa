@@ -7,8 +7,8 @@
 #SBATCH --gpus=1
 #SBATCH --mem=60G
 #SBATCH --time=06:00:00
-#SBATCH --output=multimodal_experiments/ssl_dual_alignment/hyp_testing/batches/B14_scaling_up_z_dim/logs/b14_%j.out
-#SBATCH --error=multimodal_experiments/ssl_dual_alignment/hyp_testing/batches/B14_scaling_up_z_dim/logs/b14_%j.err
+#SBATCH --output=/gpfs/home3/rkabai/github/eb_jepa_private/multimodal_experiments/ssl_dual_alignment/hyp_testing/batches/B14_scaling_up_z_dim/logs/b14_%j.out
+#SBATCH --error=/gpfs/home3/rkabai/github/eb_jepa_private/multimodal_experiments/ssl_dual_alignment/hyp_testing/batches/B14_scaling_up_z_dim/logs/b14_%j.err
 
 # 5 configs run in parallel (one per CPU).
 # set -e intentionally omitted: xargs subshell failures are logged, not fatal.

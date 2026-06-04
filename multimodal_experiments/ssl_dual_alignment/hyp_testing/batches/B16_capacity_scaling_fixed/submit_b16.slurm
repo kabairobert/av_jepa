@@ -9,7 +9,7 @@
 #SBATCH --time=6:00:00
 #SBATCH --array=0-5
 #SBATCH --output=/gpfs/home3/rkabai/github/eb_jepa_private/multimodal_experiments/ssl_dual_alignment/hyp_testing/batches/B16_capacity_scaling_fixed/logs/%A_%a.out
-#SBATCH --error=multimodal_experiments/ssl_dual_alignment/hyp_testing/batches/B16_capacity_scaling_fixed/logs/b16_%A_%a.err
+#SBATCH --error=/gpfs/home3/rkabai/github/eb_jepa_private/multimodal_experiments/ssl_dual_alignment/hyp_testing/batches/B16_capacity_scaling_fixed/logs/b16_%A_%a.err
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
