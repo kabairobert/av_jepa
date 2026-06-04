@@ -320,16 +320,29 @@ class DualDisentangleDataset(Dataset):
                 pa, pb, pu = [], [], []
                 pta, ptb = [], []
 
+                # Estimate mean and standard deviation of MLP outputs to normalize them
+                probe_us, probe_ua, probe_ub = self._sample_latents(10000, k_shared, m_unique)
+                probe_xa, probe_xb = self._gen_mlp(probe_us, probe_ua, probe_ub, mlp_a, mlp_b)
+                mean_a, std_a = probe_xa.mean(0), probe_xa.std(0)
+                mean_b, std_b = probe_xb.mean(0), probe_xb.std(0)
+
+                def norm_a(x):
+                    return (x - mean_a) / (std_a + 1e-8)
+                def norm_b(x):
+                    return (x - mean_b) / (std_b + 1e-8)
+
                 # 1. Manifold
                 if n_man > 0:
                     us, ua, ub = self._sample_latents(n_man, k_shared, m_unique)
                     xa, xb = self._gen_mlp(us, ua, ub, mlp_a, mlp_b)
+                    xa, xb = norm_a(xa), norm_b(xb)
                     pa.append(xa); pb.append(xb); pu.append(us)
                     pta.append(np.zeros(n_man, dtype=np.int32)); ptb.append(np.zeros(n_man, dtype=np.int32))
 
                 # Helper for bounds (estimating output range for garbage generation)
                 _us, _ua, _ub = self._sample_latents(1000, k_shared, m_unique)
                 _xa, _xb = self._gen_mlp(_us, _ua, _ub, mlp_a, mlp_b)
+                _xa, _xb = norm_a(_xa), norm_b(_xb)
                 ma, Ma = _xa.min(0), _xa.max(0)
                 mb, Mb = _xb.min(0), _xb.max(0)
                 h = self.noise_bbox_expansion / 2.0
@@ -340,6 +353,7 @@ class DualDisentangleDataset(Dataset):
                 if n_ac_a > 0:
                     us, ua, ub = self._sample_latents(n_ac_a, k_shared, m_unique)
                     _, xb = self._gen_mlp(us, ua, ub, mlp_a, mlp_b)
+                    xb = norm_b(xb)
                     xa = ma + (Ma - ma) * self.rng.rand(n_ac_a, d_out)
                     pa.append(xa); pb.append(xb); pu.append(us)
                     pta.append(np.full(n_ac_a, 2, dtype=np.int32)); ptb.append(np.full(n_ac_a, 1, dtype=np.int32))
@@ -348,6 +362,7 @@ class DualDisentangleDataset(Dataset):
                 if n_ac_b > 0:
                     us, ua, ub = self._sample_latents(n_ac_b, k_shared, m_unique)
                     xa, _ = self._gen_mlp(us, ua, ub, mlp_a, mlp_b)
+                    xa = norm_a(xa)
                     xb = mb + (Mb - mb) * self.rng.rand(n_ac_b, d_out)
                     pa.append(xa); pb.append(xb); pu.append(us)
                     pta.append(np.full(n_ac_b, 1, dtype=np.int32)); ptb.append(np.full(n_ac_b, 2, dtype=np.int32))
@@ -358,6 +373,7 @@ class DualDisentangleDataset(Dataset):
                     us_fake, _, _ = self._sample_latents(n_am_a, k_shared, m_unique)
                     xa_fake, _ = self._gen_mlp(us_fake, ua, ub, mlp_a, mlp_b)
                     _, xb_true = self._gen_mlp(us_true, ua, ub, mlp_a, mlp_b)
+                    xa_fake, xb_true = norm_a(xa_fake), norm_b(xb_true)
                     pa.append(xa_fake); pb.append(xb_true); pu.append(us_true)
                     pta.append(np.full(n_am_a, 4, dtype=np.int32)); ptb.append(np.full(n_am_a, 3, dtype=np.int32))
 
@@ -367,6 +383,7 @@ class DualDisentangleDataset(Dataset):
                     us_fake, _, _ = self._sample_latents(n_am_b, k_shared, m_unique)
                     xa_true, _ = self._gen_mlp(us_true, ua, ub, mlp_a, mlp_b)
                     _, xb_fake = self._gen_mlp(us_fake, ua, ub, mlp_a, mlp_b)
+                    xa_true, xb_fake = norm_a(xa_true), norm_b(xb_fake)
                     pa.append(xa_true); pb.append(xb_fake); pu.append(us_true)
                     pta.append(np.full(n_am_b, 3, dtype=np.int32)); ptb.append(np.full(n_am_b, 4, dtype=np.int32))
                     
@@ -378,6 +395,13 @@ class DualDisentangleDataset(Dataset):
                     pta.append(np.full(n_ext, 5, dtype=np.int32)); ptb.append(np.full(n_ext, 5, dtype=np.int32))
 
                 data_a, data_b = np.vstack(pa), np.vstack(pb)
+
+                # Re-normalize stacked data before noise addition to guarantee standard deviation of exactly 1
+                m_a, s_a = data_a.mean(0), data_a.std(0)
+                m_b, s_b = data_b.mean(0), data_b.std(0)
+                data_a = (data_a - m_a) / (s_a + 1e-8)
+                data_b = (data_b - m_b) / (s_b + 1e-8)
+
                 # Unstructured noise on final output (sensor noise)
                 data_a += self.rng.normal(0, self.manifold_noise_a, size=data_a.shape)
                 data_b += self.rng.normal(0, self.manifold_noise_b, size=data_b.shape)

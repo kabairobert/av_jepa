@@ -157,11 +157,18 @@ def linear_probe_r2(z: np.ndarray, u: np.ndarray) -> dict:
     """Fit Ridge regression z -> u, return R2 per factor and mean."""
     from sklearn.linear_model import Ridge
     from sklearn.metrics import r2_score
-    reg = Ridge(alpha=1.0).fit(z, u)
-    u_pred = reg.predict(z)
-    if u.ndim == 1:
-        return {'r2_u0': float(r2_score(u, u_pred)), 'r2_mean': float(r2_score(u, u_pred))}
-    r2_per = [float(r2_score(u[:, i], u_pred[:, i])) for i in range(u.shape[1])]
+    
+    # Train/test split to prevent R2 inflation at high dimensions
+    split = len(z) // 2
+    z_train, u_train = z[:split], u[:split]
+    z_test, u_test = z[split:], u[split:]
+
+    reg = Ridge(alpha=1.0).fit(z_train, u_train)
+    u_pred = reg.predict(z_test)
+    
+    if u_test.ndim == 1:
+        return {'r2_u0': float(r2_score(u_test, u_pred)), 'r2_mean': float(r2_score(u_test, u_pred))}
+    r2_per = [float(r2_score(u_test[:, i], u_pred[:, i])) for i in range(u_test.shape[1])]
     result = {f'r2_u{i}': v for i, v in enumerate(r2_per)}
     result['r2_mean'] = float(np.mean(r2_per))
     return result
@@ -278,7 +285,10 @@ def cca_score(z_a: np.ndarray, z_b: np.ndarray) -> dict:
         0.0 = fully off-diagonal (rotated alignment)
     """
     from sklearn.cross_decomposition import CCA
-    n_components = min(z_a.shape[1], z_b.shape[1])
+    
+    # Cap components to prevent statistical invalidity and hanging at high D
+    n_components = min(z_a.shape[1], z_b.shape[1], max(3, z_a.shape[0] // 100))
+    
     try:
         cca = CCA(n_components=n_components).fit(z_a, z_b)
         z_a_c, z_b_c = cca.transform(z_a, z_b)
