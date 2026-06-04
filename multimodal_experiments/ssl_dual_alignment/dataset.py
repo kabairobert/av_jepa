@@ -662,13 +662,17 @@ class DualDisentangleDataset(Dataset):
         u_ub = self.rng.normal(0, 1, (n, m_unique))
         return u_s, u_ua, u_ub
 
-    def _gen_mlp(self, u_s, u_ua, u_ub, mlp_a, mlp_b):
+    def _gen_mlp(self, u_s, u_ua, u_ub, mlp_a, mlp_b, chunk_size=100000):
         za = torch.tensor(np.hstack([u_s, u_ua]), dtype=torch.float32)
         zb = torch.tensor(np.hstack([u_s, u_ub]), dtype=torch.float32)
+        
+        xa_list, xb_list = [], []
         with torch.no_grad():
-            xa = mlp_a(za).numpy()
-            xb = mlp_b(zb).numpy()
-        return xa, xb
+            for i in range(0, len(za), chunk_size):
+                xa_list.append(mlp_a(za[i:i+chunk_size]).cpu().numpy())
+                xb_list.append(mlp_b(zb[i:i+chunk_size]).cpu().numpy())
+                
+        return np.vstack(xa_list), np.vstack(xb_list)
 
     def _generate_3d1f_raw_features(self, u_vals, na, nb):
         pitch = 1.0 / (1.2 - u_vals)
