@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=9
 #SBATCH --gpus=1
 #SBATCH --mem=60G
-#SBATCH --time=6:00:00
+#SBATCH --time=3:30:00
 #SBATCH --array=0-5
 #SBATCH --output=/gpfs/home3/rkabai/github/eb_jepa_private/multimodal_experiments/ssl_dual_alignment/hyp_testing/batches/B16_capacity_scaling_fixed/logs/%A_%a.out
 #SBATCH --error=/gpfs/home3/rkabai/github/eb_jepa_private/multimodal_experiments/ssl_dual_alignment/hyp_testing/batches/B16_capacity_scaling_fixed/logs/b16_%A_%a.err

@@ -7,7 +7,7 @@ Logarithmic flow depth scaling with increased width for 512D:
   - 256D -> S=14,  hidden_units=128
   - 512D -> S=16,  hidden_units=256
 
-Fixed: dataset=nd-kf-mlp, shared_factor_dist=normal, mlp_depth=2, k_shared=3, m_unique=0, noise=0.02, epochs=150.
+Fixed: dataset=nd-kf-mlp, shared_factor_dist=normal, mlp_depth=2, k_shared=3, m_unique=0, noise=0.02, epochs=100.
 """
 import yaml
 from pathlib import Path
@@ -78,12 +78,12 @@ def generate_configs():
                 "pred_loss": "l1",
             },
             "optim": {
-                "epochs": 150,
+                "epochs": 100,
                 "lr": 0.001,
             },
             "logging": {
                 "log_wandb": True,
-                "save_every": 150,
+                "save_every": 100,
                 "tqdm_silent": False,
                 "wandb_group": "B16_capacity_scaling_fixed",
             },

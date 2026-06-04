@@ -15,7 +15,7 @@ Fixed parameters:
 - `mlp_depth`: `2` (same as B15)
 - `num_samples`: `1048576` (1.05M dense dataset)
 - `batch_size`: `4096`
-- `epochs`: `150` (extended from 100 to allow full convergence at 512D)
+- `epochs`: `100`
 
 ## Sweep Grid
 
