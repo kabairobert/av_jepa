@@ -28,6 +28,13 @@ def to_numpy(val):
     return np.asarray(val)
 
 
+def minmax_normalize(val, eps=1e-8):
+    """Normalize array-like to [0, 1] using min-max scaling."""
+    v_min = val.min()
+    v_max = val.max()
+    return (val - v_min) / (v_max - v_min + eps)
+
+
 def project_to_3d(data):
     if data.shape[1] <= 3:
         return data
@@ -56,8 +63,7 @@ def get_point_sizes(param_values, default_size=5.0) -> np.ndarray | float:
     """Return point sizes mapped from u3 (if present) or default_size."""
     vals = to_numpy(param_values).astype(float)
     if vals.ndim == 2 and vals.shape[1] >= 3:
-        u3 = vals[:, 2]
-        return 2 + ((u3 - u3.min()) / (u3.max() - u3.min() + 1e-8)) * 8
+        return 2 + minmax_normalize(vals[:, 2]) * 8
     return default_size
 
 
@@ -71,8 +77,7 @@ def get_point_colors(param_values, point_types=None, format_type='rgba', cmap='r
     vals = to_numpy(param_values).astype(float)
 
     if vals.ndim == 1:
-        denom = (vals.max() - vals.min()) + 1e-8
-        normalized = (vals - vals.min()) / denom
+        normalized = minmax_normalize(vals)
         if format_type == 'plotly':
             from plotly.colors import sample_colorscale
             base_colors = sample_colorscale("Rainbow", normalized)
@@ -80,7 +85,9 @@ def get_point_colors(param_values, point_types=None, format_type='rgba', cmap='r
             colormap = plt.colormaps[cmap]
             base_colors = [colormap(float(p)) for p in normalized]
     else:
-        base_colors = get_hsv_colors(vals[:, 0], vals[:, 1], format_type=format_type)
+        u1_norm = minmax_normalize(vals[:, 0])
+        u2_norm = minmax_normalize(vals[:, 1])
+        base_colors = get_hsv_colors(u1_norm, u2_norm, format_type=format_type)
 
     if point_types is None:
         return base_colors
