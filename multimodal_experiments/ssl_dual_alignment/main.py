@@ -28,7 +28,7 @@ from multimodal_experiments.ssl_dual_alignment.eval import evaluate_and_log_chec
 from multimodal_experiments.ssl_dual_alignment.vis import log_plots_to_wandb
 
 
-def _parse_tags(wandb_tags):
+def _parse_wandb_tags(wandb_tags):
     """Normalize wandb_tags: Fire may pass str, tuple, or list."""
     if not wandb_tags:
         return []
@@ -73,6 +73,80 @@ def _estimate_vram_footprint(cfg, device) -> None:
         pass
 
 
+def _apply_quickrun_settings(cfg, quickrun):
+    """Applies quickrun shortcut options to overwrite the configuration."""
+    if not quickrun:
+        return cfg
+
+    valid_opts = ["cpu-nolog", "cpu-log", "gpu-nolog", "gpu-log"]
+    
+    if isinstance(quickrun, bool) and quickrun is True:
+        quickrun_opt = "cpu-nolog"
+    else:
+        quickrun_opt = str(quickrun).strip().lower()
+        
+    if quickrun_opt not in valid_opts:
+        print(f"❌ Invalid quickrun option: '{quickrun}'. Valid options: {', '.join(valid_opts)}")
+        import sys
+        sys.exit(1)
+        
+    cfg.optim.epochs = 1
+    if not hasattr(cfg, "training"):
+        from omegaconf import OmegaConf
+        cfg.training = OmegaConf.create({})
+    cfg.training.max_train_batches = 1
+    
+    if "nolog" in quickrun_opt:
+        cfg.logging.log_wandb = False
+        
+    if "cpu" in quickrun_opt:
+        cfg.meta.device = "cpu"
+        cfg.data.batch_size = 4
+        
+    return cfg
+
+
+def _compile_model(model, device):
+    """Compiles the model with torch.compile if available and on CUDA."""
+    if hasattr(torch, "compile") and device.type == 'cuda':
+        print("Compiling model with torch.compile...")
+        try:
+            import torch._dynamo as dynamo
+            dynamo.config.suppress_errors = True
+        except Exception:
+            pass
+        return torch.compile(model)
+    return model
+
+
+def _setup_amp(cfg, device):
+    """Mixed precision setup matching video_jepa's elegant and robust pattern."""
+    import torch
+    train_cfg = cfg.get("training", {})
+    if train_cfg is None:
+        train_cfg = {}
+    
+    use_amp = train_cfg.get("use_amp", True)
+    dtype_str = str(train_cfg.get("dtype", "bfloat16")).lower()
+    
+    dtype_map = {
+        "float16": torch.float16,
+        "bfloat16": torch.bfloat16,
+        "float32": torch.float32,
+    }
+    dtype = dtype_map.get(dtype_str, torch.bfloat16)
+    
+    if use_amp and device.type != 'cuda':
+        print("AMP requested but device is CPU — disabling AMP for safety")
+        use_amp = False
+        
+    scaler_device = 'cuda' if device.type == 'cuda' else 'cpu'
+    scaler = torch.amp.GradScaler(scaler_device, enabled=use_amp and dtype == torch.float16)
+    print(f"Using AMP: {use_amp} with dtype: {dtype}")
+    
+    return use_amp, dtype, scaler
+
+
 def run(
     fname: str = "multimodal_experiments/ssl_dual_alignment/cfgs/paired_factors_2D.yaml",
     config: str = None,
@@ -92,31 +166,7 @@ def run(
         cfg = load_config(fname, overrides if overrides else None)
 
     # Apply quickrun shortcut
-    if quickrun:
-        valid_opts = ["cpu-nolog", "cpu-log", "gpu-nolog", "gpu-log"]
-        
-        if isinstance(quickrun, bool) and quickrun is True:
-            quickrun_opt = "cpu-nolog"
-        else:
-            quickrun_opt = str(quickrun).strip().lower()
-            
-        if quickrun_opt not in valid_opts:
-            print(f"❌ Invalid quickrun option: '{quickrun}'. Valid options: {', '.join(valid_opts)}")
-            import sys
-            sys.exit(1)
-            
-        cfg.optim.epochs = 1
-        if not hasattr(cfg, "training"):
-            from omegaconf import OmegaConf
-            cfg.training = OmegaConf.create({})
-        cfg.training.max_train_batches = 1
-        
-        if "nolog" in quickrun_opt:
-            cfg.logging.log_wandb = False
-            
-        if "cpu" in quickrun_opt:
-            cfg.meta.device = "cpu"
-            cfg.data.batch_size = 4
+    cfg = _apply_quickrun_settings(cfg, quickrun)
 
     device = setup_device(cfg.meta.device)
     setup_seed(cfg.meta.seed)
@@ -150,7 +200,7 @@ def run(
     base_tags = ["sslda"]
     if cfg.logging.get("log_seed_tag", False):
         base_tags.append(f"seed_{cfg.meta.seed}")
-    extra_tags = _parse_tags(wandb_tags)
+    extra_tags = _parse_wandb_tags(wandb_tags)
     all_tags = base_tags + extra_tags
 
     wandb_run = setup_wandb(
@@ -190,14 +240,7 @@ def run(
     # VRAM safety check
     _estimate_vram_footprint(cfg, device)
 
-    if hasattr(torch, "compile") and device.type == 'cuda':
-        print("Compiling model with torch.compile...")
-        try:
-            import torch._dynamo as dynamo
-            dynamo.config.suppress_errors = True
-        except Exception:
-            pass
-        dual_model = torch.compile(dual_model)
+    dual_model = _compile_model(dual_model, device)
 
     loss_fn = build_loss_from_config(cfg, predictor_a2b, predictor_b2a)
 
@@ -221,28 +264,7 @@ def run(
     if wandb_run:
         log_plots_to_wandb(dual_model, train_set, device, global_step, wandb_run)
 
-    # Mixed precision setup matching video_jepa's elegant and robust pattern
-    train_cfg = cfg.get("training", {})
-    if train_cfg is None:
-        train_cfg = {}
-    
-    use_amp = train_cfg.get("use_amp", True)
-    dtype_str = str(train_cfg.get("dtype", "bfloat16")).lower()
-    
-    dtype_map = {
-        "float16": torch.float16,
-        "bfloat16": torch.bfloat16,
-        "float32": torch.float32,
-    }
-    dtype = dtype_map.get(dtype_str, torch.bfloat16)
-    
-    if use_amp and device.type != 'cuda':
-        print("AMP requested but device is CPU — disabling AMP for safety")
-        use_amp = False
-        
-    scaler_device = 'cuda' if device.type == 'cuda' else 'cpu'
-    scaler = torch.amp.GradScaler(scaler_device, enabled=use_amp and dtype == torch.float16)
-    print(f"Using AMP: {use_amp} with dtype: {dtype}")
+    use_amp, dtype, scaler = _setup_amp(cfg, device)
 
     # --- 9. Training Loop ---
     max_train_batches = cfg.training.get("max_train_batches") if hasattr(cfg, "training") else None
@@ -288,7 +310,7 @@ def run(
         nb = batch_idx
         return epoch_loss / nb, epoch_align_a2b / nb, epoch_align_b2a / nb
 
-    def _maybe_eval_and_save(epoch_idx, active_optimizer):
+    def _eval_and_save(epoch_idx, active_optimizer):
         save_checkpoint(
             exp_dir / f"epoch_{epoch_idx+1}.pth.tar",
             model=full_model,
@@ -319,7 +341,7 @@ def run(
                 "train/align_mse_b2a": avg_b2a,
             }, step=global_step)
         if (epoch_idx + 1) % save_every == 0:
-            _maybe_eval_and_save(epoch_idx, optimizer)
+            _eval_and_save(epoch_idx, optimizer)
     final_optimizer = optimizer
 
     # --- 10. Final checkpoint ---

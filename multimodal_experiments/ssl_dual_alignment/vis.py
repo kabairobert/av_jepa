@@ -59,7 +59,7 @@ def get_hsv_colors(u1: np.ndarray, u2: np.ndarray, format_type: str = 'rgba') ->
     return colors
 
 
-def get_point_sizes(param_values, default_size=5.0) -> np.ndarray | float:
+def get_point_sizes(param_values, default_size=5.0):
     """Return point sizes mapped from u3 (if present) or default_size."""
     vals = to_numpy(param_values).astype(float)
     if vals.ndim == 2 and vals.shape[1] >= 3:
