@@ -116,13 +116,17 @@ def _apply_quickrun_settings(cfg, quickrun):
         from omegaconf import OmegaConf
         cfg.training = OmegaConf.create({})
     cfg.training.max_train_batches = 1
-    
+    cfg.training.max_eval_batches = 4
+
     if "nolog" in quickrun_opt:
         cfg.logging.log_wandb = False
-        
+
     if "cpu" in quickrun_opt:
         cfg.meta.device = "cpu"
         cfg.data.batch_size = 4
+        cfg.data.num_samples = 1024
+    elif "gpu" in quickrun_opt:
+        cfg.data.num_samples = 8192
         
     return cfg
 
@@ -348,6 +352,7 @@ def run(
             step=global_step,
             axis_box=getattr(train_set, 'axis_box', None),
         )
+        max_eval_batches = cfg.training.get("max_eval_batches") if hasattr(cfg, "training") else None
         if wandb_run:
             evaluate_and_log_checkpoint(
                 train_set, train_loader, dual_model, loss_fn, loss_type,
@@ -358,6 +363,7 @@ def run(
                 log_interactive_3d=bool(train_set.data_a.shape[1] >= 3),
                 log_prefix="val",
                 is_3d=bool(train_set.data_a.shape[1] >= 3),
+                max_batches=max_eval_batches,
             )
 
     save_every = cfg.logging.get("save_every", 50)
@@ -383,6 +389,7 @@ def run(
         axis_box=getattr(train_set, 'axis_box', None),
     )
 
+    max_eval_batches = cfg.training.get("max_eval_batches") if hasattr(cfg, "training") else None
     if wandb_run:
         evaluate_and_log_checkpoint(
             train_set, train_loader, dual_model, loss_fn, loss_type,
@@ -393,6 +400,7 @@ def run(
             log_interactive_3d=bool(train_set.data_a.shape[1] >= 3),
             log_prefix="val",
             is_3d=bool(train_set.data_a.shape[1] >= 3),
+            max_batches=max_eval_batches,
         )
         log_plots_to_wandb(dual_model, train_set, device, global_step, wandb_run)
         wandb.finish()
