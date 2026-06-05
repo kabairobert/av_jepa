@@ -54,7 +54,7 @@ def launch_run(
     epochs: int = None,
     max_batches: int = None,
     no_wandb: bool = False,
-    quickrun: bool = False
+    quickrun=False
 ) -> None:
     tags = batch_ids + [cfg_name]
     tags_str = ",".join(tags)
@@ -64,7 +64,10 @@ def launch_run(
         "--wandb_tags", tags_str,
     ]
     if quickrun:
-        cmd += ["--quickrun"]
+        if isinstance(quickrun, bool) and quickrun is True:
+            cmd += ["--quickrun"]
+        else:
+            cmd += [f"--quickrun={quickrun}"]
     if epochs is not None:
         cmd += ["--optim.epochs", str(epochs)]
     if max_batches is not None:
@@ -99,7 +102,7 @@ def main():
     parser.add_argument("--epochs", type=int, default=None, help="Override optim.epochs")
     parser.add_argument("--max_batches", type=int, default=None, help="Override training.max_train_batches")
     parser.add_argument("--no_wandb", action="store_true", help="Disable W&B logging")
-    parser.add_argument("--quickrun", action="store_true", help="Shortcut for --epochs 1 --max_batches 1 --no_wandb")
+    parser.add_argument("--quickrun", nargs='?', const="cpu-nolog", default=False, help="Shortcut options: cpu-nolog (default if flag is set), cpu-log, gpu-nolog, gpu-log")
 
     args = parser.parse_args()
 

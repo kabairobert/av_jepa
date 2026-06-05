@@ -1,4 +1,8 @@
+import sys
 from pathlib import Path
+# Support running from subdirectories without PYTHONPATH overrides
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+
 from datetime import datetime
 
 import fire
@@ -75,7 +79,7 @@ def run(
     cfg=None,
     folder=None,
     wandb_tags=None,
-    quickrun: bool = False,
+    quickrun=False,
     **overrides
 ):
     import wandb
@@ -89,12 +93,30 @@ def run(
 
     # Apply quickrun shortcut
     if quickrun:
+        valid_opts = ["cpu-nolog", "cpu-log", "gpu-nolog", "gpu-log"]
+        
+        if isinstance(quickrun, bool) and quickrun is True:
+            quickrun_opt = "cpu-nolog"
+        else:
+            quickrun_opt = str(quickrun).strip().lower()
+            
+        if quickrun_opt not in valid_opts:
+            print(f"❌ Invalid quickrun option: '{quickrun}'. Valid options: {', '.join(valid_opts)}")
+            import sys
+            sys.exit(1)
+            
         cfg.optim.epochs = 1
         if not hasattr(cfg, "training"):
             from omegaconf import OmegaConf
             cfg.training = OmegaConf.create({})
         cfg.training.max_train_batches = 1
-        cfg.logging.log_wandb = False
+        
+        if "nolog" in quickrun_opt:
+            cfg.logging.log_wandb = False
+            
+        if "cpu" in quickrun_opt:
+            cfg.meta.device = "cpu"
+            cfg.data.batch_size = 4
 
     device = setup_device(cfg.meta.device)
     setup_seed(cfg.meta.seed)
@@ -168,7 +190,7 @@ def run(
     # VRAM safety check
     _estimate_vram_footprint(cfg, device)
 
-    if hasattr(torch, "compile"):
+    if hasattr(torch, "compile") and device.type == 'cuda':
         print("Compiling model with torch.compile...")
         try:
             import torch._dynamo as dynamo
@@ -214,11 +236,12 @@ def run(
     }
     dtype = dtype_map.get(dtype_str, torch.bfloat16)
     
-    if use_amp and not torch.cuda.is_available():
-        print("AMP requested but CUDA not available — disabling AMP for safety on CPU")
+    if use_amp and device.type != 'cuda':
+        print("AMP requested but device is CPU — disabling AMP for safety")
         use_amp = False
         
-    scaler = torch.amp.GradScaler('cuda', enabled=use_amp and dtype == torch.float16)
+    scaler_device = 'cuda' if device.type == 'cuda' else 'cpu'
+    scaler = torch.amp.GradScaler(scaler_device, enabled=use_amp and dtype == torch.float16)
     print(f"Using AMP: {use_amp} with dtype: {dtype}")
 
     # --- 9. Training Loop ---
