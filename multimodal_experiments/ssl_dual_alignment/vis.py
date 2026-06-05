@@ -65,14 +65,27 @@ def get_hsv_colors(u1: np.ndarray, u2: np.ndarray, format_type: str = 'rgba') ->
     return colors
 
 
-def get_point_sizes(param_values, default_size=5.0, point_size_min=4.0, point_size_max=20.0):
-    """Return point sizes mapped from u3 (if present) or default_size."""
+def get_point_sizes(param_values, default_size=5.0, point_size_min=4.0, point_size_max=20.0, point_types=None):
+    """Return point sizes mapped from u3 (if present) or default_size.
+       If point_types is provided, external/corrupted points get point_size_min.
+    """
     vals = to_numpy(param_values).astype(float)
     if vals.ndim == 2 and vals.shape[1] >= 3:
         sizes = minmax_normalize(vals[:, 2])
         sizes = np.nan_to_num(sizes, nan=0.0)
-        return point_size_min + sizes * (point_size_max - point_size_min)
-    return default_size
+        base_sizes = point_size_min + sizes * (point_size_max - point_size_min)
+    else:
+        if point_types is not None:
+            base_sizes = np.full(len(vals), default_size)
+        else:
+            base_sizes = default_size
+
+    if point_types is not None:
+        pts = to_numpy(point_types).astype(int)
+        mask = (pts == PointType.EXTERNAL) | (pts == PointType.ASYM_A_CORRUPT) | (pts == PointType.ASYM_B_CORRUPT)
+        base_sizes[mask] = point_size_min
+
+    return base_sizes
 
 
 def get_point_colors(param_values, point_types=None, format_type='rgba', cmap='rainbow'):
@@ -121,9 +134,9 @@ def get_point_colors(param_values, point_types=None, format_type='rgba', cmap='r
 def plot_original_spaces(data_a, data_b, param_values,
                          point_type_a=None, point_type_b=None,
                          point_size_min=4.0, point_size_max=20.0, point_size_default=5.0):
-    """Plots raw Modality A and Modality B datasets with noise-aware coloring."""
+    """Plots Shared Latent Space, Modality A, and Modality B datasets."""
     is_3d = data_a.shape[1] >= 3
-    fig = plt.figure(figsize=(12, 6))
+    fig = plt.figure(figsize=(18, 6))
 
     data_a_proj = project_to_3d(data_a)
     data_b_proj = project_to_3d(data_b)
@@ -133,36 +146,67 @@ def plot_original_spaces(data_a, data_b, param_values,
     pt_b = point_type_b if point_type_b is not None else np.zeros(len(data_b), dtype=np.int32)
     c_a = get_point_colors(param_values, pt_a)
     c_b = get_point_colors(param_values, pt_b)
-    s_points = get_point_sizes(param_values, default_size=point_size_default,
-                               point_size_min=point_size_min,
-                               point_size_max=point_size_max)
+    
+    s_points_a = get_point_sizes(param_values, default_size=point_size_default,
+                                 point_size_min=point_size_min,
+                                 point_size_max=point_size_max, point_types=pt_a)
+    s_points_b = get_point_sizes(param_values, default_size=point_size_default,
+                                 point_size_min=point_size_min,
+                                 point_size_max=point_size_max, point_types=pt_b)
+
+    # Process latents for Shared Latent Space
+    vals = to_numpy(param_values).astype(float)
+    if vals.ndim == 1:
+        u_3d = np.column_stack([vals, np.zeros_like(vals), np.zeros_like(vals)])
+    elif vals.shape[1] == 2:
+        u_3d = np.column_stack([vals[:, 0], vals[:, 1], np.zeros(vals.shape[0])])
+    else:
+        u_3d = project_to_3d(vals)
+
+    # Filter external noise points
+    non_external = (pt_a != PointType.EXTERNAL) & (pt_b != PointType.EXTERNAL)
+    u_3d_clean = u_3d[non_external]
+
+    # Clean colors and sizes for latent space (no point_types -> full color/size)
+    c_latent_all = get_point_colors(param_values, point_types=None)
+    c_latent = [c_latent_all[i] for i in range(len(c_latent_all)) if non_external[i]]
+    s_points_latent_all = get_point_sizes(param_values, default_size=point_size_default,
+                                          point_size_min=point_size_min,
+                                          point_size_max=point_size_max, point_types=None)
+    s_points_clean = s_points_latent_all[non_external] if isinstance(s_points_latent_all, np.ndarray) else s_points_latent_all
+
+    ax1 = fig.add_subplot(131, projection='3d')
+    ax1.scatter(u_3d_clean[:, 0], u_3d_clean[:, 1], u_3d_clean[:, 2],
+                c=c_latent, s=s_points_clean, alpha=1.0)
+    ax1.set_title('Shared Latent Space')
+    ax1.set_xlabel('U1'); ax1.set_ylabel('U2'); ax1.set_zlabel('U3')
 
     if is_3d:
-        ax1 = fig.add_subplot(121, projection='3d')
-        ax1.scatter(data_a_proj[:, 0], data_a_proj[:, 1], data_a_proj[:, 2],
-                    c=c_a, s=s_points, alpha=1.0)
-        ax1.set_title('Modality A')
-        ax1.set_xlabel('PC 1' if data_a.shape[1] > 3 else 'Dim 1')
-        ax1.set_ylabel('PC 2' if data_a.shape[1] > 3 else 'Dim 2')
-        ax1.set_zlabel('PC 3' if data_a.shape[1] > 3 else 'Dim 3')
-        ax2 = fig.add_subplot(122, projection='3d')
-        ax2.scatter(data_b_proj[:, 0], data_b_proj[:, 1], data_b_proj[:, 2],
-                    c=c_b, s=s_points, alpha=1.0)
-        ax2.set_title('Modality B')
-        ax2.set_xlabel('PC 1' if data_b.shape[1] > 3 else 'Dim 1')
-        ax2.set_ylabel('PC 2' if data_b.shape[1] > 3 else 'Dim 2')
-        ax2.set_zlabel('PC 3' if data_b.shape[1] > 3 else 'Dim 3')
+        ax2 = fig.add_subplot(132, projection='3d')
+        ax2.scatter(data_a_proj[:, 0], data_a_proj[:, 1], data_a_proj[:, 2],
+                    c=c_a, s=s_points_a, alpha=1.0)
+        ax2.set_title('Modality A')
+        ax2.set_xlabel('PC 1' if data_a.shape[1] > 3 else 'Dim 1')
+        ax2.set_ylabel('PC 2' if data_a.shape[1] > 3 else 'Dim 2')
+        ax2.set_zlabel('PC 3' if data_a.shape[1] > 3 else 'Dim 3')
+        ax3 = fig.add_subplot(133, projection='3d')
+        ax3.scatter(data_b_proj[:, 0], data_b_proj[:, 1], data_b_proj[:, 2],
+                    c=c_b, s=s_points_b, alpha=1.0)
+        ax3.set_title('Modality B')
+        ax3.set_xlabel('PC 1' if data_b.shape[1] > 3 else 'Dim 1')
+        ax3.set_ylabel('PC 2' if data_b.shape[1] > 3 else 'Dim 2')
+        ax3.set_zlabel('PC 3' if data_b.shape[1] > 3 else 'Dim 3')
     else:
-        ax1 = fig.add_subplot(121)
-        ax1.scatter(data_a[:, 0], data_a[:, 1], c=c_a, s=s_points, alpha=1.0)
-        ax1.set_title('Modality A')
-        ax1.set_xlabel('Dim 1'); ax1.set_ylabel('Dim 2')
-        ax1.axis('equal')
-        ax2 = fig.add_subplot(122)
-        ax2.scatter(data_b[:, 0], data_b[:, 1], c=c_b, s=s_points, alpha=1.0)
-        ax2.set_title('Modality B')
+        ax2 = fig.add_subplot(132)
+        ax2.scatter(data_a[:, 0], data_a[:, 1], c=c_a, s=s_points_a, alpha=1.0)
+        ax2.set_title('Modality A')
         ax2.set_xlabel('Dim 1'); ax2.set_ylabel('Dim 2')
         ax2.axis('equal')
+        ax3 = fig.add_subplot(133)
+        ax3.scatter(data_b[:, 0], data_b[:, 1], c=c_b, s=s_points_b, alpha=1.0)
+        ax3.set_title('Modality B')
+        ax3.set_xlabel('Dim 1'); ax3.set_ylabel('Dim 2')
+        ax3.axis('equal')
 
     fig.subplots_adjust(left=0.05, right=0.95, bottom=0.1, top=0.9, wspace=0.2)
     return fig
@@ -171,7 +215,7 @@ def plot_original_spaces(data_a, data_b, param_values,
 def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, device,
                                       point_type_a=None, point_type_b=None,
                                       point_size_min=4.0, point_size_max=20.0, point_size_default=5.0):
-    """Plots 4-way view: Input A -> Output A -> Output B -> Input B."""
+    """Plots 2-way view: Output Space A and Output Space B."""
     dual_model.eval()
     with torch.no_grad():
         output_a, _ = dual_model.model_a(torch.tensor(data_a, device=device, dtype=torch.float32))
@@ -181,58 +225,50 @@ def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, 
     output_b = output_b.detach().cpu().numpy()
 
     if np.isnan(output_a).any() or np.isnan(output_b).any() or np.isinf(output_a).any() or np.isinf(output_b).any():
-        fig = plt.figure(figsize=(18, 4))
+        fig = plt.figure(figsize=(12, 6))
         fig.suptitle('Self-Supervised Dual Geometry Reshaping (NaN/Inf detected in outputs)')
         return fig
 
-    data_a_proj = project_to_3d(data_a)
     output_a_proj = project_to_3d(output_a)
     output_b_proj = project_to_3d(output_b)
-    data_b_proj = project_to_3d(data_b)
 
-    # Build noise-aware colors for input spaces; use param color for latent outputs
+    # Build noise-aware colors for latent outputs
     pt_a = point_type_a if point_type_a is not None else np.zeros(len(data_a), dtype=np.int32)
     pt_b = point_type_b if point_type_b is not None else np.zeros(len(data_b), dtype=np.int32)
-    c_in_a = get_point_colors(param_values, pt_a)
-    c_in_b = get_point_colors(param_values, pt_b)
-    # Latent outputs: retain noise-type coloring (same point indices)
     c_out_a = get_point_colors(param_values, pt_a)
     c_out_b = get_point_colors(param_values, pt_b)
     
-    s_points = get_point_sizes(param_values, default_size=point_size_default,
-                               point_size_min=point_size_min,
-                               point_size_max=point_size_max) * 2  # double size for the 4-way plot default to match the original s=10 vs s=5
+    s_points_a = get_point_sizes(param_values, default_size=point_size_default,
+                                 point_size_min=point_size_min,
+                                 point_size_max=point_size_max, point_types=pt_a) * 2
+    s_points_b = get_point_sizes(param_values, default_size=point_size_default,
+                                 point_size_min=point_size_min,
+                                 point_size_max=point_size_max, point_types=pt_b) * 2
 
-    is_3d = data_a.shape[1] >= 3
-    fig = plt.figure(figsize=(18, 4))
+    is_3d = output_a.shape[1] >= 3
+    fig = plt.figure(figsize=(12, 6))
     fig.suptitle('Self-Supervised Dual Geometry Reshaping')
 
     if is_3d:
-        axs = [fig.add_subplot(1, 4, i+1, projection='3d') for i in range(4)]
-        axs[0].scatter(data_a_proj[:, 0], data_a_proj[:, 1], data_a_proj[:, 2], c=c_in_a, s=s_points, alpha=1.0)
-        axs[1].scatter(output_a_proj[:, 0], output_a_proj[:, 1], output_a_proj[:, 2], c=c_out_a, s=s_points, alpha=1.0)
-        axs[2].scatter(output_b_proj[:, 0], output_b_proj[:, 1], output_b_proj[:, 2], c=c_out_b, s=s_points, alpha=1.0)
-        axs[3].scatter(data_b_proj[:, 0], data_b_proj[:, 1], data_b_proj[:, 2], c=c_in_b, s=s_points, alpha=1.0)
-        for i in range(4):
-            dim_str = "PC" if data_a.shape[1] > 3 else "Dim"
+        axs = [fig.add_subplot(1, 2, i+1, projection='3d') for i in range(2)]
+        axs[0].scatter(output_a_proj[:, 0], output_a_proj[:, 1], output_a_proj[:, 2], c=c_out_a, s=s_points_a, alpha=1.0)
+        axs[1].scatter(output_b_proj[:, 0], output_b_proj[:, 1], output_b_proj[:, 2], c=c_out_b, s=s_points_b, alpha=1.0)
+        for i in range(2):
+            dim_str = "PC" if output_a.shape[1] > 3 else "Dim"
             axs[i].set_xlabel(f'{dim_str} 1')
             axs[i].set_ylabel(f'{dim_str} 2')
             axs[i].set_zlabel(f'{dim_str} 3')
     else:
-        axs = [fig.add_subplot(1, 4, i+1) for i in range(4)]
-        axs[0].scatter(data_a[:, 0], data_a[:, 1], c=c_in_a, s=s_points, alpha=1.0)
-        axs[1].scatter(output_a[:, 0], output_a[:, 1], c=c_out_a, s=s_points, alpha=1.0)
-        axs[2].scatter(output_b[:, 0], output_b[:, 1], c=c_out_b, s=s_points, alpha=1.0)
-        axs[3].scatter(data_b[:, 0], data_b[:, 1], c=c_in_b, s=s_points, alpha=1.0)
-        for i in range(4):
+        axs = [fig.add_subplot(1, 2, i+1) for i in range(2)]
+        axs[0].scatter(output_a[:, 0], output_a[:, 1], c=c_out_a, s=s_points_a, alpha=1.0)
+        axs[1].scatter(output_b[:, 0], output_b[:, 1], c=c_out_b, s=s_points_b, alpha=1.0)
+        for i in range(2):
             axs[i].set_xlabel('Dim 1'); axs[i].set_ylabel('Dim 2'); axs[i].axis('equal')
 
-    axs[0].set_title('Input Space A')
-    axs[1].set_title('Output Space A')
-    axs[2].set_title('Output Space B')
-    axs[3].set_title('Input Space B')
+    axs[0].set_title('Output Space A')
+    axs[1].set_title('Output Space B')
 
-    fig.subplots_adjust(left=0.05, right=0.98, bottom=0.15, top=0.85, wspace=0.3)
+    fig.subplots_adjust(left=0.05, right=0.95, bottom=0.15, top=0.85, wspace=0.3)
     return fig
 
 
@@ -339,11 +375,14 @@ def build_interactive_4way_html(
         subplot_titles=("Input Space A", "Output Space A", "Output Space B", "Input Space B"),
     )
 
-    sizes = get_point_sizes(param_values, default_size=point_size_default,
-                            point_size_min=point_size_min,
-                            point_size_max=point_size_max)
+    sizes_a = get_point_sizes(param_values, default_size=point_size_default,
+                              point_size_min=point_size_min,
+                              point_size_max=point_size_max, point_types=point_type_a)
+    sizes_b = get_point_sizes(param_values, default_size=point_size_default,
+                              point_size_min=point_size_min,
+                              point_size_max=point_size_max, point_types=point_type_b)
 
-    def _scatter(xyz, name, colors):
+    def _scatter(xyz, name, colors, sizes):
         return go.Scatter3d(
             x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2],
             mode="markers",
@@ -357,10 +396,10 @@ def build_interactive_4way_html(
             name=name,
         )
 
-    fig.add_trace(_scatter(data_a_proj, "Input A", color_vals_a), row=1, col=1)
-    fig.add_trace(_scatter(out_a_proj, "Output A", color_vals_a), row=1, col=2)
-    fig.add_trace(_scatter(out_b_proj, "Output B", color_vals_b), row=1, col=3)
-    fig.add_trace(_scatter(data_b_proj, "Input B", color_vals_b), row=1, col=4)
+    fig.add_trace(_scatter(data_a_proj, "Input A", color_vals_a, sizes_a), row=1, col=1)
+    fig.add_trace(_scatter(out_a_proj, "Output A", color_vals_a, sizes_a), row=1, col=2)
+    fig.add_trace(_scatter(out_b_proj, "Output B", color_vals_b, sizes_b), row=1, col=3)
+    fig.add_trace(_scatter(data_b_proj, "Input B", color_vals_b, sizes_b), row=1, col=4)
 
     # Outer panels (input spaces): axis labels reflect PCA or raw dim
     dim_str_a = "PC" if data_a.shape[1] > 3 else "Dim"
