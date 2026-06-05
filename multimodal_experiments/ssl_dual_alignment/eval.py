@@ -137,9 +137,18 @@ def compute_geometry_metrics(
             z_a_clean = z_a[_clean_mask]
             z_b_clean = z_b[_clean_mask]
 
+    # Filter out NaNs for metrics using param_values (u)
+    if u.ndim == 2:
+        valid_mask = ~np.isnan(u).any(axis=1)
+    else:
+        valid_mask = ~np.isnan(u)
+    z_a_valid = z_a[valid_mask]
+    z_b_valid = z_b[valid_mask]
+    u_valid = u[valid_mask]
+
     # --- Joint + per-modality linear probe R2 ---
-    for prefix, z in [('za', z_a), ('zb', z_b), ('zjoint', np.concatenate([z_a, z_b], axis=1))]:
-        probe = linear_probe_r2(z, u)
+    for prefix, z in [('za', z_a_valid), ('zb', z_b_valid), ('zjoint', np.concatenate([z_a_valid, z_b_valid], axis=1))]:
+        probe = linear_probe_r2(z, u_valid)
         for k, v in probe.items():
             metrics[f'geom/{prefix}/{k}'] = v
 
@@ -156,7 +165,7 @@ def compute_geometry_metrics(
 
     # --- Generalised Axis-Alignment / Diagonality Ratio ---
     if param_values.ndim == 2 and num_zdims >= 2:
-        metrics['geom/za/diagonality_ratio'] = compute_diagonality_ratio(z_a, u, num_zdims, k_shared)
+        metrics['geom/za/diagonality_ratio'] = compute_diagonality_ratio(z_a_valid, u_valid, num_zdims, k_shared)
 
     # --- PCA axis-alignment ---
     n_active = k_shared if param_values.ndim == 2 else 1

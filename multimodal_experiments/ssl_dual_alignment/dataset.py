@@ -310,7 +310,7 @@ class DualDisentangleDataset(Dataset):
             minb, maxb = minb - h*(maxb-minb), maxb + h*(maxb-minb)
             a = mina + (maxa - mina) * self.rng.rand(n_ext, 2)
             b = minb + (maxb - minb) * self.rng.rand(n_ext, 2)
-            u = self.rng.uniform(0, 1, n_ext)
+            u = np.full(n_ext, np.nan)
             add(a, b, u, np.full(n_ext, 5), np.full(n_ext, 5))
 
         return data_a, data_b, param_values, point_type_a, point_type_b
@@ -341,7 +341,7 @@ class DualDisentangleDataset(Dataset):
             u_noise_a = self.rng.normal(0, 1, n)
             u_noise_b = self.rng.normal(0, 1, n)
             a, b = self._gen_3d3f2c(u1, u2, u_noise_a, u_noise_b)
-            return a, b
+            return a, b, np.column_stack([u1, u2])
 
         if n_man > 0:
             u1 = np.linspace(0, 1, n_man)
@@ -356,40 +356,30 @@ class DualDisentangleDataset(Dataset):
         min_a, max_a, min_b, max_b = self._get_bbox()
 
         if n_ac_a > 0:
-            a, b = self._generate_asym_corrupt(n_ac_a, True, gen_clean, min_a, max_a, 3)
-            u1 = self.rng.uniform(0, 1, n_ac_a)
-            u2 = self.rng.uniform(0, 1, n_ac_a)
+            a, b, u = self._generate_asym_corrupt(n_ac_a, True, gen_clean, min_a, max_a, 3)
             add(a, self._apply_manifold_noise(b, self.manifold_noise_b),
-                np.column_stack([u1, u2]), np.full(n_ac_a, PointType.ASYM_B_CORRUPT), np.full(n_ac_a, PointType.ASYM_A_GOOD))
+                u, np.full(n_ac_a, PointType.ASYM_B_CORRUPT), np.full(n_ac_a, PointType.ASYM_A_GOOD))
 
         if n_ac_b > 0:
-            a, b = self._generate_asym_corrupt(n_ac_b, False, gen_clean, min_b, max_b, 3)
-            u1 = self.rng.uniform(0, 1, n_ac_b)
-            u2 = self.rng.uniform(0, 1, n_ac_b)
+            a, b, u = self._generate_asym_corrupt(n_ac_b, False, gen_clean, min_b, max_b, 3)
             add(self._apply_manifold_noise(a, self.manifold_noise_a), b,
-                np.column_stack([u1, u2]), np.full(n_ac_b, PointType.ASYM_A_GOOD), np.full(n_ac_b, PointType.ASYM_B_CORRUPT))
+                u, np.full(n_ac_b, PointType.ASYM_A_GOOD), np.full(n_ac_b, PointType.ASYM_B_CORRUPT))
 
         if n_am_a > 0:
-            a, b = self._generate_asym_mismatch(n_am_a, True, gen_clean)
-            u1 = self.rng.uniform(0, 1, n_am_a)
-            u2 = self.rng.uniform(0, 1, n_am_a)
+            a, b, u = self._generate_asym_mismatch(n_am_a, True, gen_clean)
             add(self._apply_manifold_noise(a, self.manifold_noise_a),
                 self._apply_manifold_noise(b, self.manifold_noise_b),
-                np.column_stack([u1, u2]), np.full(n_am_a, PointType.ASYM_A_CORRUPT), np.full(n_am_a, PointType.ASYM_B_GOOD))
+                u, np.full(n_am_a, PointType.ASYM_A_CORRUPT), np.full(n_am_a, PointType.ASYM_B_GOOD))
 
         if n_am_b > 0:
-            a, b = self._generate_asym_mismatch(n_am_b, False, gen_clean)
-            u1 = self.rng.uniform(0, 1, n_am_b)
-            u2 = self.rng.uniform(0, 1, n_am_b)
+            a, b, u = self._generate_asym_mismatch(n_am_b, False, gen_clean)
             add(self._apply_manifold_noise(a, self.manifold_noise_a),
                 self._apply_manifold_noise(b, self.manifold_noise_b),
-                np.column_stack([u1, u2]), np.full(n_am_b, PointType.ASYM_B_GOOD), np.full(n_am_b, PointType.ASYM_A_CORRUPT))
+                u, np.full(n_am_b, PointType.ASYM_B_GOOD), np.full(n_am_b, PointType.ASYM_A_CORRUPT))
 
         if n_ext > 0:
             a, b = self._generate_external(n_ext, min_a, max_a, min_b, max_b, 3, 3)
-            u1 = self.rng.uniform(0, 1, n_ext)
-            u2 = self.rng.uniform(0, 1, n_ext)
-            add(a, b, np.column_stack([u1, u2]), np.full(n_ext, PointType.EXTERNAL), np.full(n_ext, PointType.EXTERNAL))
+            add(a, b, np.full((n_ext, 2), np.nan), np.full(n_ext, PointType.EXTERNAL), np.full(n_ext, PointType.EXTERNAL))
 
         # In-place normalization
         m_a, s_a = data_a.mean(0), data_a.std(0)
@@ -437,7 +427,7 @@ class DualDisentangleDataset(Dataset):
         def gen_clean(n):
             us, ua, ub = self._sample_latents(n, self.k_shared, self.m_unique)
             xa, xb = self._gen_mlp(us, ua, ub, mlp_a, mlp_b)
-            return norm_a(xa), norm_b(xb)
+            return norm_a(xa), norm_b(xb), us
 
         if n_man > 0:
             chunk_size = 20000
@@ -458,28 +448,24 @@ class DualDisentangleDataset(Dataset):
         min_b, max_b = min_b - h*(max_b-min_b), max_b + h*(max_b-min_b)
 
         if n_ac_a > 0:
-            xa, xb = self._generate_asym_corrupt(n_ac_a, True, gen_clean, min_a, max_a, self.d_out)
-            us, _, _ = self._sample_latents(n_ac_a, self.k_shared, self.m_unique)
-            add(xa, xb, us, np.full(n_ac_a, PointType.ASYM_B_CORRUPT), np.full(n_ac_a, PointType.ASYM_A_GOOD))
+            xa, xb, u = self._generate_asym_corrupt(n_ac_a, True, gen_clean, min_a, max_a, self.d_out)
+            add(xa, xb, u, np.full(n_ac_a, PointType.ASYM_B_CORRUPT), np.full(n_ac_a, PointType.ASYM_A_GOOD))
 
         if n_ac_b > 0:
-            xa, xb = self._generate_asym_corrupt(n_ac_b, False, gen_clean, min_b, max_b, self.d_out)
-            us, _, _ = self._sample_latents(n_ac_b, self.k_shared, self.m_unique)
-            add(xa, xb, us, np.full(n_ac_b, PointType.ASYM_A_GOOD), np.full(n_ac_b, PointType.ASYM_B_CORRUPT))
+            xa, xb, u = self._generate_asym_corrupt(n_ac_b, False, gen_clean, min_b, max_b, self.d_out)
+            add(xa, xb, u, np.full(n_ac_b, PointType.ASYM_A_GOOD), np.full(n_ac_b, PointType.ASYM_B_CORRUPT))
             
         if n_am_a > 0:
-            xa, xb = self._generate_asym_mismatch(n_am_a, True, gen_clean)
-            us, _, _ = self._sample_latents(n_am_a, self.k_shared, self.m_unique)
-            add(xa, xb, us, np.full(n_am_a, PointType.ASYM_A_CORRUPT), np.full(n_am_a, PointType.ASYM_B_GOOD))
+            xa, xb, u = self._generate_asym_mismatch(n_am_a, True, gen_clean)
+            add(xa, xb, u, np.full(n_am_a, PointType.ASYM_A_CORRUPT), np.full(n_am_a, PointType.ASYM_B_GOOD))
 
         if n_am_b > 0:
-            xa, xb = self._generate_asym_mismatch(n_am_b, False, gen_clean)
-            us, _, _ = self._sample_latents(n_am_b, self.k_shared, self.m_unique)
-            add(xa, xb, us, np.full(n_am_b, PointType.ASYM_B_GOOD), np.full(n_am_b, PointType.ASYM_A_CORRUPT))
+            xa, xb, u = self._generate_asym_mismatch(n_am_b, False, gen_clean)
+            add(xa, xb, u, np.full(n_am_b, PointType.ASYM_B_GOOD), np.full(n_am_b, PointType.ASYM_A_CORRUPT))
             
         if n_ext > 0:
             xa, xb = self._generate_external(n_ext, min_a, max_a, min_b, max_b, self.d_out, self.d_out)
-            add(xa, xb, self.rng.uniform(0, 1, (n_ext, self.k_shared)), np.full(n_ext, PointType.EXTERNAL), np.full(n_ext, PointType.EXTERNAL))
+            add(xa, xb, np.full((n_ext, self.k_shared), np.nan), np.full(n_ext, PointType.EXTERNAL), np.full(n_ext, PointType.EXTERNAL))
 
         # In-place normalization
         m_a, s_a = data_a.mean(0), data_a.std(0)
@@ -578,7 +564,7 @@ class DualDisentangleDataset(Dataset):
             min_b, max_b = min_b - h*(max_b-min_b), max_b + h*(max_b-min_b)
             a = min_a + (max_a-min_a)*self.rng.rand(n_ext, 3)
             b = min_b + (max_b-min_b)*self.rng.rand(n_ext, 3)
-            u = self.rng.uniform(0, 1, n_ext)
+            u = np.full(n_ext, np.nan)
             add(a, b, u, np.full(n_ext, 5), np.full(n_ext, 5))
 
         return data_a, data_b, param_values, point_type_a, point_type_b
@@ -655,7 +641,7 @@ class DualDisentangleDataset(Dataset):
             min_b, max_b = min_b - h*(max_b-min_b), max_b + h*(max_b-min_b)
             a = min_a + (max_a-min_a)*self.rng.rand(n_ext, 3)
             b = min_b + (max_b-min_b)*self.rng.rand(n_ext, 3)
-            u = np.column_stack([self.rng.uniform(0, 1, n_ext), self.rng.uniform(0, 1, n_ext)])
+            u = np.full((n_ext, 2), np.nan)
             add(a, b, u, np.full(n_ext, 5), np.full(n_ext, 5))
 
         return data_a, data_b, param_values, point_type_a, point_type_b
@@ -673,8 +659,8 @@ class DualDisentangleDataset(Dataset):
     def _generate_asym_corrupt(self, n, is_a_corrupt, gen_clean_fn, min_box, max_box, dim):
         """Generates asymmetric corrupted points. One modality is clean, other is random in bbox."""
         if n <= 0:
-            return None, None
-        a_clean, b_clean = gen_clean_fn(n)
+            return None, None, None
+        a_clean, b_clean, u = gen_clean_fn(n)
         garbage = np.empty((n, dim), dtype=np.float32)
         chunk_size = 20000
         for i in range(0, n, chunk_size):
@@ -683,20 +669,20 @@ class DualDisentangleDataset(Dataset):
             rand_vals = torch.rand((n_chunk, dim), generator=self.torch_rng, dtype=torch.float32).numpy()
             garbage[i:end] = min_box + (max_box - min_box) * rand_vals
         if is_a_corrupt:
-            return garbage, b_clean
+            return garbage, b_clean, u
         else:
-            return a_clean, garbage
+            return a_clean, garbage, u
 
     def _generate_asym_mismatch(self, n, is_a_fake, gen_clean_fn):
         """Generates asymmetric mismatch points."""
         if n <= 0:
-            return None, None
-        a1, b1 = gen_clean_fn(n)
-        a2, b2 = gen_clean_fn(n)
+            return None, None, None
+        a1, b1, u1 = gen_clean_fn(n)
+        a2, b2, u2 = gen_clean_fn(n)
         if is_a_fake:
-            return a2, b1
+            return a2, b1, u1
         else:
-            return a1, b2
+            return a1, b2, u1
 
     def _generate_external(self, n, min_box_a, max_box_a, min_box_b, max_box_b, dim_a, dim_b):
         """Generates external noise points (both modalities are random in their bboxes) in chunks to save memory."""

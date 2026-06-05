@@ -34,8 +34,10 @@ def to_numpy(val):
 
 def minmax_normalize(val, eps=1e-8):
     """Normalize array-like to [0, 1] using min-max scaling."""
-    v_min = val.min()
-    v_max = val.max()
+    if np.isnan(val).all():
+        return np.zeros_like(val)
+    v_min = np.nanmin(val)
+    v_max = np.nanmax(val)
     return (val - v_min) / (v_max - v_min + eps)
 
 
@@ -67,7 +69,9 @@ def get_point_sizes(param_values, default_size=5.0):
     """Return point sizes mapped from u3 (if present) or default_size."""
     vals = to_numpy(param_values).astype(float)
     if vals.ndim == 2 and vals.shape[1] >= 3:
-        return 2 + minmax_normalize(vals[:, 2]) * 8
+        sizes = minmax_normalize(vals[:, 2])
+        sizes = np.nan_to_num(sizes, nan=0.0)
+        return 2 + sizes * 8
     return default_size
 
 
@@ -82,6 +86,7 @@ def get_point_colors(param_values, point_types=None, format_type='rgba', cmap='r
 
     if vals.ndim == 1:
         normalized = minmax_normalize(vals)
+        normalized = np.nan_to_num(normalized, nan=0.0)
         if format_type == 'plotly':
             from plotly.colors import sample_colorscale
             base_colors = sample_colorscale("Rainbow", normalized)
@@ -91,6 +96,8 @@ def get_point_colors(param_values, point_types=None, format_type='rgba', cmap='r
     else:
         u1_norm = minmax_normalize(vals[:, 0])
         u2_norm = minmax_normalize(vals[:, 1])
+        u1_norm = np.nan_to_num(u1_norm, nan=0.0)
+        u2_norm = np.nan_to_num(u2_norm, nan=0.0)
         base_colors = get_hsv_colors(u1_norm, u2_norm, format_type=format_type)
 
     if point_types is None:
