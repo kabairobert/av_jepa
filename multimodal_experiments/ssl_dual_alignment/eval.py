@@ -1,5 +1,7 @@
 import re
+import sys
 from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[2]))
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -449,7 +451,12 @@ def run(
     setup_seed(cfg.meta.seed)
 
     data_cfg = cfg.data
-    eval_set = build_dataset_from_config(cfg)
+    eval_num_samples = int(data_cfg.get('eval_num_samples', 4096))
+    eval_seed = int(data_cfg.get('eval_seed', cfg.meta.seed + 1000))
+    from omegaconf import OmegaConf
+    eval_data_cfg_overrides = OmegaConf.create({'num_samples': eval_num_samples})
+    eval_cfg = OmegaConf.merge(cfg, OmegaConf.create({'data': eval_data_cfg_overrides}))
+    eval_set = build_dataset_from_config(eval_cfg, seed=eval_seed)
     effective_batch_size = int(batch_size) if batch_size is not None else int(data_cfg.get("batch_size", 128))
     pin_memory = (device.type == 'cuda')
     eval_loader = DataLoader(
