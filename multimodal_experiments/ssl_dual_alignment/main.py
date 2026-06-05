@@ -193,6 +193,11 @@ def run(
     # Apply quickrun shortcut
     cfg = _apply_quickrun_settings(cfg, quickrun)
 
+    vis_cfg = cfg.get("visualization", {})
+    point_size_min = vis_cfg.get("point_size_min", 4.0)
+    point_size_max = vis_cfg.get("point_size_max", 20.0)
+    point_size_default = vis_cfg.get("point_size_default", 5.0)
+
     device = setup_device(cfg.meta.device)
     setup_seed(cfg.meta.seed)
     torch.set_default_dtype(torch.float32)
@@ -313,7 +318,10 @@ def run(
 
     print(f"Starting training for {epochs} epochs...")
     if wandb_run:
-        log_plots_to_wandb(dual_model, train_set, device, global_step, wandb_run)
+        log_plots_to_wandb(dual_model, train_set, device, global_step, wandb_run,
+                           point_size_min=point_size_min,
+                           point_size_max=point_size_max,
+                           point_size_default=point_size_default)
 
     use_amp, dtype, scaler = _setup_amp(cfg, device)
 
@@ -382,6 +390,9 @@ def run(
                 log_prefix="val",
                 is_3d=bool(eval_set.data_a.shape[1] >= 3),
                 max_batches=max_eval_batches,
+                point_size_min=point_size_min,
+                point_size_max=point_size_max,
+                point_size_default=point_size_default,
             )
 
     save_every = cfg.logging.get("save_every", 50)
@@ -419,8 +430,14 @@ def run(
             log_prefix="val",
             is_3d=bool(eval_set.data_a.shape[1] >= 3),
             max_batches=max_eval_batches,
+            point_size_min=point_size_min,
+            point_size_max=point_size_max,
+            point_size_default=point_size_default,
         )
-        log_plots_to_wandb(dual_model, eval_set, device, global_step, wandb_run)
+        log_plots_to_wandb(dual_model, eval_set, device, global_step, wandb_run,
+                           point_size_min=point_size_min,
+                           point_size_max=point_size_max,
+                           point_size_default=point_size_default)
         wandb.finish()
 
     print("Training complete.")

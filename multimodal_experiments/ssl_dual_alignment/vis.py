@@ -65,13 +65,13 @@ def get_hsv_colors(u1: np.ndarray, u2: np.ndarray, format_type: str = 'rgba') ->
     return colors
 
 
-def get_point_sizes(param_values, default_size=5.0):
+def get_point_sizes(param_values, default_size=5.0, point_size_min=4.0, point_size_max=20.0):
     """Return point sizes mapped from u3 (if present) or default_size."""
     vals = to_numpy(param_values).astype(float)
     if vals.ndim == 2 and vals.shape[1] >= 3:
         sizes = minmax_normalize(vals[:, 2])
         sizes = np.nan_to_num(sizes, nan=0.0)
-        return 2 + sizes * 8
+        return point_size_min + sizes * (point_size_max - point_size_min)
     return default_size
 
 
@@ -119,7 +119,8 @@ def get_point_colors(param_values, point_types=None, format_type='rgba', cmap='r
 
 
 def plot_original_spaces(data_a, data_b, param_values,
-                         point_type_a=None, point_type_b=None):
+                         point_type_a=None, point_type_b=None,
+                         point_size_min=4.0, point_size_max=20.0, point_size_default=5.0):
     """Plots raw Modality A and Modality B datasets with noise-aware coloring."""
     is_3d = data_a.shape[1] >= 3
     fig = plt.figure(figsize=(12, 6))
@@ -132,7 +133,9 @@ def plot_original_spaces(data_a, data_b, param_values,
     pt_b = point_type_b if point_type_b is not None else np.zeros(len(data_b), dtype=np.int32)
     c_a = get_point_colors(param_values, pt_a)
     c_b = get_point_colors(param_values, pt_b)
-    s_points = get_point_sizes(param_values, default_size=5.0)
+    s_points = get_point_sizes(param_values, default_size=point_size_default,
+                               point_size_min=point_size_min,
+                               point_size_max=point_size_max)
 
     if is_3d:
         ax1 = fig.add_subplot(121, projection='3d')
@@ -166,7 +169,8 @@ def plot_original_spaces(data_a, data_b, param_values,
 
 
 def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, device,
-                                      point_type_a=None, point_type_b=None):
+                                      point_type_a=None, point_type_b=None,
+                                      point_size_min=4.0, point_size_max=20.0, point_size_default=5.0):
     """Plots 4-way view: Input A -> Output A -> Output B -> Input B."""
     dual_model.eval()
     with torch.no_grad():
@@ -195,7 +199,9 @@ def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, 
     c_out_a = get_point_colors(param_values, pt_a)
     c_out_b = get_point_colors(param_values, pt_b)
     
-    s_points = get_point_sizes(param_values, default_size=5.0) * 2  # double size for the 4-way plot default to match the original s=10 vs s=5
+    s_points = get_point_sizes(param_values, default_size=point_size_default,
+                               point_size_min=point_size_min,
+                               point_size_max=point_size_max) * 2  # double size for the 4-way plot default to match the original s=10 vs s=5
 
     is_3d = data_a.shape[1] >= 3
     fig = plt.figure(figsize=(18, 4))
@@ -230,7 +236,8 @@ def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, 
     return fig
 
 
-def log_plots_to_wandb(dual_model, dataset, device, step, wandb_run):
+def log_plots_to_wandb(dual_model, dataset, device, step, wandb_run,
+                       point_size_min=4.0, point_size_max=20.0, point_size_default=5.0):
     """Generates and logs visualizations to W&B."""
     import wandb
     # Ensure all components are on CPU before converting to numpy for plotting
@@ -254,11 +261,17 @@ def log_plots_to_wandb(dual_model, dataset, device, step, wandb_run):
         if pt_b is not None:
             pt_b = pt_b[idx]
 
-    fig_spaces = plot_original_spaces(data_a, data_b, param_values, pt_a, pt_b)
+    fig_spaces = plot_original_spaces(data_a, data_b, param_values, pt_a, pt_b,
+                                      point_size_min=point_size_min,
+                                      point_size_max=point_size_max,
+                                      point_size_default=point_size_default)
     fig_reshaping = None
     try:
         fig_reshaping = plot_dual_geometry_reshaping_view(
-            dual_model, data_a, data_b, param_values, device, pt_a, pt_b)
+            dual_model, data_a, data_b, param_values, device, pt_a, pt_b,
+            point_size_min=point_size_min,
+            point_size_max=point_size_max,
+            point_size_default=point_size_default)
 
         if wandb_run:
             wandb.log({
@@ -282,6 +295,9 @@ def build_interactive_4way_html(
     point_type_b: Optional[np.ndarray] = None,
     min_height_px: int = 420,
     predictor_a2b=None,
+    point_size_min=4.0,
+    point_size_max=20.0,
+    point_size_default=3.0,
 ) -> Optional[str]:
     try:
         import plotly.graph_objects as go
@@ -323,7 +339,9 @@ def build_interactive_4way_html(
         subplot_titles=("Input Space A", "Output Space A", "Output Space B", "Input Space B"),
     )
 
-    sizes = get_point_sizes(param_values, default_size=3.0)
+    sizes = get_point_sizes(param_values, default_size=point_size_default,
+                            point_size_min=point_size_min,
+                            point_size_max=point_size_max)
 
     def _scatter(xyz, name, colors):
         return go.Scatter3d(

@@ -339,6 +339,9 @@ def evaluate_and_log_checkpoint(
     max_interactive_points: int = 2000,
     log_prefix: str = "val",
     is_3d: Optional[bool] = None,
+    point_size_min: float = 4.0,
+    point_size_max: float = 20.0,
+    point_size_default: float = 5.0,
 ) -> Dict[str, float]:
     metrics = _eval_loop(eval_loader, dual_model, loss_fn, loss_type, predictors, device, max_batches=max_batches)
 
@@ -364,7 +367,10 @@ def evaluate_and_log_checkpoint(
     if wandb_run:
         import wandb
         wandb.log(logs, step=step)
-        log_plots_to_wandb(dual_model, eval_set, device, step, wandb_run)
+        log_plots_to_wandb(dual_model, eval_set, device, step, wandb_run,
+                           point_size_min=point_size_min,
+                           point_size_max=point_size_max,
+                           point_size_default=point_size_default)
 
         # Geometry metrics: R2, per-dim disentanglement, PCA axis-align, retrieval, CCA, norms
         geom_metrics = compute_geometry_metrics(
@@ -413,6 +419,9 @@ def evaluate_and_log_checkpoint(
                     point_type_b=pt_b,
                     min_height_px=int(interactive_min_height),
                     predictor_a2b=predictors.get("a2b"),
+                    point_size_min=point_size_min,
+                    point_size_max=point_size_max,
+                    point_size_default=3.0 * (point_size_default / 5.0),
                 )
                 if html is not None:
                     wandb.log({"interactive_3d_4way_html": wandb.Html(html)}, step=step)
@@ -455,6 +464,10 @@ def run(
         raise ValueError("Could not resolve config path. Pass --cfg or provide --folder with config.yaml")
 
     cfg = load_config(str(cfg_path), cli_overrides=overrides)
+    vis_cfg = cfg.get("visualization", {})
+    point_size_min = vis_cfg.get("point_size_min", 4.0)
+    point_size_max = vis_cfg.get("point_size_max", 20.0)
+    point_size_default = vis_cfg.get("point_size_default", 5.0)
 
     device = setup_device(cfg.meta.device)
     setup_seed(cfg.meta.seed)
@@ -522,6 +535,9 @@ def run(
             interactive_min_height=interactive_min_height,
             max_interactive_points=max_interactive_points,
             log_prefix="val", is_3d=is_3d,
+            point_size_min=point_size_min,
+            point_size_max=point_size_max,
+            point_size_default=point_size_default,
         )
         logger.info("Eval %s | loss=%.4f | a2b=%.4f | b2a=%.4f",
                     ckpt.name, metrics["loss"], metrics["align_mse_a2b"], metrics["align_mse_b2a"])

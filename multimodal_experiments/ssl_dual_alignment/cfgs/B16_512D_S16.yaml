@@ -2,6 +2,12 @@ meta:
   seed: 12345
   device: auto
   checkpoint_dir: checkpoints
+
+visualization:
+  point_size_min: 4.0
+  point_size_max: 20.0
+  point_size_default: 5.0
+
 data:
   type: nd-kf-mlp
   shared_factor_dist: normal
