@@ -79,12 +79,17 @@ def pca_axis_alignment(z: np.ndarray, n_active: int = 2) -> float:
       1.0  = each active PC perfectly parallel to a coord axis (ideal)
       ~0.57 = random orientation in 3D (1/sqrt(3))
     """
+    n_components = min(n_active, z.shape[1])
+    if n_components <= 0:
+        return 0.0
+    
     z_centered = z - z.mean(axis=0)
     _, _, Vt = np.linalg.svd(z_centered, full_matrices=False)
+    
     n_dims = z.shape[1]
     identity = np.eye(n_dims)
     scores = []
-    for i in range(min(n_active, Vt.shape[0])):
+    for i in range(min(n_components, Vt.shape[0])):
         cosines = np.abs(Vt[i] @ identity)   # |cos| with each coord axis
         scores.append(float(cosines.max()))
     return float(np.mean(scores))
@@ -110,7 +115,9 @@ def masked_retrieval_accuracy(z_a: np.ndarray, z_b: np.ndarray, mask: np.ndarray
     for dist_fn, name in [(euclidean_distances, 'l2'), (cosine_distances, 'cos')]:
         D = dist_fn(z_a_masked, z_b_masked)
         for k in ks:
-            top_k = np.argsort(D, axis=1)[:, :k]
+            if k <= 0: continue
+            k_safe = min(k, D.shape[1])
+            top_k = np.argpartition(D, k_safe - 1, axis=1)[:, :k_safe]
             hits = float(np.mean([i in top_k[i] for i in range(len(z_a_masked))]))
             results[f'masked_retrieval_{name}@{k}'] = hits
     return results
@@ -123,7 +130,9 @@ def retrieval_accuracy(z_a: np.ndarray, z_b: np.ndarray, ks=(1, 5)) -> dict:
     for dist_fn, name in [(euclidean_distances, 'l2'), (cosine_distances, 'cos')]:
         D = dist_fn(z_a, z_b)
         for k in ks:
-            top_k = np.argsort(D, axis=1)[:, :k]
+            if k <= 0: continue
+            k_safe = min(k, D.shape[1])
+            top_k = np.argpartition(D, k_safe - 1, axis=1)[:, :k_safe]
             hits = float(np.mean([i in top_k[i] for i in range(len(z_a))]))
             results[f'retrieval_{name}@{k}'] = hits
     return results
@@ -140,24 +149,22 @@ def cca_score(z_a: np.ndarray, z_b: np.ndarray) -> dict:
         1.0 = dim-i of z_A maps exactly to dim-i of z_B
         0.0 = fully off-diagonal (rotated alignment)
     """
-    import warnings
-    from sklearn.cross_decomposition import CCA
-    from sklearn.exceptions import ConvergenceWarning
-    
-    # Cap components to prevent statistical invalidity and hanging at high D
-    n_components = min(z_a.shape[1], z_b.shape[1], max(3, z_a.shape[0] // 100), 20)
+    from statsmodels.multivariate.cancorr import CanCorr
     
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", category=ConvergenceWarning)
-            cca = CCA(n_components=n_components, max_iter=100).fit(z_a, z_b)
-        z_a_c, z_b_c = cca.transform(z_a, z_b)
+        # CanCorr(endog, exog). endog -> y -> z_a, exog -> x -> z_b
+        cca = CanCorr(z_a, z_b)
         
-        corrs = []
-        for i in range(n_components):
-            val = float(np.corrcoef(z_a_c[:, i], z_b_c[:, i])[0, 1])
-            corrs.append(0.0 if np.isnan(val) else val)
-
+        # Corrs are ordered descending
+        corrs = [float(c) for c in cca.cancorr]
+        
+        # Compute canonical variables explicitly to find diagonality
+        # CanCorr returns y_cancoef for endog (z_a) and x_cancoef for exog (z_b)
+        z_a_c = z_a @ cca.y_cancoef
+        z_b_c = z_b @ cca.x_cancoef
+        
+        n_components = min(z_a.shape[1], z_b.shape[1])
+        
         # Full cross-correlation matrix for diagonality score
         C = np.zeros((n_components, n_components))
         for i in range(n_components):
@@ -169,6 +176,7 @@ def cca_score(z_a: np.ndarray, z_b: np.ndarray) -> dict:
 
     except Exception as exc:
         logger.warning("CCA failed: %s", exc)
+        n_components = min(z_a.shape[1], z_b.shape[1])
         corrs = [0.0] * n_components
         diag_score = 0.0
 
@@ -184,12 +192,15 @@ def compute_diagonality_ratio(z_a: np.ndarray, u: np.ndarray, num_zdims: int, k_
     from sklearn.metrics import r2_score
     n_factors = u.shape[1]
     r2_matrix = np.zeros((num_zdims, n_factors))
+    
+    # Pre-center u if not already (Ridge fit_intercept=True will handle it, but r2_score uses variance)
     for i in range(num_zdims):
         zi = z_a[:, i:i+1]
+        reg = Ridge(alpha=1.0).fit(zi, u)
+        u_pred = reg.predict(zi)
         for j in range(n_factors):
-            uj = u[:, j]
-            reg = Ridge(alpha=1.0).fit(zi, uj)
-            r2_matrix[i, j] = float(r2_score(uj, reg.predict(zi)))
+            # Compute r2_score per factor
+            r2_matrix[i, j] = float(r2_score(u[:, j], u_pred[:, j]))
     
     # Select top-k_shared z-dims by total R2 summed across all shared factors
     top_dim_idxs = np.argsort(r2_matrix.sum(axis=1))[::-1][:k_shared]
