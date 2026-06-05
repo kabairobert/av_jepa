@@ -245,8 +245,8 @@ class DualDisentangleDataset(Dataset):
         self.data_a = torch.as_tensor(data_a, dtype=torch.float32)
         self.data_b = torch.as_tensor(data_b, dtype=torch.float32)
         self.param_values = torch.as_tensor(param_values, dtype=torch.float32)
-        self.point_type_a = torch.as_tensor(self.point_type_a, dtype=torch.long)
-        self.point_type_b = torch.as_tensor(self.point_type_b, dtype=torch.long)
+        self.point_type_a = torch.as_tensor(self.point_type_a, dtype=torch.int8)
+        self.point_type_b = torch.as_tensor(self.point_type_b, dtype=torch.int8)
         
         is_clean = (self.point_type_a == PointType.MANIFOLD) & (self.point_type_b == PointType.MANIFOLD)
         c_targ = torch.zeros((self.num_samples, 2), dtype=torch.float32)
@@ -815,15 +815,25 @@ class DualDisentangleDataset(Dataset):
 
     def __len__(self): return self.num_samples
 
+    def set_training_mode(self, enabled: bool = True):
+        """If True, __getitem__ returns only fields used by the training loop.
+
+        Eval/vis code accesses dataset tensors directly (dataset.point_type_a, etc.)
+        and is unaffected by this flag.
+        """
+        self._training_mode = enabled
+
     def __getitem__(self, idx):
-        return {
+        d = {
             "data_a": self.data_a[idx],
             "data_b": self.data_b[idx],
             "corr_target": self.corr_target[idx],
-            "param_values": self.param_values[idx],
-            "point_type_a": self.point_type_a[idx],
-            "point_type_b": self.point_type_b[idx],
         }
+        if not getattr(self, '_training_mode', False):
+            d["param_values"] = self.param_values[idx]
+            d["point_type_a"] = self.point_type_a[idx]
+            d["point_type_b"] = self.point_type_b[idx]
+        return d
 
 
 def build_dataset_from_config(cfg, seed=None) -> DualDisentangleDataset:

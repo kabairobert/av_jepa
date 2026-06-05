@@ -37,40 +37,61 @@ def _parse_wandb_tags(wandb_tags):
     return [t.strip() for t in str(wandb_tags).split(",") if t.strip()]
 
 
-def _estimate_vram_footprint(cfg, device) -> None:
-    """Estimate GPU VRAM footprint and print warning if usage is predicted high."""
+def _dataset_bytes(train_set) -> int:
+    """Returns total bytes occupied by all dataset tensors."""
+    tensors = [
+        train_set.data_a, train_set.data_b,
+        train_set.corr_target, train_set.param_values,
+        train_set.point_type_a, train_set.point_type_b,
+    ]
+    return sum(t.nbytes for t in tensors)
+
+
+def _should_preload_to_gpu(train_set, device, full_model, cfg, vram_budget_fraction: float = 0.3) -> bool:
+    """Returns True if the dataset fits within vram_budget_fraction of total VRAM.
+
+    Budget accounts for dataset + model params + Adam optimizer state (2x params, float32).
+    Remaining headroom is left for activations and compile overhead.
+    """
     if device.type != 'cuda':
-        return
+        return False
     try:
-        total_mem = torch.cuda.get_device_properties(device).total_memory
+        total_vram = torch.cuda.get_device_properties(device).total_memory
+
+        ds_bytes = _dataset_bytes(train_set)
+        param_bytes = sum(p.nbytes for p in full_model.parameters())
+        # Adam keeps m + v buffers, both float32 regardless of param dtype
+        opt_bytes = 2 * sum(p.numel() * 4 for p in full_model.parameters())
+
         s_count = cfg.model.get('stage_count', 6)
         n_dims = cfg.model.get('num_dims', 2)
         h_units = cfg.model.get('hidden_units', 128)
         b_size = cfg.data.get('batch_size', 128)
-        
-        # Estimate activation memory in GB (4 coupling layers per stage, float32)
-        est_act_mem_gb = (4 * s_count * b_size * (3 * n_dims + 2 * h_units) * 4) / 1024**3
-        # Estimate compile overhead for deep models
-        compile_overhead = 8.0 if (hasattr(torch, "compile") and s_count >= 12 and n_dims >= 256) else 0.0
-        
-        total_needed_gb = est_act_mem_gb + compile_overhead
-        total_avail_gb = total_mem / 1024**3
-        
+        act_bytes = 4 * s_count * b_size * (3 * n_dims + 2 * h_units) * 4  # float32
+        compile_bytes = int(8e9) if (hasattr(torch, 'compile') and s_count >= 12 and n_dims >= 256) else 0
+
+        total_needed = ds_bytes + param_bytes + opt_bytes + act_bytes + compile_bytes
+        total_avail_gb = total_vram / 1024**3
+
         print(
-            f"[INFO] GPU VRAM footprint estimates:\n"
-            f"  Estimated Activation Memory: {est_act_mem_gb:.2f} GB\n"
-            f"  Estimated Compile Overhead: {compile_overhead:.2f} GB\n"
-            f"  Total Estimated GPU VRAM Required: {total_needed_gb:.2f} GB\n"
-            f"  GPU total capacity: {total_avail_gb:.2f} GB"
+            f"[VRAM] Breakdown (GB):\n"
+            f"  Dataset tensors : {ds_bytes/1024**3:.3f}\n"
+            f"  Model params    : {param_bytes/1024**3:.3f}\n"
+            f"  Adam states     : {opt_bytes/1024**3:.3f}\n"
+            f"  Activations est : {act_bytes/1024**3:.3f}\n"
+            f"  Compile overhead: {compile_bytes/1024**3:.1f}\n"
+            f"  Total estimated : {total_needed/1024**3:.3f} / {total_avail_gb:.2f} GB available"
         )
-        
-        if total_needed_gb > 0.50 * total_avail_gb:
+
+        if total_needed > 0.85 * total_vram:
             print(
-                f"⚠️ WARNING: High GPU VRAM usage predicted! (> 50% capacity).\n"
-                f"  If you experience OOM, consider reducing batch_size, stage_count, or disabling torch.compile."
+                f"⚠️ WARNING: High VRAM usage predicted (>{100*total_needed/total_vram:.0f}% capacity).\n"
+                f"  If OOM, consider reducing batch_size, stage_count, or num_dims."
             )
+
+        return ds_bytes < vram_budget_fraction * total_vram
     except Exception:
-        pass
+        return False
 
 
 def _apply_quickrun_settings(cfg, quickrun):
@@ -215,20 +236,10 @@ def run(
 
     train_set = build_dataset_from_config(cfg)
 
-    # Keep dataset on CPU to save VRAM and avoid OOM on large configurations
-    # train_set.to(device)
-    
     # Use config value or default to 0
     num_workers = cfg.data.get('num_workers', 0)
+    # pin_memory is only useful when tensors live in CPU RAM; disable if preloaded to GPU
     pin_memory = (device.type == 'cuda')
-
-    train_loader = DataLoader(
-        train_set,
-        batch_size=cfg.data.get('batch_size', 128),
-        shuffle=True,
-        num_workers=num_workers,
-        pin_memory=pin_memory
-    )
 
     # --- 5. Model Init ---
     built = build_model_and_predictors(cfg, device)
@@ -237,8 +248,26 @@ def run(
     predictor_a2b = built["predictor_a2b"]
     predictor_b2a = built["predictor_b2a"]
 
-    # VRAM safety check
-    _estimate_vram_footprint(cfg, device)
+    # --- 5b. Auto-preload dataset to GPU if it fits in VRAM budget ---
+    if _should_preload_to_gpu(train_set, device, full_model, cfg):
+        ds_mb = _dataset_bytes(train_set) / 1024**2
+        print(f"[DATA] Preloading dataset to GPU ({ds_mb:.1f} MB fits in VRAM budget)")
+        train_set.to(device)
+        pin_memory = False  # tensors already on GPU; pin_memory would error
+    else:
+        if device.type == 'cuda':
+            ds_mb = _dataset_bytes(train_set) / 1024**2
+            print(f"[DATA] Dataset kept on CPU ({ds_mb:.1f} MB), batches streamed to GPU per step")
+
+    train_loader = DataLoader(
+        train_set,
+        batch_size=cfg.data.get('batch_size', 128),
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=pin_memory
+    )
+    # Only return training-critical fields from __getitem__; eval/vis read attrs directly
+    train_set.set_training_mode(True)
 
     dual_model = _compile_model(dual_model, device)
 
