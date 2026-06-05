@@ -13,7 +13,7 @@ from eb_jepa.training_utils import load_config, setup_device, setup_seed, setup_
 from multimodal_experiments.ssl_dual_alignment.dataset import PointType, build_dataset_from_config, DualDisentangleDataset
 from multimodal_experiments.ssl_dual_alignment.model_builder import build_model_and_predictors
 from multimodal_experiments.ssl_dual_alignment.losses import build_loss_from_config
-from multimodal_experiments.ssl_dual_alignment.vis import log_plots_to_wandb, project_to_3d, to_numpy, get_point_sizes, get_point_colors
+from multimodal_experiments.ssl_dual_alignment.vis import log_plots_to_wandb, project_to_3d, to_numpy, get_point_sizes, get_point_colors, build_interactive_4way_html
 from multimodal_experiments.ssl_dual_alignment.metrics import (
     linear_probe_r2,
     rankme_score,
@@ -23,6 +23,9 @@ from multimodal_experiments.ssl_dual_alignment.metrics import (
     masked_retrieval_accuracy,
     retrieval_accuracy,
     cca_score,
+    compute_diagonality_ratio,
+    compute_found_rank_metrics,
+    compute_norm_diagnostics,
 )
 
 logger = get_logger(__name__)
@@ -70,98 +73,8 @@ def _discover_checkpoints(run_dir: Path) -> list[Path]:
 
 
 
-def _build_interactive_4way_html(
-    data_a: np.ndarray,
-    data_b: np.ndarray,
-    out_a: np.ndarray,
-    out_b: np.ndarray,
-    param_values: np.ndarray,
-    point_type_a: Optional[np.ndarray] = None,
-    point_type_b: Optional[np.ndarray] = None,
-    min_height_px: int = 420,
-    predictor_a2b=None,
-) -> Optional[str]:
-    try:
-        import plotly.graph_objects as go
-        from plotly.subplots import make_subplots
-    except Exception as exc:
-        logger.warning("Plotly not available; skipping interactive 3D plot: %s", exc)
-        return None
+# Helper functions migrated to metrics.py and vis.py
 
-    data_a_proj = project_to_3d(data_a)
-    data_b_proj = project_to_3d(data_b)
-
-    # Inner panels (output spaces): use top-3 dims by |predictor.weight| when the predictor
-    # has a 1D weight vector (DiagonalPredictor and AffinePredictor both qualify — AffinePredictor
-    # has weight (dim,) + bias (dim,); we use weight only for dim selection).
-    # Falls back to PCA when predictor is None, MLP, or any other architecture.
-    def _project_output(out, pred):
-        if pred is not None and hasattr(pred, 'weight') and pred.weight.ndim == 1:
-            abs_w = pred.weight.detach().cpu().numpy()
-            top3 = np.argsort(np.abs(abs_w))[::-1][:3]
-            projected = out[:, top3]
-            # Pad to 3 cols if latent dim < 3
-            if projected.shape[1] < 3:
-                projected = np.hstack([projected,
-                                       np.zeros((out.shape[0], 3 - projected.shape[1]))])
-            return projected, [f"w_dim{i}" for i in top3]
-        # Default: top-3 PCA
-        proj = project_to_3d(out)
-        return proj, ["PC1", "PC2", "PC3"]
-
-    out_a_proj, out_a_labels = _project_output(out_a, predictor_a2b)
-    out_b_proj, out_b_labels = _project_output(out_b, predictor_a2b)  # same predictor → same dim selection
-
-    color_vals_a = get_point_colors(param_values, point_type_a, format_type='plotly')
-    color_vals_b = get_point_colors(param_values, point_type_b, format_type='plotly')
-
-    fig = make_subplots(
-        rows=1, cols=4,
-        specs=[[{"type": "scatter3d"}] * 4],
-        subplot_titles=("Input Space A", "Output Space A", "Output Space B", "Input Space B"),
-    )
-
-    sizes = get_point_sizes(param_values, default_size=3.0)
-
-    def _scatter(xyz, name, colors):
-        return go.Scatter3d(
-            x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2],
-            mode="markers",
-            marker=dict(size=sizes, color=colors, showscale=False),
-            name=name,
-        )
-
-    fig.add_trace(_scatter(data_a_proj, "Input A", color_vals_a), row=1, col=1)
-    fig.add_trace(_scatter(out_a_proj, "Output A", color_vals_a), row=1, col=2)
-    fig.add_trace(_scatter(out_b_proj, "Output B", color_vals_b), row=1, col=3)
-    fig.add_trace(_scatter(data_b_proj, "Input B", color_vals_b), row=1, col=4)
-
-    # Outer panels (input spaces): axis labels reflect PCA or raw dim
-    dim_str_a = "PC" if data_a.shape[1] > 3 else "Dim"
-    dim_str_b = "PC" if data_b.shape[1] > 3 else "Dim"
-
-    def _scene(x_lbl, y_lbl, z_lbl):
-        return dict(aspectmode="cube",
-                    xaxis_title=x_lbl, yaxis_title=y_lbl, zaxis_title=z_lbl)
-
-    fig.update_layout(
-        autosize=True, height=min_height_px,
-        margin=dict(l=40, r=40, t=80, b=40),
-        showlegend=False, hovermode="closest",
-        scene=_scene(f"{dim_str_a}1", f"{dim_str_a}2", f"{dim_str_a}3"),
-        scene2=_scene(out_a_labels[0], out_a_labels[1], out_a_labels[2]),
-        scene3=_scene(out_b_labels[0], out_b_labels[1], out_b_labels[2]),
-        scene4=_scene(f"{dim_str_b}1", f"{dim_str_b}2", f"{dim_str_b}3"),
-    )
-
-
-    html_body = fig.to_html(full_html=False, include_plotlyjs="cdn", default_width="100%", default_height="100%")
-    return f"<div style='width:100%;height:100%;min-height:{int(min_height_px)}px'>{html_body}</div>"
-
-
-# ---------------------------------------------------------------------------
-# Metric helpers imported from metrics.py
-# ---------------------------------------------------------------------------
 
 def compute_geometry_metrics(
     dual_model: torch.nn.Module,
@@ -178,9 +91,6 @@ def compute_geometry_metrics(
 
     Returns flat dict suitable for wandb.log.
     """
-    from sklearn.linear_model import Ridge
-    from sklearn.metrics import r2_score
-
     dual_model.eval()
     data_a = dataset.data_a
     data_b = dataset.data_b
@@ -210,8 +120,6 @@ def compute_geometry_metrics(
     num_zdims = z_a.shape[1]
 
     # --- Pre-compute clean mask once (reused by flatness, predictor blocks) ---
-    # Unique dims have non-zero variance in both modalities by design (full-rank nd-kf-mlp);
-    # 'clean' here means paired manifold points only (no asymmetric corruptions / external noise).
     z_a_clean: np.ndarray | None = None
     z_b_clean: np.ndarray | None = None
     _pt_a_attr = getattr(dataset, "point_type_a", None)
@@ -244,45 +152,14 @@ def compute_geometry_metrics(
     metrics['geom/vicreg_covariance_b'] = vicreg_covariance(z_b)
     metrics['geom/vicreg_invariance'] = float(np.mean((z_a - z_b)**2))
 
-    # --- Generalised Axis-Alignment / Diagonality Ratio (permutation-invariant, supports any k_shared) ---
+    # --- Generalised Axis-Alignment / Diagonality Ratio ---
     if param_values.ndim == 2 and num_zdims >= 2:
-        # Build R2 matrix: M[i, j] = R2(z_dim_i predicts u_j) for all (dim, factor) pairs.
-        n_factors = u.shape[1]
-        r2_matrix = np.zeros((num_zdims, n_factors))
-        for i in range(num_zdims):
-            zi = z_a[:, i:i+1]
-            for j in range(n_factors):
-                uj = u[:, j]
-                reg = Ridge(alpha=1.0).fit(zi, uj)
-                r2_matrix[i, j] = float(r2_score(uj, reg.predict(zi)))
-        
-        # Select top-k_shared z-dims by total R2 summed across all shared factors
-        top_dim_idxs = np.argsort(r2_matrix.sum(axis=1))[::-1][:k_shared]
-        sub = r2_matrix[top_dim_idxs, :]  # (k_shared, n_factors)
-        
-        # Greedy optimal assignment: maximise sum of selected (dim, factor) R2 pairs
-        assigned_rows, assigned_cols = set(), set()
-        diag_sum = 0.0
-        for val, r, c in sorted(
-            [(sub[r, c], r, c) for r in range(k_shared) for c in range(n_factors)],
-            key=lambda x: -x[0]
-        ):
-            if r not in assigned_rows and c not in assigned_cols:
-                diag_sum += val
-                assigned_rows.add(r)
-                assigned_cols.add(c)
-                if len(assigned_rows) == k_shared:
-                    break
-        total_sub = sub.sum()
-        diagonality_ratio = diag_sum / total_sub if total_sub > 1e-12 else 0.5
-        metrics['geom/za/diagonality_ratio'] = float(diagonality_ratio)
+        metrics['geom/za/diagonality_ratio'] = compute_diagonality_ratio(z_a, u, num_zdims, k_shared)
 
-    # --- PCA axis-alignment (uses k_shared active components, not hardcoded 2) ---
+    # --- PCA axis-alignment ---
     n_active = k_shared if param_values.ndim == 2 else 1
     metrics['geom/pca_axis_align_a'] = pca_axis_alignment(z_a, n_active=n_active)
     metrics['geom/pca_axis_align_b'] = pca_axis_alignment(z_b, n_active=n_active)
-
-    # --- Manifold flatness (removed) ---
 
     # --- Retrieval ---
     ret = retrieval_accuracy(z_a, z_b)
@@ -297,105 +174,21 @@ def compute_geometry_metrics(
         for k, v in masked_ret.items():
             metrics[f'geom/{k}'] = v
 
-    # --- CCA (includes cca_diag_score and per-dim cca_corr_dim{i}) ---
+    # --- CCA ---
     cca = cca_score(z_a, z_b)
     for k, v in cca.items():
         metrics[f'geom/{k}'] = v
-    # Save correlation spectrum for found-rank thresholding below
     cca_corr_spectrum = [cca.get(f'cca_corr_dim{i}', 0.0) for i in range(num_zdims)]
 
-    # ---------------------------------------------------------------------------
-    # Found Common Rank Suite
-    # Goal: estimate how many latent dims the model allocated to the mutual-
-    # information (shared-factor) subspace.  Ground truth = k_shared.
-    # Four independent estimators, each with multiple thresholds, so we can
-    # compare consistency across experiments and pick the best one.
-    # All estimators are permutation-invariant: they *count* active dims, they
-    # don't require the shared dims to be the first k_shared coordinates.
-    # ---------------------------------------------------------------------------
-
-    # 1. Per-dim z_A vs z_B Pearson correlation (model-free, no predictor needed).
-    #    Shared dims should show high |corr|; unique dims should be near 0 because
-    #    the unique factors are independent across modalities.
-    pearson_spectrum = []
-    for i in range(num_zdims):
-        c = float(np.corrcoef(z_a[:, i], z_b[:, i])[0, 1])
-        c = 0.0 if np.isnan(c) else c
-        pearson_spectrum.append(c)
-        metrics[f'geom/za_zb_pearson_dim{i}'] = c
-    for thresh, tag in [(0.1, '1'), (0.3, '3'), (0.5, '5')]:
-        metrics[f'geom/found_rank_pearson_{tag}'] = int(
-            np.sum(np.abs(pearson_spectrum) > thresh)
-        )
-
-    # 2. CCA effective rank at multiple thresholds (upgrade of the existing
-    #    cca_effective_rank which only used threshold=0.5).
-    for thresh, tag in [(0.1, '1'), (0.3, '3'), (0.5, '5')]:
-        metrics[f'geom/found_rank_cca_{tag}'] = int(
-            np.sum(np.array(cca_corr_spectrum) > thresh)
-        )
-
-    # 3. Predictor weight spectrum + threshold counts.
-    #    Only meaningful for AffinePredictor / DiagonalPredictor whose .weight
-    #    parameter is a per-dim scale applied to z_A when predicting z_B.
-    #    The L1 sparse_loss (lambda_sparse * |w_i|) is what drives non-shared
-    #    weights toward 0 — not the L1 prior, which shapes marginal distributions
-    #    and helps axis-alignment but doesn't suppress full-rank unique dims.
-    if predictor_a2b is not None and hasattr(predictor_a2b, 'weight'):
-        w_np = predictor_a2b.weight.detach().cpu().numpy()
-        abs_w = np.abs(w_np)
-        for i, wi in enumerate(abs_w):
-            metrics[f'geom/pred_w_dim{i}'] = float(wi)
-        for thresh, tag in [(0.3, '3'), (0.5, '5'), (0.7, '7')]:
-            metrics[f'geom/found_rank_pred_w_{tag}'] = int(np.sum(abs_w > thresh))
-
-        # 4. Per-dim predictor R2 on *clean* manifold points only.
-        #    For each dim i: R2(z_B_clean[:, i], predictor(z_A_clean)[:, i]).
-        #    Dims with high R2 are those the predictor actively maps; dims with
-        #    low R2 are the unique / unpredictable ones.
-        if z_a_clean is not None and z_b_clean is not None and z_a_clean.shape[0] >= 10:
-            _pred_device = next(predictor_a2b.parameters()).device
-            with torch.no_grad():
-                _pred_zb = predictor_a2b(
-                    torch.tensor(z_a_clean, dtype=torch.float32).to(_pred_device)
-                ).cpu().numpy()
-            pred_r2_spectrum = []
-            for i in range(num_zdims):
-                r2 = float(r2_score(z_b_clean[:, i], _pred_zb[:, i]))
-                r2 = max(0.0, r2)  # clamp: negative R2 = worse than mean; treat as 0
-                pred_r2_spectrum.append(r2)
-                metrics[f'geom/pred_r2_dim{i}'] = r2
-            for thresh, tag in [(0.1, '1'), (0.3, '3'), (0.5, '5')]:
-                metrics[f'geom/found_rank_pred_r2_{tag}'] = int(
-                    np.sum(np.array(pred_r2_spectrum) > thresh)
-                )
+    # --- Found Common Rank Suite ---
+    found_rank_metrics = compute_found_rank_metrics(
+        z_a, z_b, num_zdims, cca_corr_spectrum, predictor_a2b, z_a_clean, z_b_clean
+    )
+    metrics.update(found_rank_metrics)
 
     # --- Norm diagnostics ---
-    norms_a = np.linalg.norm(z_a, axis=1)
-    norms_b = np.linalg.norm(z_b, axis=1)
-    metrics['geom/z_a_norm_mean'] = float(norms_a.mean())
-    metrics['geom/z_b_norm_mean'] = float(norms_b.mean())
-
-    # --- Norms by point type ---
-    pt_a = getattr(dataset, "point_type_a", None)
-    pt_b = getattr(dataset, "point_type_b", None)
-    if pt_a is not None and pt_b is not None:
-        pt_a = to_numpy(pt_a)
-        pt_b = to_numpy(pt_b)
-        if idxs is not None:
-            pt_a = pt_a[idxs]
-            pt_b = pt_b[idxs]
-
-        def _mean_or_nan(values, mask):
-            return float(values[mask].mean()) if mask.any() else float("nan")
-
-        metrics['geom/z_a_norm_manifold'] = _mean_or_nan(norms_a, pt_a == PointType.MANIFOLD)
-        metrics['geom/z_a_norm_asym_corrupt'] = _mean_or_nan(norms_a, pt_a == PointType.ASYM_A_CORRUPT)
-        metrics['geom/z_a_norm_external'] = _mean_or_nan(norms_a, pt_a == PointType.EXTERNAL)
-
-        metrics['geom/z_b_norm_manifold'] = _mean_or_nan(norms_b, pt_b == PointType.MANIFOLD)
-        metrics['geom/z_b_norm_asym_corrupt'] = _mean_or_nan(norms_b, pt_b == PointType.ASYM_B_CORRUPT)
-        metrics['geom/z_b_norm_external'] = _mean_or_nan(norms_b, pt_b == PointType.EXTERNAL)
+    norm_metrics = compute_norm_diagnostics(z_a, z_b, dataset, idxs)
+    metrics.update(norm_metrics)
 
     return metrics
 
@@ -403,6 +196,32 @@ def compute_geometry_metrics(
 # ---------------------------------------------------------------------------
 # Eval loop
 # ---------------------------------------------------------------------------
+
+def _accumulate_partition_mse(
+    mask: torch.Tensor,
+    prefix: str,
+    metrics: Dict[str, float],
+    pred_a2b: torch.Tensor,
+    z_b: torch.Tensor,
+    pred_b2a: Optional[torch.Tensor] = None,
+    z_a: Optional[torch.Tensor] = None,
+) -> None:
+    """Computes MSE for a given mask and accumulates it in metrics."""
+    if not mask.any():
+        return
+    
+    count = int(mask.sum().item())
+    metrics[f"count_{prefix}"] += count
+    
+    metrics[f"align_mse_a2b_{prefix}"] += F.mse_loss(
+        pred_a2b[mask], z_b[mask], reduction="sum"
+    ).item()
+    
+    if pred_b2a is not None and z_a is not None:
+        metrics[f"align_mse_b2a_{prefix}"] += F.mse_loss(
+            pred_b2a[mask], z_a[mask], reduction="sum"
+        ).item()
+
 
 def _eval_loop(
     loader: DataLoader,
@@ -420,8 +239,8 @@ def _eval_loop(
         "align_mse_b2a": 0.0,
         "align_mse_a2b_manifold": 0.0,
         "align_mse_b2a_manifold": 0.0,
-        "align_mse_a2b_asym_corrupt": 0.0,
-        "align_mse_b2a_asym_corrupt": 0.0,
+        "align_mse_a2b_asym": 0.0,
+        "align_mse_b2a_asym": 0.0,
         "align_mse_a2b_external": 0.0,
         "count_manifold": 0,
         "count_asym": 0,
@@ -460,27 +279,9 @@ def _eval_loop(
                     manifold_mask = (pt_a == PointType.MANIFOLD) & (pt_b == PointType.MANIFOLD)
                     asym_mask = (~external_mask) & (~manifold_mask)
 
-                    if manifold_mask.any():
-                        metrics["align_mse_a2b_manifold"] += F.mse_loss(
-                            pred_a2b[manifold_mask], z_b[manifold_mask], reduction="sum"
-                        ).item()
-                        metrics["align_mse_b2a_manifold"] += F.mse_loss(
-                            pred_b2a[manifold_mask], z_a[manifold_mask], reduction="sum"
-                        ).item()
-                        metrics["count_manifold"] += int(manifold_mask.sum().item())
-                    if asym_mask.any():
-                        metrics["align_mse_a2b_asym_corrupt"] += F.mse_loss(
-                            pred_a2b[asym_mask], z_b[asym_mask], reduction="sum"
-                        ).item()
-                        metrics["align_mse_b2a_asym_corrupt"] += F.mse_loss(
-                            pred_b2a[asym_mask], z_a[asym_mask], reduction="sum"
-                        ).item()
-                        metrics["count_asym"] += int(asym_mask.sum().item())
-                    if external_mask.any():
-                        metrics["align_mse_a2b_external"] += F.mse_loss(
-                            pred_a2b[external_mask], z_b[external_mask], reduction="sum"
-                        ).item()
-                        metrics["count_external"] += int(external_mask.sum().item())
+                    _accumulate_partition_mse(manifold_mask, "manifold", metrics, pred_a2b, z_b, pred_b2a, z_a)
+                    _accumulate_partition_mse(asym_mask, "asym", metrics, pred_a2b, z_b, pred_b2a, z_a)
+                    _accumulate_partition_mse(external_mask, "external", metrics, pred_a2b, z_b)
 
             metrics["loss"] += float(loss.item())
             metrics["num_batches"] += 1
@@ -498,8 +299,11 @@ def _eval_loop(
         out["align_mse_a2b_manifold"] = metrics["align_mse_a2b_manifold"] / metrics["count_manifold"]
         out["align_mse_b2a_manifold"] = metrics["align_mse_b2a_manifold"] / metrics["count_manifold"]
     if metrics["count_asym"] > 0:
-        out["align_mse_a2b_asym_corrupt"] = metrics["align_mse_a2b_asym_corrupt"] / metrics["count_asym"]
-        out["align_mse_b2a_asym_corrupt"] = metrics["align_mse_b2a_asym_corrupt"] / metrics["count_asym"]
+        # Note the key mapping from _eval_loop metrics to returned dict:
+        # metrics["align_mse_a2b_asym"] (accumulated by helper with prefix "asym") is mapped
+        # to key "align_mse_a2b_asym_corrupt" to match downstream code.
+        out["align_mse_a2b_asym_corrupt"] = metrics["align_mse_a2b_asym"] / metrics["count_asym"]
+        out["align_mse_b2a_asym_corrupt"] = metrics["align_mse_b2a_asym"] / metrics["count_asym"]
     if metrics["count_external"] > 0:
         out["align_mse_a2b_external"] = metrics["align_mse_a2b_external"] / metrics["count_external"]
     return out
@@ -592,7 +396,7 @@ def evaluate_and_log_checkpoint(
                         pt_a = pt_a[idxs]
                         pt_b = pt_b[idxs]
 
-                html = _build_interactive_4way_html(
+                html = build_interactive_4way_html(
                     data_a, data_b, out_a, out_b, np.asarray(param_values),
                     point_type_a=pt_a,
                     point_type_b=pt_b,
@@ -639,13 +443,13 @@ def run(
     if cfg_path is None:
         raise ValueError("Could not resolve config path. Pass --cfg or provide --folder with config.yaml")
 
-    cfg_obj = load_config(str(cfg_path), cli_overrides=overrides)
+    cfg = load_config(str(cfg_path), cli_overrides=overrides)
 
-    device = setup_device(cfg_obj.meta.device)
-    setup_seed(cfg_obj.meta.seed)
+    device = setup_device(cfg.meta.device)
+    setup_seed(cfg.meta.seed)
 
-    data_cfg = cfg_obj.data
-    eval_set = build_dataset_from_config(cfg_obj)
+    data_cfg = cfg.data
+    eval_set = build_dataset_from_config(cfg)
     effective_batch_size = int(batch_size) if batch_size is not None else int(data_cfg.get("batch_size", 128))
     pin_memory = (device.type == 'cuda')
     eval_loader = DataLoader(
@@ -656,28 +460,28 @@ def run(
         pin_memory=pin_memory
     )
 
-    built = build_model_and_predictors(cfg_obj, device)
+    built = build_model_and_predictors(cfg, device)
     full_model = built["full_model"]
     dual_model = built["dual_model"]
     predictor_a2b = built["predictor_a2b"]
     predictor_b2a = built["predictor_b2a"]
 
-    loss_type = cfg_obj.loss.get("type", "ebm")
-    loss_fn = build_loss_from_config(cfg_obj, predictor_a2b, predictor_b2a)
+    loss_type = cfg.loss.get("type", "ebm")
+    loss_fn = build_loss_from_config(cfg, predictor_a2b, predictor_b2a)
 
     log_wandb_override = _to_bool_or_none(log_wandb)
-    enabled_wandb = bool(cfg_obj.logging.get("log_wandb", False)) if log_wandb_override is None else bool(log_wandb_override)
+    enabled_wandb = bool(cfg.logging.get("log_wandb", False)) if log_wandb_override is None else bool(log_wandb_override)
     run_dir = folder_path if folder_path is not None else (checkpoint_path.parent if checkpoint_path is not None else cfg_path.parent)
 
     base_tags = ["sslda", "eval"]
-    if cfg_obj.logging.get("log_seed_tag", False):
-        base_tags.append(f"seed_{cfg_obj.meta.seed}")
+    if cfg.logging.get("log_seed_tag", False):
+        base_tags.append(f"seed_{cfg.meta.seed}")
 
     wandb_run = setup_wandb(
-        project="eb_jepa", config=cfg_obj, run_dir=run_dir / "eval_wandb",
+        project="eb_jepa", config=cfg, run_dir=run_dir / "eval_wandb",
         run_name=f"{run_dir.name}_eval",
         tags=base_tags,
-        group=cfg_obj.logging.get("wandb_group"),
+        group=cfg.logging.get("wandb_group"),
         enabled=enabled_wandb, resume=False,
     )
 

@@ -307,95 +307,86 @@ class DualDisentangleDataset(Dataset):
         pa, pb, pu = [], [], []
         pta, ptb = [], []
 
+        def gen_clean(n):
+            u1 = self.rng.uniform(0, 1, n)
+            u2 = self.rng.uniform(0, 1, n)
+            u_noise_a = self.rng.normal(0, 1, n)
+            u_noise_b = self.rng.normal(0, 1, n)
+            a, b = self._gen_3d3f2c(u1, u2, u_noise_a, u_noise_b)
+            return a, b
+
         # 1. Manifold (Matching)
         if n_man > 0:
             u1 = np.linspace(0, 1, n_man)
             u2 = self.rng.uniform(0, 1, n_man)
-            u3a = self.rng.normal(0, 1, n_man)
-            u3b = self.rng.normal(0, 1, n_man)
-            a, b = self._gen_3d3f2c(u1, u2, u3a, u3b)
+            u_noise_a = self.rng.normal(0, 1, n_man)
+            u_noise_b = self.rng.normal(0, 1, n_man)
+            a, b = self._gen_3d3f2c(u1, u2, u_noise_a, u_noise_b)
             pa.append(self._apply_manifold_noise(a, self.manifold_noise_a))
             pb.append(self._apply_manifold_noise(b, self.manifold_noise_b))
             pu.append(np.column_stack([u1, u2]))
             pta.append(np.zeros(n_man, dtype=np.int32))
             ptb.append(np.zeros(n_man, dtype=np.int32))
 
-        # Helper to sample random boxes
-        ma, Ma, mb, Mb = self._get_bbox()
+        min_a, max_a, min_b, max_b = self._get_bbox()
 
         # 2. Asymmetric Corrupted A (A is garbage, B is clean)
         if n_ac_a > 0:
+            a, b = self._generate_asym_corrupt(n_ac_a, True, gen_clean, min_a, max_a, 3)
+            pa.append(a)
+            pb.append(self._apply_manifold_noise(b, self.manifold_noise_b))
             u1 = self.rng.uniform(0, 1, n_ac_a)
             u2 = self.rng.uniform(0, 1, n_ac_a)
-            u3b = self.rng.normal(0, 1, n_ac_a)
-            _, b = self._gen_3d3f2c(u1, u2, np.zeros(n_ac_a), u3b)
-            a_garbage = ma + (Ma - ma) * self.rng.rand(n_ac_a, 3)
-            pa.append(a_garbage)
-            pb.append(self._apply_manifold_noise(b, self.manifold_noise_b))
             pu.append(np.column_stack([u1, u2]))
-            pta.append(np.full(n_ac_a, 2, dtype=np.int32))
-            ptb.append(np.full(n_ac_a, 1, dtype=np.int32))
+            pta.append(np.full(n_ac_a, PointType.ASYM_B_CORRUPT, dtype=np.int32))
+            ptb.append(np.full(n_ac_a, PointType.ASYM_A_GOOD, dtype=np.int32))
 
         # 3. Asymmetric Corrupted B (B is garbage, A is clean)
         if n_ac_b > 0:
+            a, b = self._generate_asym_corrupt(n_ac_b, False, gen_clean, min_b, max_b, 3)
+            pa.append(self._apply_manifold_noise(a, self.manifold_noise_a))
+            pb.append(b)
             u1 = self.rng.uniform(0, 1, n_ac_b)
             u2 = self.rng.uniform(0, 1, n_ac_b)
-            u3a = self.rng.normal(0, 1, n_ac_b)
-            a, _ = self._gen_3d3f2c(u1, u2, u3a, np.zeros(n_ac_b))
-            b_garbage = mb + (Mb - mb) * self.rng.rand(n_ac_b, 3)
-            pa.append(self._apply_manifold_noise(a, self.manifold_noise_a))
-            pb.append(b_garbage)
             pu.append(np.column_stack([u1, u2]))
-            pta.append(np.full(n_ac_b, 1, dtype=np.int32))
-            ptb.append(np.full(n_ac_b, 2, dtype=np.int32))
+            pta.append(np.full(n_ac_b, PointType.ASYM_A_GOOD, dtype=np.int32))
+            ptb.append(np.full(n_ac_b, PointType.ASYM_B_CORRUPT, dtype=np.int32))
 
-        # 4. Asymmetric Mismatched A (A is valid but wrong latent, B is clean)
+        # 4. Asymmetric Mismatched A (A is fake latent, B is clean)
         if n_am_a > 0:
-            u1_true = self.rng.uniform(0, 1, n_am_a)
-            u2_true = self.rng.uniform(0, 1, n_am_a)
-            u1_fake = self.rng.uniform(0, 1, n_am_a)
-            u2_fake = self.rng.uniform(0, 1, n_am_a)
-            u3a = self.rng.normal(0, 1, n_am_a)
-            u3b = self.rng.normal(0, 1, n_am_a)
-            
-            a_fake, _ = self._gen_3d3f2c(u1_fake, u2_fake, u3a, u3b)
-            _, b_true = self._gen_3d3f2c(u1_true, u2_true, u3a, u3b)
-            
-            pa.append(self._apply_manifold_noise(a_fake, self.manifold_noise_a))
-            pb.append(self._apply_manifold_noise(b_true, self.manifold_noise_b))
-            pu.append(np.column_stack([u1_true, u2_true]))
-            pta.append(np.full(n_am_a, 4, dtype=np.int32))
-            ptb.append(np.full(n_am_a, 3, dtype=np.int32))
-            
-        # 5. Asymmetric Mismatched B (B is valid but wrong latent, A is clean)
+            a, b = self._generate_asym_mismatch(n_am_a, True, gen_clean)
+            pa.append(self._apply_manifold_noise(a, self.manifold_noise_a))
+            pb.append(self._apply_manifold_noise(b, self.manifold_noise_b))
+            u1 = self.rng.uniform(0, 1, n_am_a)
+            u2 = self.rng.uniform(0, 1, n_am_a)
+            pu.append(np.column_stack([u1, u2]))
+            pta.append(np.full(n_am_a, PointType.ASYM_A_CORRUPT, dtype=np.int32))
+            ptb.append(np.full(n_am_a, PointType.ASYM_B_GOOD, dtype=np.int32))
+
+        # 5. Asymmetric Mismatched B (B is fake latent, A is clean)
         if n_am_b > 0:
-            u1_true = self.rng.uniform(0, 1, n_am_b)
-            u2_true = self.rng.uniform(0, 1, n_am_b)
-            u1_fake = self.rng.uniform(0, 1, n_am_b)
-            u2_fake = self.rng.uniform(0, 1, n_am_b)
-            u3a = self.rng.normal(0, 1, n_am_b)
-            u3b = self.rng.normal(0, 1, n_am_b)
-            
-            a_true, _ = self._gen_3d3f2c(u1_true, u2_true, u3a, u3b)
-            _, b_fake = self._gen_3d3f2c(u1_fake, u2_fake, u3a, u3b)
-            
-            pa.append(self._apply_manifold_noise(a_true, self.manifold_noise_a))
-            pb.append(self._apply_manifold_noise(b_fake, self.manifold_noise_b))
-            pu.append(np.column_stack([u1_true, u2_true]))
-            pta.append(np.full(n_am_b, 3, dtype=np.int32))
-            ptb.append(np.full(n_am_b, 4, dtype=np.int32))
+            a, b = self._generate_asym_mismatch(n_am_b, False, gen_clean)
+            pa.append(self._apply_manifold_noise(a, self.manifold_noise_a))
+            pb.append(self._apply_manifold_noise(b, self.manifold_noise_b))
+            u1 = self.rng.uniform(0, 1, n_am_b)
+            u2 = self.rng.uniform(0, 1, n_am_b)
+            pu.append(np.column_stack([u1, u2]))
+            pta.append(np.full(n_am_b, PointType.ASYM_B_GOOD, dtype=np.int32))
+            ptb.append(np.full(n_am_b, PointType.ASYM_A_CORRUPT, dtype=np.int32))
 
         # 6. External (Both Garbage)
         if n_ext > 0:
-            pa.append(ma + (Ma - ma) * self.rng.rand(n_ext, 3))
-            pb.append(mb + (Mb - mb) * self.rng.rand(n_ext, 3))
-            pu.append(np.column_stack([self.rng.uniform(0, 1, n_ext), self.rng.uniform(0, 1, n_ext)]))
-            pta.append(np.full(n_ext, 5, dtype=np.int32))
-            ptb.append(np.full(n_ext, 5, dtype=np.int32))
+            a, b = self._generate_external(n_ext, min_a, max_a, min_b, max_b, 3, 3)
+            pa.append(a)
+            pb.append(b)
+            u1 = self.rng.uniform(0, 1, n_ext)
+            u2 = self.rng.uniform(0, 1, n_ext)
+            pu.append(np.column_stack([u1, u2]))
+            pta.append(np.full(n_ext, PointType.EXTERNAL, dtype=np.int32))
+            ptb.append(np.full(n_ext, PointType.EXTERNAL, dtype=np.int32))
 
         data_a, data_b = np.vstack(pa), np.vstack(pb)
         
-        # Normalize 3D3F2C to keep coordinate bounds reasonable before rotation
         m_a, s_a = data_a.mean(0), data_a.std(0)
         m_b, s_b = data_b.mean(0), data_b.std(0)
         data_a = (data_a - m_a) / (s_a + 1e-8)
@@ -424,6 +415,11 @@ class DualDisentangleDataset(Dataset):
         def norm_b(x):
             return (x - mean_b) / (std_b + 1e-8)
 
+        def gen_clean(n):
+            us, ua, ub = self._sample_latents(n, self.k_shared, self.m_unique)
+            xa, xb = self._gen_mlp(us, ua, ub, mlp_a, mlp_b)
+            return norm_a(xa), norm_b(xb)
+
         # 1. Manifold
         if n_man > 0:
             us, ua, ub = self._sample_latents(n_man, self.k_shared, self.m_unique)
@@ -436,66 +432,63 @@ class DualDisentangleDataset(Dataset):
         _us, _ua, _ub = self._sample_latents(1000, self.k_shared, self.m_unique)
         _xa, _xb = self._gen_mlp(_us, _ua, _ub, mlp_a, mlp_b)
         _xa, _xb = norm_a(_xa), norm_b(_xb)
-        ma, Ma = _xa.min(0), _xa.max(0)
-        mb, Mb = _xb.min(0), _xb.max(0)
+        min_a, max_a = _xa.min(0), _xa.max(0)
+        min_b, max_b = _xb.min(0), _xb.max(0)
         h = self.noise_bbox_expansion / 2.0
-        ma, Ma = ma - h*(Ma-ma), Ma + h*(Ma-ma)
-        mb, Mb = mb - h*(Mb-mb), Mb + h*(Mb-mb)
+        min_a, max_a = min_a - h*(max_a-min_a), max_a + h*(max_a-min_a)
+        min_b, max_b = min_b - h*(max_b-min_b), max_b + h*(max_b-min_b)
 
         # 2. Asym Corrupt A
         if n_ac_a > 0:
-            us, ua, ub = self._sample_latents(n_ac_a, self.k_shared, self.m_unique)
-            _, xb = self._gen_mlp(us, ua, ub, mlp_a, mlp_b)
-            xb = norm_b(xb)
-            xa = ma + (Ma - ma) * self.rng.rand(n_ac_a, self.d_out)
-            pa.append(xa); pb.append(xb); pu.append(us)
-            pta.append(np.full(n_ac_a, 2, dtype=np.int32)); ptb.append(np.full(n_ac_a, 1, dtype=np.int32))
+            xa, xb = self._generate_asym_corrupt(n_ac_a, True, gen_clean, min_a, max_a, self.d_out)
+            pa.append(xa); pb.append(xb)
+            us, _, _ = self._sample_latents(n_ac_a, self.k_shared, self.m_unique)
+            pu.append(us)
+            pta.append(np.full(n_ac_a, PointType.ASYM_B_CORRUPT, dtype=np.int32))
+            ptb.append(np.full(n_ac_a, PointType.ASYM_A_GOOD, dtype=np.int32))
 
         # 3. Asym Corrupt B
         if n_ac_b > 0:
-            us, ua, ub = self._sample_latents(n_ac_b, self.k_shared, self.m_unique)
-            xa, _ = self._gen_mlp(us, ua, ub, mlp_a, mlp_b)
-            xa = norm_a(xa)
-            xb = mb + (Mb - mb) * self.rng.rand(n_ac_b, self.d_out)
-            pa.append(xa); pb.append(xb); pu.append(us)
-            pta.append(np.full(n_ac_b, 1, dtype=np.int32)); ptb.append(np.full(n_ac_b, 2, dtype=np.int32))
+            xa, xb = self._generate_asym_corrupt(n_ac_b, False, gen_clean, min_b, max_b, self.d_out)
+            pa.append(xa); pb.append(xb)
+            us, _, _ = self._sample_latents(n_ac_b, self.k_shared, self.m_unique)
+            pu.append(us)
+            pta.append(np.full(n_ac_b, PointType.ASYM_A_GOOD, dtype=np.int32))
+            ptb.append(np.full(n_ac_b, PointType.ASYM_B_CORRUPT, dtype=np.int32))
             
         # 4. Asym Mismatch A
         if n_am_a > 0:
-            us_true, ua, ub = self._sample_latents(n_am_a, self.k_shared, self.m_unique)
-            us_fake, _, _ = self._sample_latents(n_am_a, self.k_shared, self.m_unique)
-            xa_fake, _ = self._gen_mlp(us_fake, ua, ub, mlp_a, mlp_b)
-            _, xb_true = self._gen_mlp(us_true, ua, ub, mlp_a, mlp_b)
-            xa_fake, xb_true = norm_a(xa_fake), norm_b(xb_true)
-            pa.append(xa_fake); pb.append(xb_true); pu.append(us_true)
-            pta.append(np.full(n_am_a, 4, dtype=np.int32)); ptb.append(np.full(n_am_a, 3, dtype=np.int32))
+            xa, xb = self._generate_asym_mismatch(n_am_a, True, gen_clean)
+            pa.append(xa); pb.append(xb)
+            us, _, _ = self._sample_latents(n_am_a, self.k_shared, self.m_unique)
+            pu.append(us)
+            pta.append(np.full(n_am_a, PointType.ASYM_A_CORRUPT, dtype=np.int32))
+            ptb.append(np.full(n_am_a, PointType.ASYM_B_GOOD, dtype=np.int32))
 
         # 5. Asym Mismatch B
         if n_am_b > 0:
-            us_true, ua, ub = self._sample_latents(n_am_b, self.k_shared, self.m_unique)
-            us_fake, _, _ = self._sample_latents(n_am_b, self.k_shared, self.m_unique)
-            xa_true, _ = self._gen_mlp(us_true, ua, ub, mlp_a, mlp_b)
-            _, xb_fake = self._gen_mlp(us_fake, ua, ub, mlp_a, mlp_b)
-            xa_true, xb_fake = norm_a(xa_true), norm_b(xb_fake)
-            pa.append(xa_true); pb.append(xb_fake); pu.append(us_true)
-            pta.append(np.full(n_am_b, 3, dtype=np.int32)); ptb.append(np.full(n_am_b, 4, dtype=np.int32))
+            xa, xb = self._generate_asym_mismatch(n_am_b, False, gen_clean)
+            pa.append(xa); pb.append(xb)
+            us, _, _ = self._sample_latents(n_am_b, self.k_shared, self.m_unique)
+            pu.append(us)
+            pta.append(np.full(n_am_b, PointType.ASYM_B_GOOD, dtype=np.int32))
+            ptb.append(np.full(n_am_b, PointType.ASYM_A_CORRUPT, dtype=np.int32))
             
         # 6. External
         if n_ext > 0:
-            pa.append(ma + (Ma - ma) * self.rng.rand(n_ext, self.d_out))
-            pb.append(mb + (Mb - mb) * self.rng.rand(n_ext, self.d_out))
+            xa, xb = self._generate_external(n_ext, min_a, max_a, min_b, max_b, self.d_out, self.d_out)
+            pa.append(xa); pb.append(xb)
             pu.append(self.rng.uniform(0, 1, (n_ext, self.k_shared)))
-            pta.append(np.full(n_ext, 5, dtype=np.int32)); ptb.append(np.full(n_ext, 5, dtype=np.int32))
+            pta.append(np.full(n_ext, PointType.EXTERNAL, dtype=np.int32))
+            ptb.append(np.full(n_ext, PointType.EXTERNAL, dtype=np.int32))
 
         data_a, data_b = np.vstack(pa), np.vstack(pb)
 
-        # Re-normalize stacked data before noise addition to guarantee standard deviation of exactly 1
         m_a, s_a = data_a.mean(0), data_a.std(0)
         m_b, s_b = data_b.mean(0), data_b.std(0)
         data_a = (data_a - m_a) / (s_a + 1e-8)
         data_b = (data_b - m_b) / (s_b + 1e-8)
 
-        # Unstructured noise on final output (sensor noise)
         data_a += self.rng.normal(0, self.manifold_noise_a, size=data_a.shape)
         data_b += self.rng.normal(0, self.manifold_noise_b, size=data_b.shape)
         
@@ -552,12 +545,12 @@ class DualDisentangleDataset(Dataset):
             r_a, r_b = self._generate_3d1f_raw_features(u_b, self.manifold_noise_a, self.manifold_noise_b)
             n_a, n_b = (r_a - m_a) / (s_a + 1e-8), (r_b - m_b) / (s_b + 1e-8)
             ro_a = n_a @ (Ry @ Rz).T
-            ma, Ma = ro_a.min(0), ro_a.max(0); mb, Mb = n_b.min(0), n_b.max(0)
+            min_a, max_a = ro_a.min(0), ro_a.max(0); min_b, max_b = n_b.min(0), n_b.max(0)
             h = self.noise_bbox_expansion / 2.0
-            ma, Ma = ma - h*(Ma-ma), Ma + h*(Ma-ma)
-            mb, Mb = mb - h*(Mb-mb), Mb + h*(Mb-mb)
-            pa.append(ma + (Ma-ma)*self.rng.rand(n_ext, 3))
-            pb.append(mb + (Mb-mb)*self.rng.rand(n_ext, 3))
+            min_a, max_a = min_a - h*(max_a-min_a), max_a + h*(max_a-min_a)
+            min_b, max_b = min_b - h*(max_b-min_b), max_b + h*(max_b-min_b)
+            pa.append(min_a + (max_a-min_a)*self.rng.rand(n_ext, 3))
+            pb.append(min_b + (max_b-min_b)*self.rng.rand(n_ext, 3))
             pu.append(self.rng.uniform(0, 1, n_ext))
             pta.append(np.full(n_ext, 5, dtype=np.int32)); ptb.append(np.full(n_ext, 5, dtype=np.int32))
 
@@ -609,12 +602,12 @@ class DualDisentangleDataset(Dataset):
             u1_b, u2_b = self.rng.uniform(0, 1, 1000), self.rng.uniform(0, 1, 1000)
             r_a, r_b = self._generate_3d2f_raw_features(u1_b, u2_b, self.manifold_noise_a, self.manifold_noise_b)
             n_a, n_b = (r_a - m_a) / (s_a + 1e-8), (r_b - m_b) / (s_b + 1e-8)
-            ma, Ma = n_a.min(0), n_a.max(0); mb, Mb = n_b.min(0), n_b.max(0)
+            min_a, max_a = n_a.min(0), n_a.max(0); min_b, max_b = n_b.min(0), n_b.max(0)
             h = self.noise_bbox_expansion / 2.0
-            ma, Ma = ma - h*(Ma-ma), Ma + h*(Ma-ma)
-            mb, Mb = mb - h*(Mb-mb), Mb + h*(Mb-mb)
-            pa.append(ma + (Ma-ma)*self.rng.rand(n_ext, 3))
-            pb.append(mb + (Mb-mb)*self.rng.rand(n_ext, 3))
+            min_a, max_a = min_a - h*(max_a-min_a), max_a + h*(max_a-min_a)
+            min_b, max_b = min_b - h*(max_b-min_b), max_b + h*(max_b-min_b)
+            pa.append(min_a + (max_a-min_a)*self.rng.rand(n_ext, 3))
+            pb.append(min_b + (max_b-min_b)*self.rng.rand(n_ext, 3))
             pu.append(np.column_stack([self.rng.uniform(0, 1, n_ext), self.rng.uniform(0, 1, n_ext)]))
             pta.append(np.full(n_ext, 5, dtype=np.int32)); ptb.append(np.full(n_ext, 5, dtype=np.int32))
 
@@ -636,10 +629,40 @@ class DualDisentangleDataset(Dataset):
         x = u_vals * 2.0 - 1.0
         return (x, x**3 - 0.5 * x - 0.5)
 
-    def _gen_3d3f2c(self, u1, u2, u3a, u3b):
+    def _generate_asym_corrupt(self, n, is_a_corrupt, gen_clean_fn, min_box, max_box, dim):
+        """Generates asymmetric corrupted points. One modality is clean, other is random in bbox."""
+        if n <= 0:
+            return None, None
+        a_clean, b_clean = gen_clean_fn(n)
+        garbage = min_box + (max_box - min_box) * self.rng.rand(n, dim)
+        if is_a_corrupt:
+            return garbage, b_clean
+        else:
+            return a_clean, garbage
+
+    def _generate_asym_mismatch(self, n, is_a_fake, gen_clean_fn):
+        """Generates mismatched points. One modality has fake shared latent, other has true."""
+        if n <= 0:
+            return None, None
+        a1, b1 = gen_clean_fn(n)
+        a2, b2 = gen_clean_fn(n)
+        if is_a_fake:
+            return a2, b1
+        else:
+            return a1, b2
+
+    def _generate_external(self, n, min_box_a, max_box_a, min_box_b, max_box_b, dim_a, dim_b):
+        """Generates external noise points (both modalities are random in their bboxes)."""
+        if n <= 0:
+            return None, None
+        a = min_box_a + (max_box_a - min_box_a) * self.rng.rand(n, dim_a)
+        b = min_box_b + (max_box_b - min_box_b) * self.rng.rand(n, dim_b)
+        return a, b
+
+    def _gen_3d3f2c(self, u1, u2, u_noise_a, u_noise_b):
         # Base clean shapes without unstructured noise
         # Mod A: Volumetric Spiral
-        r = u1 + self.u3a_scale * u3a
+        r = u1 + self.u3a_scale * u_noise_a
         theta = 2 * np.pi * self.turns * u1
         x_a = r * np.cos(theta)
         y_a = r * np.sin(theta)
@@ -650,7 +673,7 @@ class DualDisentangleDataset(Dataset):
         x_b = u1
         y_b = u2
         v = 2 * u1 - 1
-        z_b = self.wave_amplitude * (v**3 - 0.5 * v) + self.u3b_scale * u3b
+        z_b = self.wave_amplitude * (v**3 - 0.5 * v) + self.u3b_scale * u_noise_b
         b_clean = np.column_stack([x_b, y_b, z_b])
         return a_clean, b_clean
 
@@ -660,15 +683,15 @@ class DualDisentangleDataset(Dataset):
     def _get_bbox(self, u_steps=1000):
         u1 = self.rng.uniform(0, 1, u_steps)
         u2 = self.rng.uniform(0, 1, u_steps)
-        u3a = self.rng.normal(0, 1, u_steps)
-        u3b = self.rng.normal(0, 1, u_steps)
-        a, b = self._gen_3d3f2c(u1, u2, u3a, u3b)
-        ma, Ma = a.min(0), a.max(0)
-        mb, Mb = b.min(0), b.max(0)
+        u_noise_a = self.rng.normal(0, 1, u_steps)
+        u_noise_b = self.rng.normal(0, 1, u_steps)
+        a, b = self._gen_3d3f2c(u1, u2, u_noise_a, u_noise_b)
+        min_a, max_a = a.min(0), a.max(0)
+        min_b, max_b = b.min(0), b.max(0)
         h = self.noise_bbox_expansion / 2.0
-        ma, Ma = ma - h*(Ma-ma), Ma + h*(Ma-ma)
-        mb, Mb = mb - h*(Mb-mb), Mb + h*(Mb-mb)
-        return ma, Ma, mb, Mb
+        min_a, max_a = min_a - h*(max_a-min_a), max_a + h*(max_a-min_a)
+        min_b, max_b = min_b - h*(max_b-min_b), max_b + h*(max_b-min_b)
+        return min_a, max_a, min_b, max_b
 
     def _sample_latents(self, n, k_shared, m_unique):
         if self.shared_factor_dist == 'normal':
@@ -748,9 +771,9 @@ class DualDisentangleDataset(Dataset):
         }
 
 
-def build_dataset_from_config(cfg_obj, seed=None) -> DualDisentangleDataset:
+def build_dataset_from_config(cfg, seed=None) -> DualDisentangleDataset:
     """Builds a DualDisentangleDataset instance from an OmegaConf configuration object."""
-    data_cfg = cfg_obj.data
+    data_cfg = cfg.data
     return DualDisentangleDataset(
         data_type=data_cfg.get('type', '2d'),
         num_samples=data_cfg.get('num_samples', 4096),
@@ -767,7 +790,7 @@ def build_dataset_from_config(cfg_obj, seed=None) -> DualDisentangleDataset:
         asym_mismatch_rate_b=data_cfg.get('asym_mismatch_rate_b', 0.0),
         external_noise_ratio=data_cfg.get('external_noise_ratio', 0.0),
         noise_bbox_expansion=data_cfg.get('noise_bbox_expansion', 0.0),
-        seed=seed if seed is not None else cfg_obj.meta.seed,
+        seed=seed if seed is not None else cfg.meta.seed,
         k_shared=data_cfg.get('k_shared', 2),
         m_unique=data_cfg.get('m_unique', 2),
         d_out=data_cfg.get('d_out', 16),

@@ -1,5 +1,9 @@
 import numpy as np
+import torch
+from typing import Optional
 from eb_jepa.logging import get_logger
+from multimodal_experiments.ssl_dual_alignment.dataset import PointType, DualDisentangleDataset
+from multimodal_experiments.ssl_dual_alignment.vis import to_numpy
 
 logger = get_logger(__name__)
 
@@ -168,3 +172,136 @@ def cca_score(z_a: np.ndarray, z_b: np.ndarray) -> dict:
     result['cca_effective_rank'] = float(np.sum(np.array(corrs) > 0.5))
     result['cca_diag_score'] = diag_score
     return result
+
+
+def compute_diagonality_ratio(z_a: np.ndarray, u: np.ndarray, num_zdims: int, k_shared: int) -> float:
+    """Permutation-invariant diagonality ratio using Ridge R2 matrix."""
+    from sklearn.linear_model import Ridge
+    from sklearn.metrics import r2_score
+    n_factors = u.shape[1]
+    r2_matrix = np.zeros((num_zdims, n_factors))
+    for i in range(num_zdims):
+        zi = z_a[:, i:i+1]
+        for j in range(n_factors):
+            uj = u[:, j]
+            reg = Ridge(alpha=1.0).fit(zi, uj)
+            r2_matrix[i, j] = float(r2_score(uj, reg.predict(zi)))
+    
+    # Select top-k_shared z-dims by total R2 summed across all shared factors
+    top_dim_idxs = np.argsort(r2_matrix.sum(axis=1))[::-1][:k_shared]
+    sub = r2_matrix[top_dim_idxs, :]  # (k_shared, n_factors)
+    
+    # Greedy optimal assignment: maximise sum of selected (dim, factor) R2 pairs
+    assigned_rows, assigned_cols = set(), set()
+    diag_sum = 0.0
+    for val, r, c in sorted(
+        [(sub[r, c], r, c) for r in range(k_shared) for c in range(n_factors)],
+        key=lambda x: -x[0]
+    ):
+        if r not in assigned_rows and c not in assigned_cols:
+            diag_sum += val
+            assigned_rows.add(r)
+            assigned_cols.add(c)
+            if len(assigned_rows) == k_shared:
+                break
+    total_sub = sub.sum()
+    return float(diag_sum / total_sub if total_sub > 1e-12 else 0.5)
+
+
+def compute_found_rank_metrics(
+    z_a: np.ndarray,
+    z_b: np.ndarray,
+    num_zdims: int,
+    cca_corr_spectrum: list[float],
+    predictor_a2b: Optional[torch.nn.Module],
+    z_a_clean: Optional[np.ndarray],
+    z_b_clean: Optional[np.ndarray],
+) -> dict:
+    """Estimates the mutual-information subspace rank using Pearson, CCA, pred weights, and pred R2."""
+    from sklearn.metrics import r2_score
+    metrics = {}
+
+    # 1. Pearson correlation rank
+    pearson_spectrum = []
+    for i in range(num_zdims):
+        c = float(np.corrcoef(z_a[:, i], z_b[:, i])[0, 1])
+        c = 0.0 if np.isnan(c) else c
+        pearson_spectrum.append(c)
+        metrics[f'geom/za_zb_pearson_dim{i}'] = c
+    for thresh, tag in [(0.1, '1'), (0.3, '3'), (0.5, '5')]:
+        metrics[f'geom/found_rank_pearson_{tag}'] = int(
+            np.sum(np.abs(pearson_spectrum) > thresh)
+        )
+
+    # 2. CCA rank
+    for thresh, tag in [(0.1, '1'), (0.3, '3'), (0.5, '5')]:
+        metrics[f'geom/found_rank_cca_{tag}'] = int(
+            np.sum(np.array(cca_corr_spectrum) > thresh)
+        )
+
+    # 3. Predictor weight rank & clean predictor R2
+    if predictor_a2b is not None and hasattr(predictor_a2b, 'weight'):
+        w_np = predictor_a2b.weight.detach().cpu().numpy()
+        abs_w = np.abs(w_np)
+        for i, wi in enumerate(abs_w):
+            metrics[f'geom/pred_w_dim{i}'] = float(wi)
+        for thresh, tag in [(0.3, '3'), (0.5, '5'), (0.7, '7')]:
+            metrics[f'geom/found_rank_pred_w_{tag}'] = int(np.sum(abs_w > thresh))
+
+        # 4. Predictor R2 on clean manifold points
+        if z_a_clean is not None and z_b_clean is not None and z_a_clean.shape[0] >= 10:
+            _pred_device = next(predictor_a2b.parameters()).device
+            with torch.no_grad():
+                _pred_zb = predictor_a2b(
+                    torch.tensor(z_a_clean, dtype=torch.float32).to(_pred_device)
+                ).cpu().numpy()
+            pred_r2_spectrum = []
+            for i in range(num_zdims):
+                r2 = float(r2_score(z_b_clean[:, i], _pred_zb[:, i]))
+                r2 = max(0.0, r2)
+                pred_r2_spectrum.append(r2)
+                metrics[f'geom/pred_r2_dim{i}'] = r2
+            for thresh, tag in [(0.1, '1'), (0.3, '3'), (0.5, '5')]:
+                metrics[f'geom/found_rank_pred_r2_{tag}'] = int(
+                    np.sum(np.array(pred_r2_spectrum) > thresh)
+                )
+
+    return metrics
+
+
+def compute_norm_diagnostics(
+    z_a: np.ndarray,
+    z_b: np.ndarray,
+    dataset: DualDisentangleDataset,
+    idxs: Optional[np.ndarray],
+) -> dict:
+    """Computes global norms and partition-wise norms (manifold, corrupt, external)."""
+    norms_a = np.linalg.norm(z_a, axis=1)
+    norms_b = np.linalg.norm(z_b, axis=1)
+    
+    metrics = {
+        'geom/z_a_norm_mean': float(norms_a.mean()),
+        'geom/z_b_norm_mean': float(norms_b.mean()),
+    }
+
+    pt_a = getattr(dataset, "point_type_a", None)
+    pt_b = getattr(dataset, "point_type_b", None)
+    if pt_a is not None and pt_b is not None:
+        pt_a = to_numpy(pt_a)
+        pt_b = to_numpy(pt_b)
+        if idxs is not None:
+            pt_a = pt_a[idxs]
+            pt_b = pt_b[idxs]
+
+        def _mean_or_nan(values, mask):
+            return float(values[mask].mean()) if mask.any() else float("nan")
+
+        metrics['geom/z_a_norm_manifold'] = _mean_or_nan(norms_a, pt_a == PointType.MANIFOLD)
+        metrics['geom/z_a_norm_asym_corrupt'] = _mean_or_nan(norms_a, pt_a == PointType.ASYM_A_CORRUPT)
+        metrics['geom/z_a_norm_external'] = _mean_or_nan(norms_a, pt_a == PointType.EXTERNAL)
+
+        metrics['geom/z_b_norm_manifold'] = _mean_or_nan(norms_b, pt_b == PointType.MANIFOLD)
+        metrics['geom/z_b_norm_asym_corrupt'] = _mean_or_nan(norms_b, pt_b == PointType.ASYM_B_CORRUPT)
+        metrics['geom/z_b_norm_external'] = _mean_or_nan(norms_b, pt_b == PointType.EXTERNAL)
+
+    return metrics

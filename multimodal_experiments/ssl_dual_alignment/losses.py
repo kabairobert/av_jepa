@@ -233,9 +233,9 @@ class EBMJEPALoss(torch.nn.Module):
         return pred_term + jac_term + prior_term + sparse_term
 
 
-def build_loss_from_config(cfg_obj, predictor_a2b, predictor_b2a) -> torch.nn.Module:
+def build_loss_from_config(cfg, predictor_a2b, predictor_b2a) -> torch.nn.Module:
     """Builds the loss module (either EBMJEPALoss or SupervisedFactorLoss) from configuration."""
-    loss_cfg = cfg_obj.loss
+    loss_cfg = cfg.loss
     loss_type = loss_cfg.get("type", "ebm")
     
     if loss_type == "ebm":
@@ -255,11 +255,11 @@ def build_loss_from_config(cfg_obj, predictor_a2b, predictor_b2a) -> torch.nn.Mo
         )
     else:
         from multimodal_experiments.initial_trials.ssl_disentangling import SupervisedFactorLoss
-        data_type = cfg_obj.data.get('type', '2d')
+        data_type = cfg.data.get('type', '2d')
         if data_type == '2d':
             dims = [1, 1]
         elif data_type == 'nd-kf-mlp':
-            dims = [1] * cfg_obj.data.get('k_shared', 2)
+            dims = [1] * cfg.data.get('k_shared', 2)
         else:
             dims = [1, 1, 1]
         return SupervisedFactorLoss(dimensions_per_factor=dims)

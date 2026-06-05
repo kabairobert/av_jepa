@@ -2,7 +2,11 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+from typing import Optional
+from eb_jepa.logging import get_logger
 from multimodal_experiments.ssl_dual_alignment.dataset import PointType
+
+logger = get_logger(__name__)
 
 # ---- Point color helpers ----
 # point_type codes:
@@ -259,3 +263,91 @@ def log_plots_to_wandb(dual_model, dataset, device, step, wandb_run):
             plt.close(fig_spaces)
         if fig_reshaping is not None:
             plt.close(fig_reshaping)
+
+
+def build_interactive_4way_html(
+    data_a: np.ndarray,
+    data_b: np.ndarray,
+    out_a: np.ndarray,
+    out_b: np.ndarray,
+    param_values: np.ndarray,
+    point_type_a: Optional[np.ndarray] = None,
+    point_type_b: Optional[np.ndarray] = None,
+    min_height_px: int = 420,
+    predictor_a2b=None,
+) -> Optional[str]:
+    try:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+    except Exception as exc:
+        logger.warning("Plotly not available; skipping interactive 3D plot: %s", exc)
+        return None
+
+    data_a_proj = project_to_3d(data_a)
+    data_b_proj = project_to_3d(data_b)
+
+    # Inner panels (output spaces): use top-3 dims by |predictor.weight| when the predictor
+    # has a 1D weight vector (DiagonalPredictor and AffinePredictor both qualify — AffinePredictor
+    # has weight (dim,) + bias (dim,); we use weight only for dim selection).
+    # Falls back to PCA when predictor is None, MLP, or any other architecture.
+    def _project_output(out, pred):
+        if pred is not None and hasattr(pred, 'weight') and pred.weight.ndim == 1:
+            abs_w = pred.weight.detach().cpu().numpy()
+            top3 = np.argsort(np.abs(abs_w))[::-1][:3]
+            projected = out[:, top3]
+            # Pad to 3 cols if latent dim < 3
+            if projected.shape[1] < 3:
+                projected = np.hstack([projected,
+                                       np.zeros((out.shape[0], 3 - projected.shape[1]))])
+            return projected, [f"w_dim{i}" for i in top3]
+        # Default: top-3 PCA
+        proj = project_to_3d(out)
+        return proj, ["PC1", "PC2", "PC3"]
+
+    out_a_proj, out_a_labels = _project_output(out_a, predictor_a2b)
+    out_b_proj, out_b_labels = _project_output(out_b, predictor_a2b)  # same predictor → same dim selection
+
+    color_vals_a = get_point_colors(param_values, point_type_a, format_type='plotly')
+    color_vals_b = get_point_colors(param_values, point_type_b, format_type='plotly')
+
+    fig = make_subplots(
+        rows=1, cols=4,
+        specs=[[{"type": "scatter3d"}] * 4],
+        subplot_titles=("Input Space A", "Output Space A", "Output Space B", "Input Space B"),
+    )
+
+    sizes = get_point_sizes(param_values, default_size=3.0)
+
+    def _scatter(xyz, name, colors):
+        return go.Scatter3d(
+            x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2],
+            mode="markers",
+            marker=dict(size=sizes, color=colors, showscale=False),
+            name=name,
+        )
+
+    fig.add_trace(_scatter(data_a_proj, "Input A", color_vals_a), row=1, col=1)
+    fig.add_trace(_scatter(out_a_proj, "Output A", color_vals_a), row=1, col=2)
+    fig.add_trace(_scatter(out_b_proj, "Output B", color_vals_b), row=1, col=3)
+    fig.add_trace(_scatter(data_b_proj, "Input B", color_vals_b), row=1, col=4)
+
+    # Outer panels (input spaces): axis labels reflect PCA or raw dim
+    dim_str_a = "PC" if data_a.shape[1] > 3 else "Dim"
+    dim_str_b = "PC" if data_b.shape[1] > 3 else "Dim"
+
+    def _scene(x_lbl, y_lbl, z_lbl):
+        return dict(aspectmode="cube",
+                    xaxis_title=x_lbl, yaxis_title=y_lbl, zaxis_title=z_lbl)
+
+    fig.update_layout(
+        autosize=True, height=min_height_px,
+        margin=dict(l=40, r=40, t=80, b=40),
+        showlegend=False, hovermode="closest",
+        scene=_scene(f"{dim_str_a}1", f"{dim_str_a}2", f"{dim_str_a}3"),
+        scene2=_scene(out_a_labels[0], out_a_labels[1], out_a_labels[2]),
+        scene3=_scene(out_b_labels[0], out_b_labels[1], out_b_labels[2]),
+        scene4=_scene(f"{dim_str_b}1", f"{dim_str_b}2", f"{dim_str_b}3"),
+    )
+
+    html_body = fig.to_html(full_html=False, include_plotlyjs="cdn", default_width="100%", default_height="100%")
+    return f"<div style='width:100%;height:100%;min-height:{int(min_height_px)}px'>{html_body}</div>"
