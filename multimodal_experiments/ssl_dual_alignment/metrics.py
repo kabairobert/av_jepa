@@ -140,13 +140,17 @@ def cca_score(z_a: np.ndarray, z_b: np.ndarray) -> dict:
         1.0 = dim-i of z_A maps exactly to dim-i of z_B
         0.0 = fully off-diagonal (rotated alignment)
     """
+    import warnings
     from sklearn.cross_decomposition import CCA
+    from sklearn.exceptions import ConvergenceWarning
     
     # Cap components to prevent statistical invalidity and hanging at high D
-    n_components = min(z_a.shape[1], z_b.shape[1], max(3, z_a.shape[0] // 100))
+    n_components = min(z_a.shape[1], z_b.shape[1], max(3, z_a.shape[0] // 100), 20)
     
     try:
-        cca = CCA(n_components=n_components).fit(z_a, z_b)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=ConvergenceWarning)
+            cca = CCA(n_components=n_components, max_iter=100).fit(z_a, z_b)
         z_a_c, z_b_c = cca.transform(z_a, z_b)
         
         corrs = []
