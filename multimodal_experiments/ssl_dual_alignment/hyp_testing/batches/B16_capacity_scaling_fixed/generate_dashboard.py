@@ -1126,20 +1126,27 @@ html_content = f"""<!DOCTYPE html>
     <div class="filters">
         <div>
             <div class="filter-group">
-                <label for="filter-scale">Scale [S]:</label>
+                <label for="filter-scale">Dimensions [D]:</label>
                 <select id="filter-scale" onchange="applyFilters()">
-                    <option value="all" selected>All Scales (Side-by-Side)</option>
-                    <option value="1x">1x Scale (4k pts)</option>
-                    <option value="16x">16x Scale (65k pts)</option>
-                    <option value="256x">256x Scale (1048k pts)</option>
+                    <option value="all" selected>All Dimensions</option>
+                    <option value="16">16D</option>
+                    <option value="32">32D</option>
+                    <option value="64">64D</option>
+                    <option value="128">128D</option>
+                    <option value="256">256D</option>
+                    <option value="512">512D</option>
                 </select>
             </div>
             <div class="filter-group">
-                <label for="filter-stages">Stages [Depth]:</label>
+                <label for="filter-stages">Stages [S]:</label>
                 <select id="filter-stages" onchange="applyFilters()">
-                    <option value="all" selected>All Depths (S6 & S12)</option>
+                    <option value="all" selected>All Stages</option>
                     <option value="6">6 Stages (S6)</option>
+                    <option value="8">8 Stages (S8)</option>
+                    <option value="10">10 Stages (S10)</option>
                     <option value="12">12 Stages (S12)</option>
+                    <option value="14">14 Stages (S14)</option>
+                    <option value="16">16 Stages (S16)</option>
                 </select>
             </div>
             <span id="stats">Showing 0 of 0 runs</span>
@@ -1296,7 +1303,7 @@ html_content = f"""<!DOCTYPE html>
 
             const helperColumns = [
                 {{ id: "visualization", label: "Visualization [Plot]" }},
-                {{ id: "scale_col", label: "Scale Column" }},
+                {{ id: "scale_col", label: "Dimensions Column" }},
                 {{ id: "stages_col", label: "Stages Column" }},
                 {{ id: "state", label: "State" }},
                 {{ id: "wandb", label: "WandB Link" }}
@@ -1364,7 +1371,7 @@ html_content = f"""<!DOCTYPE html>
             // Separate parameters cells
             if (columnState.scale_col) {{
                 const th = document.createElement("th");
-                th.textContent = "Scale" + getHeaderIcon('scale_col');
+                th.textContent = "Dimensions" + getHeaderIcon('scale_col');
                 th.className = "col-param";
                 th.onclick = () => handleSort('scale_col');
                 headers.appendChild(th);
@@ -1425,7 +1432,7 @@ html_content = f"""<!DOCTYPE html>
 
             // Filter rows
             let filteredRows = runData.filter(row => {{
-                const matchScale = (fScale === 'all' || row.scale === fScale);
+                const matchScale = (fScale === 'all' || String(row.scale) === fScale);
                 const matchStages = (fStages === 'all' || String(row.stages) === fStages);
                 return matchScale && matchStages;
             }});
@@ -1438,8 +1445,8 @@ html_content = f"""<!DOCTYPE html>
                         valA = a.config;
                         valB = b.config;
                     }} else if (currentSortCol === 'scale_col') {{
-                        valA = parseFloat(a.scale.replace('x', ''));
-                        valB = parseFloat(b.scale.replace('x', ''));
+                        valA = parseFloat(a.scale);
+                        valB = parseFloat(b.scale);
                     }} else if (currentSortCol === 'stages_col') {{
                         valA = a.stages;
                         valB = b.stages;
@@ -1476,7 +1483,7 @@ html_content = f"""<!DOCTYPE html>
             // Config Cell
             const tdConfig = document.createElement("td");
             tdConfig.className = "col-config";
-            tdConfig.innerHTML = `${{row.config}}<span class="config-label">Scale: ${{row.scale}} Stages: S${{row.stages}}</span>
+            tdConfig.innerHTML = `${{row.config}}<span class="config-label">Dimensions: ${{row.scale}}D Stages: S${{row.stages}}</span>
             <span style="font-size: 11px; color: #57606a; display: block; margin-top: 5px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; font-weight: normal; line-height: 1.45; white-space: nowrap;">
                 <strong>Noise:</strong> ${{row.noise_str}}<br>
                 <strong>Pri:</strong> ${{row.prior_str.split(':')[1]}}<br>
