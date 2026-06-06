@@ -245,6 +245,18 @@ def run(
 
     train_set = build_dataset_from_config(cfg)
 
+    # --- 4. Sanity Check ---
+    with torch.no_grad():
+        for mod, data in [("A", train_set.data_a), ("B", train_set.data_b)]:
+            cov = torch.cov(data.T)
+            eigvals = torch.linalg.eigvalsh(cov)
+            min_eig = max(eigvals[0].item(), 1e-10)
+            cond_number = eigvals[-1].item() / min_eig
+            print(f"[SANITY] Modality {mod} Eigenvalues (ascending): {[round(x, 4) for x in eigvals.tolist()[:5]]} ... {[round(x, 4) for x in eigvals.tolist()[-5:]]}")
+            print(f"[SANITY] Modality {mod} Condition number: {cond_number:.2f}")
+            if cond_number > 100:
+                print(f"⚠️ WARNING: Modality {mod} data manifold is ill-conditioned! Condition number: {cond_number:.2f}")
+
     # --- Build a separate, fixed-size eval set (different seed → held-out samples) ---
     # Eval size is independent of train scale so metrics are comparable across scaling runs.
     eval_num_samples = int(cfg.data.get('eval_num_samples', 4096))

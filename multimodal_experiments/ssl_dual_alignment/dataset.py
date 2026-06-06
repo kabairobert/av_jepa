@@ -393,8 +393,9 @@ class DualDisentangleDataset(Dataset):
 
     def _init_nd_kf_mlp(self, n_man, n_ext, n_ac_a, n_ac_b, n_am_a, n_am_b):
         in_dim = self.k_shared + self.m_unique
-        mlp_a = FrozenRandomMLP(in_dim, self.d_out, depth=self.mlp_depth, generator=self.torch_rng).eval()
-        mlp_b = FrozenRandomMLP(in_dim, self.d_out, depth=self.mlp_depth, generator=self.torch_rng).eval()
+        hidden_dim = max(in_dim, self.d_out)
+        mlp_a = FrozenRandomMLP(in_dim, self.d_out, hidden_dim=hidden_dim, depth=self.mlp_depth, generator=self.torch_rng).eval()
+        mlp_b = FrozenRandomMLP(in_dim, self.d_out, hidden_dim=hidden_dim, depth=self.mlp_depth, generator=self.torch_rng).eval()
 
         total_n = n_man + n_ext + n_ac_a + n_ac_b + n_am_a + n_am_b
         data_a = np.empty((total_n, self.d_out), dtype=np.float32)
@@ -417,7 +418,8 @@ class DualDisentangleDataset(Dataset):
 
         # Estimate mean and standard deviation of MLP outputs to normalize them
         probe_us, probe_ua, probe_ub = self._sample_latents(10000, self.k_shared, self.m_unique)
-        probe_xa, probe_xb = self._gen_mlp(probe_us, probe_ua, probe_ub, mlp_a, mlp_b)
+        probe_xa, probe_xb = self._gen_mlp(probe_us, probe_ua, probe_ub, mlp_a, mlp_b,
+                                            noise_a=self.manifold_noise_a, noise_b=self.manifold_noise_b)
         mean_a, std_a = probe_xa.mean(0), probe_xa.std(0)
         mean_b, std_b = probe_xb.mean(0), probe_xb.std(0)
 
@@ -426,7 +428,8 @@ class DualDisentangleDataset(Dataset):
 
         def gen_clean(n):
             us, ua, ub = self._sample_latents(n, self.k_shared, self.m_unique)
-            xa, xb = self._gen_mlp(us, ua, ub, mlp_a, mlp_b)
+            xa, xb = self._gen_mlp(us, ua, ub, mlp_a, mlp_b,
+                                    noise_a=self.manifold_noise_a, noise_b=self.manifold_noise_b)
             return norm_a(xa), norm_b(xb), us
 
         if n_man > 0:
@@ -435,11 +438,13 @@ class DualDisentangleDataset(Dataset):
                 end = min(i + chunk_size, n_man)
                 n_chunk = end - i
                 us, ua, ub = self._sample_latents(n_chunk, self.k_shared, self.m_unique)
-                xa, xb = self._gen_mlp(us, ua, ub, mlp_a, mlp_b)
+                xa, xb = self._gen_mlp(us, ua, ub, mlp_a, mlp_b,
+                                        noise_a=self.manifold_noise_a, noise_b=self.manifold_noise_b)
                 add(norm_a(xa), norm_b(xb), us, np.zeros(n_chunk), np.zeros(n_chunk))
 
         _us, _ua, _ub = self._sample_latents(1000, self.k_shared, self.m_unique)
-        _xa, _xb = self._gen_mlp(_us, _ua, _ub, mlp_a, mlp_b)
+        _xa, _xb = self._gen_mlp(_us, _ua, _ub, mlp_a, mlp_b,
+                                  noise_a=self.manifold_noise_a, noise_b=self.manifold_noise_b)
         _xa, _xb = norm_a(_xa), norm_b(_xb)
         min_a, max_a = _xa.min(0), _xa.max(0)
         min_b, max_b = _xb.min(0), _xb.max(0)
@@ -475,18 +480,7 @@ class DualDisentangleDataset(Dataset):
         data_b -= m_b
         data_b /= (s_b + 1e-8)
 
-        # Chunked noise addition via torch.randn to save memory
-        def add_noise(arr, noise_level):
-            if noise_level > 0:
-                chunk_size = 20000
-                for i in range(0, len(arr), chunk_size):
-                    end = min(i + chunk_size, len(arr))
-                    noise = torch.randn((end - i, arr.shape[1]), generator=self.torch_rng, dtype=torch.float32).numpy()
-                    noise *= noise_level
-                    arr[i:end] += noise
-
-        add_noise(data_a, self.manifold_noise_a)
-        add_noise(data_b, self.manifold_noise_b)
+        # (Post-MLP noise removed; noise is now applied pre-MLP in _gen_mlp)
         
         return data_a, data_b, param_values, point_type_a, point_type_b
 
@@ -743,15 +737,22 @@ class DualDisentangleDataset(Dataset):
         u_ub = self.rng.normal(0, 1, (n, m_unique))
         return u_s, u_ua, u_ub
 
-    def _gen_mlp(self, u_s, u_ua, u_ub, mlp_a, mlp_b, chunk_size=20000):
+    def _gen_mlp(self, u_s, u_ua, u_ub, mlp_a, mlp_b, chunk_size=20000,
+                 noise_a=0.0, noise_b=0.0):
         za = torch.tensor(np.hstack([u_s, u_ua]), dtype=torch.float32)
         zb = torch.tensor(np.hstack([u_s, u_ub]), dtype=torch.float32)
         
         xa_list, xb_list = [], []
         with torch.no_grad():
             for i in range(0, len(za), chunk_size):
-                xa_list.append(mlp_a(za[i:i+chunk_size]).cpu().numpy())
-                xb_list.append(mlp_b(zb[i:i+chunk_size]).cpu().numpy())
+                chunk_a = za[i:i+chunk_size]
+                chunk_b = zb[i:i+chunk_size]
+                if noise_a > 0:
+                    chunk_a = chunk_a + torch.randn(chunk_a.shape, generator=self.torch_rng, dtype=torch.float32) * noise_a
+                if noise_b > 0:
+                    chunk_b = chunk_b + torch.randn(chunk_b.shape, generator=self.torch_rng, dtype=torch.float32) * noise_b
+                xa_list.append(mlp_a(chunk_a).cpu().numpy())
+                xb_list.append(mlp_b(chunk_b).cpu().numpy())
                 
         return np.vstack(xa_list), np.vstack(xb_list)
 
