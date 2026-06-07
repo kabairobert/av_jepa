@@ -11,7 +11,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT_DIR = SCRIPT_DIR.parent.parent.parent.parent.parent
 checkpoint_root = ROOT_DIR / "checkpoints" / "sslda"
-cfg_dir = SCRIPT_DIR.parent.parent.parent / "cfgs"
+cfg_dir = SCRIPT_DIR.parent.parent.parent / "cfgs" / "B16c_capacity_scaling_fixed"
 output_file = SCRIPT_DIR / "VISUALIZER.html"
 assets_dir = SCRIPT_DIR / "VISUALIZER_htmls"
 registry_file = SCRIPT_DIR.parent.parent / "metrics_registry.yaml"

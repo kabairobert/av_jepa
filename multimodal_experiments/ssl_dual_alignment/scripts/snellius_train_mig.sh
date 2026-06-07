@@ -29,14 +29,14 @@ cd ~/github/eb_jepa_private
 export PATH="$HOME/.cargo/bin:$PATH"
 
 CFG_MATRIX=(
-    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_pred_diag_l1_wdense_3D2f.yaml"
-    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_pred_diag_l1_wsparse_3D2f.yaml"
-    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_pred_diag_l2_wdense_3D2f.yaml"
-    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_pred_diag_l2_wsparse_3D2f.yaml"
-    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_pred_mlp_l1_wdense_3D2f.yaml"
-    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_pred_mlp_l1_wsparse_3D2f.yaml"
-    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_pred_mlp_l2_wdense_3D2f.yaml"
-    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_pred_mlp_l2_wsparse_3D2f.yaml"
+    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_pred/ebm_pred_diag_l1_wdense_3D2f.yaml"
+    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_pred/ebm_pred_diag_l1_wsparse_3D2f.yaml"
+    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_pred/ebm_pred_diag_l2_wdense_3D2f.yaml"
+    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_pred/ebm_pred_diag_l2_wsparse_3D2f.yaml"
+    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_pred/ebm_pred_mlp_l1_wdense_3D2f.yaml"
+    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_pred/ebm_pred_mlp_l1_wsparse_3D2f.yaml"
+    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_pred/ebm_pred_mlp_l2_wdense_3D2f.yaml"
+    "multimodal_experiments/ssl_dual_alignment/cfgs/ebm_pred/ebm_pred_mlp_l2_wsparse_3D2f.yaml"
 )
 total=${#CFG_MATRIX[@]}
 

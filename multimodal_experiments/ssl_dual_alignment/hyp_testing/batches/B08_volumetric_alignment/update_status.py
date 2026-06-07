@@ -11,7 +11,7 @@ project = "eb_jepa"
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT_DIR = SCRIPT_DIR.parent.parent.parent.parent.parent
 checkpoint_root = ROOT_DIR / "checkpoints" / "sslda"
-cfg_dir = SCRIPT_DIR.parent.parent.parent / "cfgs"
+cfg_dir = SCRIPT_DIR.parent.parent.parent / "cfgs" / "B08_volumetric_alignment"
 all_cfg_files = sorted(list(cfg_dir.glob("B08_NPP*.yaml")))
 
 print(f"Querying WandB for B08 status...")

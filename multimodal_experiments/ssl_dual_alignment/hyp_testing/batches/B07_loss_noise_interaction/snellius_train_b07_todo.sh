@@ -45,7 +45,7 @@ TODO_CFGS=(
 # Run in parallel (P=8)
 printf "%s\n" "${TODO_CFGS[@]}" | xargs -I {} -P 8 bash -c '
     cfg_name="{}"
-    cfg="multimodal_experiments/ssl_dual_alignment/cfgs/${cfg_name}.yaml"
+    cfg="multimodal_experiments/ssl_dual_alignment/cfgs/B07_loss_noise_interaction/${cfg_name}.yaml"
     echo "Launching $cfg_name"
     uv run python -m multimodal_experiments.ssl_dual_alignment.main \
         --config "$cfg" \

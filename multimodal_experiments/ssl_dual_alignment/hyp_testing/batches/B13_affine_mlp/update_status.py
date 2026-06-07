@@ -9,7 +9,7 @@ from update_status_lib import generate_status_md  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT_DIR = SCRIPT_DIR.parent.parent.parent.parent.parent
-cfg_dir = SCRIPT_DIR.parent.parent.parent / "cfgs"
+cfg_dir = SCRIPT_DIR.parent.parent.parent / "cfgs" / "B13_affine_mlp"
 
 
 def _b13_params(cfg: dict) -> str:

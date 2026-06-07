@@ -28,7 +28,7 @@ echo "Running parallel configurations across 9 CPUs on a single MIG partition."
 
 # Find all B09 configs and pipe them to xargs.
 # xargs keeps exactly 8 background processes running.
-ls multimodal_experiments/ssl_dual_alignment/cfgs/B09_*.yaml | \
+ls multimodal_experiments/ssl_dual_alignment/cfgs/B09_nd_kf_mlp/B09_*.yaml | \
     xargs -n 1 -P 8 -I {} bash -c '
         cfg="{}"
         name=$(basename "$cfg" .yaml)

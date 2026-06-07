@@ -34,7 +34,7 @@ CONFIGS=(
 )
 
 CONFIG_NAME=${CONFIGS[$SLURM_ARRAY_TASK_ID]}
-CFG_PATH="multimodal_experiments/ssl_dual_alignment/cfgs/${CONFIG_NAME}.yaml"
+CFG_PATH="multimodal_experiments/ssl_dual_alignment/cfgs/B15_capacity_scaling/${CONFIG_NAME}.yaml"
 
 echo "Array Index: $SLURM_ARRAY_TASK_ID"
 echo "Config Name: $CONFIG_NAME"

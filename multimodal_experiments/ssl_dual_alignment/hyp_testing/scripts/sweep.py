@@ -83,6 +83,12 @@ def launch_run(
         result = subprocess.run(cmd, check=False)
         if result.returncode != 0:
             print(f"WARNING: {cfg_name} exited with code {result.returncode}", file=sys.stderr)
+def find_config_path(cfg_dir: Path, cfg_name: str) -> Path:
+    """Recursively search for the configuration file under cfg_dir."""
+    cfg_paths = list(cfg_dir.glob(f"**/{cfg_name}.yaml"))
+    if cfg_paths:
+        return cfg_paths[0]
+    return cfg_dir / f"{cfg_name}.yaml"
 
 
 def main():
@@ -131,7 +137,7 @@ def main():
         print(f"Found {len(batches)} batches, {len(cfg_to_batches)} unique configs total, "
               f"launching {len(all_cfgs)}.")
         for cfg_name, batch_ids in all_cfgs:
-            cfg_path = cfg_dir / f"{cfg_name}.yaml"
+            cfg_path = find_config_path(cfg_dir, cfg_name)
             if not cfg_path.exists():
                 print(f"WARNING: Config file not found: {cfg_path}", file=sys.stderr)
                 continue
@@ -158,7 +164,7 @@ def main():
 
         print(f"Launching batch {batch_id} ({len(cfgs)} configs)")
         for cfg_name in cfgs:
-            cfg_path = cfg_dir / f"{cfg_name}.yaml"
+            cfg_path = find_config_path(cfg_dir, cfg_name)
             if not cfg_path.exists():
                 print(f"WARNING: Config file not found: {cfg_path}", file=sys.stderr)
                 continue

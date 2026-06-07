@@ -4,7 +4,7 @@ import yaml
 
 # Resolve config directory dynamically
 SCRIPT_DIR = Path(__file__).resolve().parent
-CFG_DIR = SCRIPT_DIR.parent.parent.parent / "cfgs"
+CFG_DIR = SCRIPT_DIR.parent.parent.parent / "cfgs" / "B08_volumetric_alignment"
 os.makedirs(CFG_DIR, exist_ok=True)
 
 noise_levels = {

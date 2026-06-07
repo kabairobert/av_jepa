@@ -1,7 +1,7 @@
 import os
 import yaml
 
-CFG_DIR = "/gpfs/home3/rkabai/github/eb_jepa_private/multimodal_experiments/ssl_dual_alignment/cfgs"
+CFG_DIR = "/gpfs/home3/rkabai/github/eb_jepa_private/multimodal_experiments/ssl_dual_alignment/cfgs/B07_loss_noise_interaction"
 os.makedirs(CFG_DIR, exist_ok=True)
 
 noise_levels = {

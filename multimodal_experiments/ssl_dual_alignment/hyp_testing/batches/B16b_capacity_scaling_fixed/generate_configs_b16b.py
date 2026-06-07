@@ -16,7 +16,7 @@ from pathlib import Path
 def generate_configs():
     # cfgs/ lives 4 levels up from this file
     base_dir = Path(__file__).resolve().parent.parent.parent.parent
-    cfg_dir = base_dir / "cfgs"
+    cfg_dir = base_dir / "cfgs" / "B16b_capacity_scaling_fixed"
     cfg_dir.mkdir(parents=True, exist_ok=True)
 
     # (dim, layers, hidden_units)

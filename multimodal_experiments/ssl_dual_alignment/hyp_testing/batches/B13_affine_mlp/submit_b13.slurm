@@ -29,7 +29,7 @@ FAILED_LOG="multimodal_experiments/ssl_dual_alignment/hyp_testing/batches/B13_af
 
 echo "Starting B13 Affine MLP Sweep (6 configs: 3 scales × 2 depths)..."
 
-ls multimodal_experiments/ssl_dual_alignment/cfgs/B13_*.yaml | \
+ls multimodal_experiments/ssl_dual_alignment/cfgs/B13_affine_mlp/B13_*.yaml | \
     xargs -n 1 -P 6 -I {} bash -c '
         cfg="{}"
         name=$(basename "$cfg" .yaml)

@@ -32,7 +32,7 @@ from scipy.stats import spearmanr
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 SCRIPT_DIR    = Path(__file__).resolve().parent
-cfg_dir       = SCRIPT_DIR.parent.parent.parent / "cfgs"
+cfg_dir       = SCRIPT_DIR.parent.parent.parent / "cfgs" / "B09_nd_kf_mlp"
 registry_file = SCRIPT_DIR.parent.parent / "metrics_registry.yaml"
 OUT_CSV       = SCRIPT_DIR / "B09_assessment.csv"
 

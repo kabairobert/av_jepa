@@ -4,7 +4,7 @@ from pathlib import Path
 
 def generate_configs():
     base_dir = Path(__file__).resolve().parent.parent.parent.parent
-    cfg_dir = base_dir / "cfgs"
+    cfg_dir = base_dir / "cfgs" / "B11_data_scaling"
     cfg_dir.mkdir(parents=True, exist_ok=True)
     
     # Grid parameters

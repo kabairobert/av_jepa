@@ -40,7 +40,7 @@ from pathlib import Path
 # ── Paths ─────────────────────────────────────────────────────────────────────
 SCRIPT_DIR   = Path(__file__).resolve().parent
 ROOT_DIR     = SCRIPT_DIR.parent.parent.parent.parent.parent
-cfg_dir      = SCRIPT_DIR.parent.parent.parent / "cfgs"
+cfg_dir      = SCRIPT_DIR.parent.parent.parent / "cfgs" / "B10_3DtoHD_fromB08"
 registry_file = SCRIPT_DIR.parent.parent / "metrics_registry.yaml"
 OUT_CSV      = SCRIPT_DIR / "B10_calibration.csv"
 

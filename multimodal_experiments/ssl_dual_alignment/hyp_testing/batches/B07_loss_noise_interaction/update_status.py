@@ -8,7 +8,7 @@ entity = "robertkabai-um"
 project = "eb_jepa"
 
 checkpoint_root = Path("/gpfs/home3/rkabai/github/eb_jepa_private/checkpoints/sslda/")
-cfg_dir = Path("/gpfs/home3/rkabai/github/eb_jepa_private/multimodal_experiments/ssl_dual_alignment/cfgs")
+cfg_dir = Path("/gpfs/home3/rkabai/github/eb_jepa_private/multimodal_experiments/ssl_dual_alignment/cfgs/B07_loss_noise_interaction")
 all_cfg_files = sorted(list(cfg_dir.glob("B07_NPP*.yaml")))
 
 print(f"Querying WandB for B07 status...")
