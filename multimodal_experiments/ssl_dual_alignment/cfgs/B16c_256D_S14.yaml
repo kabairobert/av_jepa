@@ -39,10 +39,10 @@ loss:
   lambda_pred: 1.0
   pred_loss: l1
 optim:
-  epochs: 100
+  epochs: 50
   lr: 0.001
 logging:
   log_wandb: true
-  save_every: 100
+  save_every: 50
   tqdm_silent: false
   wandb_group: B16c_capacity_scaling_fixed
