@@ -177,33 +177,33 @@ def plot_original_spaces(data_a, data_b, param_values,
 
     ax1 = fig.add_subplot(131, projection='3d')
     ax1.scatter(u_3d_clean[:, 0], u_3d_clean[:, 1], u_3d_clean[:, 2],
-                c=c_latent, s=s_points_clean, alpha=1.0)
+                c=c_latent, s=s_points_clean, alpha=0.5)
     ax1.set_title('Shared Latent Space')
     ax1.set_xlabel('U1'); ax1.set_ylabel('U2'); ax1.set_zlabel('U3')
 
     if is_3d:
         ax2 = fig.add_subplot(132, projection='3d')
         ax2.scatter(data_a_proj[:, 0], data_a_proj[:, 1], data_a_proj[:, 2],
-                    c=c_a, s=s_points_a, alpha=1.0)
+                    c=c_a, s=s_points_a, alpha=0.5)
         ax2.set_title('Modality A')
         ax2.set_xlabel('PC 1' if data_a.shape[1] > 3 else 'Dim 1')
         ax2.set_ylabel('PC 2' if data_a.shape[1] > 3 else 'Dim 2')
         ax2.set_zlabel('PC 3' if data_a.shape[1] > 3 else 'Dim 3')
         ax3 = fig.add_subplot(133, projection='3d')
         ax3.scatter(data_b_proj[:, 0], data_b_proj[:, 1], data_b_proj[:, 2],
-                    c=c_b, s=s_points_b, alpha=1.0)
+                    c=c_b, s=s_points_b, alpha=0.5)
         ax3.set_title('Modality B')
         ax3.set_xlabel('PC 1' if data_b.shape[1] > 3 else 'Dim 1')
         ax3.set_ylabel('PC 2' if data_b.shape[1] > 3 else 'Dim 2')
         ax3.set_zlabel('PC 3' if data_b.shape[1] > 3 else 'Dim 3')
     else:
         ax2 = fig.add_subplot(132)
-        ax2.scatter(data_a[:, 0], data_a[:, 1], c=c_a, s=s_points_a, alpha=1.0)
+        ax2.scatter(data_a[:, 0], data_a[:, 1], c=c_a, s=s_points_a, alpha=0.5)
         ax2.set_title('Modality A')
         ax2.set_xlabel('Dim 1'); ax2.set_ylabel('Dim 2')
         ax2.axis('equal')
         ax3 = fig.add_subplot(133)
-        ax3.scatter(data_b[:, 0], data_b[:, 1], c=c_b, s=s_points_b, alpha=1.0)
+        ax3.scatter(data_b[:, 0], data_b[:, 1], c=c_b, s=s_points_b, alpha=0.5)
         ax3.set_title('Modality B')
         ax3.set_xlabel('Dim 1'); ax3.set_ylabel('Dim 2')
         ax3.axis('equal')
@@ -251,8 +251,8 @@ def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, 
 
     if is_3d:
         axs = [fig.add_subplot(1, 2, i+1, projection='3d') for i in range(2)]
-        axs[0].scatter(output_a_proj[:, 0], output_a_proj[:, 1], output_a_proj[:, 2], c=c_out_a, s=s_points_a, alpha=1.0)
-        axs[1].scatter(output_b_proj[:, 0], output_b_proj[:, 1], output_b_proj[:, 2], c=c_out_b, s=s_points_b, alpha=1.0)
+        axs[0].scatter(output_a_proj[:, 0], output_a_proj[:, 1], output_a_proj[:, 2], c=c_out_a, s=s_points_a, alpha=0.85)
+        axs[1].scatter(output_b_proj[:, 0], output_b_proj[:, 1], output_b_proj[:, 2], c=c_out_b, s=s_points_b, alpha=0.85)
         for i in range(2):
             dim_str = "PC" if output_a.shape[1] > 3 else "Dim"
             axs[i].set_xlabel(f'{dim_str} 1')
@@ -260,8 +260,8 @@ def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, 
             axs[i].set_zlabel(f'{dim_str} 3')
     else:
         axs = [fig.add_subplot(1, 2, i+1) for i in range(2)]
-        axs[0].scatter(output_a[:, 0], output_a[:, 1], c=c_out_a, s=s_points_a, alpha=1.0)
-        axs[1].scatter(output_b[:, 0], output_b[:, 1], c=c_out_b, s=s_points_b, alpha=1.0)
+        axs[0].scatter(output_a[:, 0], output_a[:, 1], c=c_out_a, s=s_points_a, alpha=0.85)
+        axs[1].scatter(output_b[:, 0], output_b[:, 1], c=c_out_b, s=s_points_b, alpha=0.85)
         for i in range(2):
             axs[i].set_xlabel('Dim 1'); axs[i].set_ylabel('Dim 2'); axs[i].axis('equal')
 
@@ -390,8 +390,8 @@ def build_interactive_4way_html(
                 size=sizes,
                 color=colors,
                 showscale=False,
-                opacity=1.0,
-                line=dict(width=0, color='rgba(0,0,0,0)')
+                opacity=0.85,
+                line=dict(width=0.5, color='rgba(50,50,50,0.5)')
             ),
             name=name,
         )

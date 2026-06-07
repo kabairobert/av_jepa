@@ -257,16 +257,7 @@ def run(
             if cond_number > 100:
                 print(f"⚠️ WARNING: Modality {mod} data manifold is ill-conditioned! Condition number: {cond_number:.2f}")
 
-    # --- Build a separate, fixed-size eval set (different seed → held-out samples) ---
-    # Eval size is independent of train scale so metrics are comparable across scaling runs.
-    eval_num_samples = int(cfg.data.get('eval_num_samples', 4096))
-    eval_seed = int(cfg.data.get('eval_seed', cfg.meta.seed + 1000))
-    from omegaconf import OmegaConf
-    eval_data_cfg_overrides = OmegaConf.create({'num_samples': eval_num_samples})
-    eval_cfg = OmegaConf.merge(cfg, OmegaConf.create({'data': eval_data_cfg_overrides}))
-    eval_set = build_dataset_from_config(eval_cfg, seed=eval_seed)
     print(f"[DATA] Train set: {train_set.num_samples} samples (seed={cfg.meta.seed})")
-    print(f"[DATA] Eval  set: {eval_set.num_samples} samples (seed={eval_seed})")
 
     # Use config value or default to 0
     num_workers = cfg.data.get('num_workers', 0)
@@ -295,13 +286,6 @@ def run(
         train_set,
         batch_size=cfg.data.get('batch_size', 128),
         shuffle=True,
-        num_workers=num_workers,
-        pin_memory=pin_memory
-    )
-    eval_loader = DataLoader(
-        eval_set,
-        batch_size=cfg.data.get('batch_size', 128),
-        shuffle=False,
         num_workers=num_workers,
         pin_memory=pin_memory
     )
@@ -393,14 +377,14 @@ def run(
         max_eval_batches = cfg.training.get("max_eval_batches") if hasattr(cfg, "training") else None
         if wandb_run:
             evaluate_and_log_checkpoint(
-                eval_set, eval_loader, dual_model, loss_fn, loss_type,
+                train_set, train_loader, dual_model, loss_fn, loss_type,
                 {"a2b": predictor_a2b, "b2a": predictor_b2a},
                 device, global_step, wandb_run,
                 checkpoint_name=f"epoch_{epoch_idx+1}.pth.tar",
                 checkpoint_path=str(exp_dir / f"epoch_{epoch_idx+1}.pth.tar"),
-                log_interactive_3d=bool(eval_set.data_a.shape[1] >= 3),
+                log_interactive_3d=bool(train_set.data_a.shape[1] >= 3),
                 log_prefix="val",
-                is_3d=bool(eval_set.data_a.shape[1] >= 3),
+                is_3d=bool(train_set.data_a.shape[1] >= 3),
                 max_batches=max_eval_batches,
                 point_size_min=point_size_min,
                 point_size_max=point_size_max,
@@ -433,20 +417,20 @@ def run(
     max_eval_batches = cfg.training.get("max_eval_batches") if hasattr(cfg, "training") else None
     if wandb_run:
         evaluate_and_log_checkpoint(
-            eval_set, eval_loader, dual_model, loss_fn, loss_type,
+            train_set, train_loader, dual_model, loss_fn, loss_type,
             {"a2b": predictor_a2b, "b2a": predictor_b2a},
             device, global_step, wandb_run,
             checkpoint_name="latest.pth.tar",
             checkpoint_path=str(exp_dir / "latest.pth.tar"),
-            log_interactive_3d=bool(eval_set.data_a.shape[1] >= 3),
+            log_interactive_3d=bool(train_set.data_a.shape[1] >= 3),
             log_prefix="val",
-            is_3d=bool(eval_set.data_a.shape[1] >= 3),
+            is_3d=bool(train_set.data_a.shape[1] >= 3),
             max_batches=max_eval_batches,
             point_size_min=point_size_min,
             point_size_max=point_size_max,
             point_size_default=point_size_default,
         )
-        log_plots_to_wandb(dual_model, eval_set, device, global_step, wandb_run,
+        log_plots_to_wandb(dual_model, train_set, device, global_step, wandb_run,
                            point_size_min=point_size_min,
                            point_size_max=point_size_max,
                            point_size_default=point_size_default)
