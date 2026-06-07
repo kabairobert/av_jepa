@@ -15,7 +15,7 @@ from eb_jepa.training_utils import load_config, setup_device, setup_seed, setup_
 from multimodal_experiments.ssl_dual_alignment.dataset import PointType, build_dataset_from_config, DualDisentangleDataset
 from multimodal_experiments.ssl_dual_alignment.model_builder import build_model_and_predictors
 from multimodal_experiments.ssl_dual_alignment.losses import build_loss_from_config
-from multimodal_experiments.ssl_dual_alignment.vis import log_plots_to_wandb, project_to_3d, to_numpy, get_point_sizes, get_point_colors, build_interactive_4way_html
+from multimodal_experiments.ssl_dual_alignment.vis import log_plots_to_wandb, project_to_3d, to_numpy, get_point_sizes, get_point_colors, build_interactive_input3d_html, build_interactive_output3d_html
 from multimodal_experiments.ssl_dual_alignment.metrics import (
     linear_probe_r2,
     rankme_score,
@@ -413,8 +413,17 @@ def evaluate_and_log_checkpoint(
                         pt_a = pt_a[idxs]
                         pt_b = pt_b[idxs]
 
-                html = build_interactive_4way_html(
-                    data_a, data_b, out_a, out_b, np.asarray(param_values),
+                html_input = build_interactive_input3d_html(
+                    data_a, data_b, np.asarray(param_values),
+                    point_type_a=pt_a,
+                    point_type_b=pt_b,
+                    min_height_px=int(interactive_min_height),
+                    point_size_min=point_size_min,
+                    point_size_max=point_size_max,
+                    point_size_default=point_size_default,
+                )
+                html_output = build_interactive_output3d_html(
+                    out_a, out_b, np.asarray(param_values),
                     point_type_a=pt_a,
                     point_type_b=pt_b,
                     min_height_px=int(interactive_min_height),
@@ -423,8 +432,10 @@ def evaluate_and_log_checkpoint(
                     point_size_max=point_size_max,
                     point_size_default=point_size_default,
                 )
-                if html is not None:
-                    wandb.log({"interactive_3d_4way_html": wandb.Html(html)}, step=step)
+                if html_input is not None:
+                    wandb.log({"interactive_input3d_html": wandb.Html(html_input)}, step=step)
+                if html_output is not None:
+                    wandb.log({"interactive_output3d_html": wandb.Html(html_output)}, step=step)
 
     return metrics
 
@@ -440,6 +451,7 @@ def run(
     log_interactive_3d: bool = True,
     interactive_min_height: int = 420,
     max_interactive_points: int = 2000,
+    strict: bool = False,
     **overrides,
 ):
     if folder is None and checkpoint is None and cfg is None:
@@ -474,11 +486,10 @@ def run(
 
     data_cfg = cfg.data
     eval_num_samples = int(data_cfg.get('eval_num_samples', 4096))
-    eval_seed = int(data_cfg.get('eval_seed', cfg.meta.seed + 1000))
     from omegaconf import OmegaConf
     eval_data_cfg_overrides = OmegaConf.create({'num_samples': eval_num_samples})
     eval_cfg = OmegaConf.merge(cfg, OmegaConf.create({'data': eval_data_cfg_overrides}))
-    eval_set = build_dataset_from_config(eval_cfg, seed=eval_seed)
+    eval_set = build_dataset_from_config(eval_cfg, seed=cfg.meta.seed)
     effective_batch_size = int(batch_size) if batch_size is not None else int(data_cfg.get("batch_size", 128))
     pin_memory = (device.type == 'cuda')
     eval_loader = DataLoader(
@@ -522,7 +533,7 @@ def run(
 
     for idx, ckpt in enumerate(ckpts):
         is_last = (idx == (len(ckpts) - 1))
-        ckpt_meta = load_checkpoint(ckpt, full_model, optimizer=None, device=device)
+        ckpt_meta = load_checkpoint(ckpt, full_model, optimizer=None, device=device, strict=strict)
         ckpt_step = int(ckpt_meta.get("step", None) or _checkpoint_epoch(ckpt))
 
         metrics = evaluate_and_log_checkpoint(
