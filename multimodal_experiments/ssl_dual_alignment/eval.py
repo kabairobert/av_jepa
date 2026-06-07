@@ -339,8 +339,8 @@ def evaluate_and_log_checkpoint(
     max_interactive_points: int = 2000,
     log_prefix: str = "val",
     is_3d: Optional[bool] = None,
-    point_size_min: float = 4.0,
-    point_size_max: float = 20.0,
+    point_size_min: float = 2.0,
+    point_size_max: float = 16.0,
     point_size_default: float = 5.0,
 ) -> Dict[str, float]:
     metrics = _eval_loop(eval_loader, dual_model, loss_fn, loss_type, predictors, device, max_batches=max_batches)
@@ -421,7 +421,7 @@ def evaluate_and_log_checkpoint(
                     predictor_a2b=predictors.get("a2b"),
                     point_size_min=point_size_min,
                     point_size_max=point_size_max,
-                    point_size_default=3.0 * (point_size_default / 5.0),
+                    point_size_default=point_size_default,
                 )
                 if html is not None:
                     wandb.log({"interactive_3d_4way_html": wandb.Html(html)}, step=step)
@@ -465,8 +465,8 @@ def run(
 
     cfg = load_config(str(cfg_path), cli_overrides=overrides)
     vis_cfg = cfg.get("visualization", {})
-    point_size_min = vis_cfg.get("point_size_min", 4.0)
-    point_size_max = vis_cfg.get("point_size_max", 20.0)
+    point_size_min = vis_cfg.get("point_size_min", 2.0)
+    point_size_max = vis_cfg.get("point_size_max", 16.0)
     point_size_default = vis_cfg.get("point_size_default", 5.0)
 
     device = setup_device(cfg.meta.device)

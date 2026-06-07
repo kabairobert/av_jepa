@@ -65,7 +65,7 @@ def get_hsv_colors(u1: np.ndarray, u2: np.ndarray, format_type: str = 'rgba') ->
     return colors
 
 
-def get_point_sizes(param_values, default_size=5.0, point_size_min=4.0, point_size_max=20.0, point_types=None):
+def get_point_sizes(param_values, default_size=5.0, point_size_min=2.0, point_size_max=16.0, point_types=None):
     """Return point sizes mapped from u3 (if present) or default_size.
        If point_types is provided, external/corrupted points get point_size_min.
     """
@@ -133,7 +133,7 @@ def get_point_colors(param_values, point_types=None, format_type='rgba', cmap='r
 
 def plot_original_spaces(data_a, data_b, param_values,
                          point_type_a=None, point_type_b=None,
-                         point_size_min=4.0, point_size_max=20.0, point_size_default=5.0):
+                         point_size_min=2.0, point_size_max=16.0, point_size_default=5.0):
     """Plots Shared Latent Space, Modality A, and Modality B datasets."""
     is_3d = data_a.shape[1] >= 3
     fig = plt.figure(figsize=(18, 6))
@@ -214,7 +214,7 @@ def plot_original_spaces(data_a, data_b, param_values,
 
 def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, device,
                                       point_type_a=None, point_type_b=None,
-                                      point_size_min=4.0, point_size_max=20.0, point_size_default=5.0):
+                                      point_size_min=2.0, point_size_max=16.0, point_size_default=5.0):
     """Plots 2-way view: Output Space A and Output Space B."""
     dual_model.eval()
     with torch.no_grad():
@@ -273,7 +273,7 @@ def plot_dual_geometry_reshaping_view(dual_model, data_a, data_b, param_values, 
 
 
 def log_plots_to_wandb(dual_model, dataset, device, step, wandb_run,
-                       point_size_min=4.0, point_size_max=20.0, point_size_default=5.0):
+                       point_size_min=2.0, point_size_max=16.0, point_size_default=5.0):
     """Generates and logs visualizations to W&B."""
     import wandb
     # Ensure all components are on CPU before converting to numpy for plotting
@@ -331,8 +331,8 @@ def build_interactive_4way_html(
     point_type_b: Optional[np.ndarray] = None,
     min_height_px: int = 420,
     predictor_a2b=None,
-    point_size_min=4.0,
-    point_size_max=20.0,
+    point_size_min=2.0,
+    point_size_max=16.0,
     point_size_default=3.0,
 ) -> Optional[str]:
     try:
@@ -390,8 +390,8 @@ def build_interactive_4way_html(
                 size=sizes,
                 color=colors,
                 showscale=False,
-                opacity=0.85,
-                line=dict(width=0.5, color='rgba(50,50,50,0.5)')
+                opacity=1.0,
+                line=dict(width=0)
             ),
             name=name,
         )
