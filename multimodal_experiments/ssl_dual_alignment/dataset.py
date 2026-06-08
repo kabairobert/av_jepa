@@ -215,8 +215,8 @@ class DualDisentangleDataset(Dataset):
                     data_b = data_b @ Q_b.T
 
                 elif data_type == '3d-3f-2c-mlp':
-                    mlp_a = FrozenRandomMLP(D, D, depth=self.mlp_depth, generator=self.torch_rng).eval()
-                    mlp_b = FrozenRandomMLP(D, D, depth=self.mlp_depth, generator=self.torch_rng).eval()
+                    mlp_a = FrozenRandomMLP(D, D, hidden_dim=D, depth=self.mlp_depth, generator=self.torch_rng).eval()
+                    mlp_b = FrozenRandomMLP(D, D, hidden_dim=D, depth=self.mlp_depth, generator=self.torch_rng).eval()
 
                     with torch.no_grad():
                         data_a = mlp_a(torch.tensor(data_a, dtype=torch.float32)).numpy()
